@@ -471,9 +471,7 @@ meta_cleanup_stale() {
 
     # Only remove if it's a symlink pointing into this package's directory
     if [[ -L "$target" ]]; then
-      local link_dest
-      link_dest=$(readlink "$target")
-      if [[ "$link_dest" == *"$pkg_dir"* ]]; then
+      if _link_points_into "$target" "$pkg_dir"; then
         debug "Removing stale file: $old_file"
         rm -f "$target"
       else
@@ -554,6 +552,7 @@ stow_subdir() {
 
   # If force mode, remove conflicting files first
   $force && force_remove_conflicts "$full_path"
+  remove_dangling_links "$full_path"
 
   stow --no-folding ${PPM_IGNORE_ARGS[@]+"${PPM_IGNORE_ARGS[@]}"} -d "$pkg_dir" -t "$HOME" "$subdir"
 
@@ -570,6 +569,40 @@ package_links() {
   find "$path" -type f | while read -r file; do
     echo "${file#$path/}"
   done
+}
+
+# Remove links in $HOME that would conflict with stow but point at a file ppm no longer has
+# stow reports a dangling link into another package as "not owned by stow" and aborts, which is
+# what happens when a file moves between packages (pde/zsh's .inputrc to pde/cli): the old
+# package's link outlives its source. A dangling link into $PPM_DATA_HOME is unambiguously ppm's
+# own leftover, so it is removed without -f. Anything else (a real file, a live link, a link
+# elsewhere) is left for stow to report.
+remove_dangling_links() {
+  local full_path="$1" file target
+
+  while IFS= read -r file; do
+    [[ -z "$file" ]] && continue
+    target="$HOME/$file"
+    [[ -L "$target" && ! -e "$target" ]] || continue
+    is_stow_ignored "$file" && continue
+
+    if _link_points_into "$target" "$PPM_DATA_HOME"; then
+      debug "Removing dangling link: ~/$file -> $(readlink "$target")"
+      rm -f "$target"
+    fi
+  done < <(package_links "$full_path")
+}
+
+# True if the symlink <target> (under $HOME) points into the absolute directory <dir>
+# stow writes relative links: ~/.config/zsh/x -> ../../.local/share/ppm/..., climbing back to
+# exactly $HOME. So with the leading ../ stripped, the link text is $HOME-relative and compares
+# against <dir> made $HOME-relative. Works for a dangling link, which realpath cannot resolve.
+_link_points_into() {
+  local target="$1" dir="$2" dest
+  dest=$(readlink "$target") || return 1
+  [[ "$dest" == "$dir/"* ]] && return 0
+  while [[ "$dest" == ../* ]]; do dest="${dest#../}"; done
+  [[ "$dest" == "${dir#$HOME/}/"* ]]
 }
 
 # Remove files from $HOME that would conflict with stow
