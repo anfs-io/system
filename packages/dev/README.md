@@ -21,7 +21,7 @@ the differences between them are the whole point:
 | --- | --- | --- | --- |
 | `ppm user` | a second user on **your** machine | seconds | user-level install, a second user against your Homebrew |
 | `ppm container` | a Debian or Fedora container | seconds | everything except the kernel and the session |
-| macOS VM *(not built yet)* | a full macOS guest | ~14s from a snapshot | everything, including login shells |
+| `ppm vm` | a full macOS guest | ~11s from a snapshot | everything, including login shells |
 
 **`ppm user`** creates a throwaway user, runs the installer as them and logs you in. It is the
 cheapest way to see what a *second* user experiences — the non-owner Homebrew path in particular —
@@ -38,15 +38,35 @@ sessions (so nothing that `chsh` touches, and no rc files being sourced for real
 features like NFS or KVM. And nothing on that list covers macOS at all, which is where ppm's most
 fragile paths live — Xcode Command Line Tools, the Homebrew prefix, `sysadminctl`, `/etc/shells`.
 
-## macOS Testing
+**`ppm vm`** is the macOS answer, and deliberately the same motion: the same subcommands, the same
+two users, the same read-only `/src` mounts, so a change is tested on macOS the way it is tested on
+Debian. It needs Apple silicon, because that is where macOS guests can run at all, and `tart`:
 
-Not built yet. A spike has proven it works — a `tart` VM on Apple Silicon, provisioned with the
-same two test users, the same read-only `/src` mounts, a cold `install.sh` in about three minutes
-and a reset from snapshot in fourteen seconds — and settled the design questions. The findings and
-the spike scripts are in `chorus/units/testing/01-macos-vm/`.
+```bash
+brew trust --formula openai/tools/softnet && brew install openai/tools/tart
+```
 
-The intended shape is `ppm vm`, a sibling of `ppm container` with the same subcommands, so that
-testing a change on macOS is the same motion as testing it on Debian.
+Building the base box downloads a stock macOS image (~25GB, once) and provisions it. The image is
+deliberately a *vanilla* one with no Homebrew and no Xcode Command Line Tools, so a run against it
+exercises the whole of `install.sh` — the part that only ever executes on a machine that has
+nothing, and the part most likely to break.
+
+Snapshots are what make that affordable. They are APFS copy-on-write clones, so a cold install
+(~3 min, most of it Homebrew and the CLT) is paid once and every later run starts from the snapshot
+in about ten seconds.
+
+## Why a VM and Not Another Container
+
+Containers share the host kernel and never start a session, so three things ppm does are invisible
+to them: a login shell actually sourcing the rc files and mise activation, `chsh` and `/etc/shells`,
+and anything a service manager runs. On top of that, none of ppm's macOS-specific code exists on
+Linux at all — the Xcode CLT, the Homebrew prefix and its ownership, `sysadminctl`. Those paths had
+no test before `ppm vm`, and they are the ones that run exactly once on a new machine, where a
+failure is most expensive.
+
+The design findings behind the implementation — why `/src` has to come from `synthetic.conf`, why a
+snapshot recreates the box instead of restarting it, why sudo needs a longer timestamp on a
+headless box — are recorded in `chorus/units/testing/01-macos-vm/`.
 
 ## Git Hooks
 

@@ -202,12 +202,16 @@ _container_install() {
     return
   fi
 
-  # Link the user's ppm data dirs to the mounted working tree; local-path sources are never pulled
+  # Link the user's ppm data dirs to the mounted working tree; local-path sources are never pulled.
+  #
+  # The list goes in user.list, NOT the legacy sources.list: install.sh seeds an empty user.list on
+  # a fresh box, and _user_sources_read prefers user.list whenever it exists, so a sources.list
+  # would be shadowed and the whole run would test the pushed repos rather than the mount.
   local sources
   sources=$(podman inspect -f '{{index .Config.Labels "ppm.sources"}}' "ppm-$distro")
   _container_exec "$distro" "$user" bash -c '
     mkdir -p ~/.local/share/ppm ~/.config/ppm
-    : > ~/.config/ppm/sources.list.new
+    : > ~/.config/ppm/user.list.new
     for alias in $0; do
       target=~/.local/share/ppm/$alias
       if [[ -e $target && ! -L $target ]]; then
@@ -215,9 +219,10 @@ _container_install() {
         exit 1
       fi
       ln -sfn "/src/$alias" "$target"
-      printf "/src/%s  %s\n" "$alias" "$alias" >> ~/.config/ppm/sources.list.new
+      printf "/src/%s  %s\n" "$alias" "$alias" >> ~/.config/ppm/user.list.new
     done
-    mv ~/.config/ppm/sources.list.new ~/.config/ppm/sources.list
+    rm -f ~/.config/ppm/sources.list
+    mv ~/.config/ppm/user.list.new ~/.config/ppm/user.list
   ' "$sources" || return 1
 
   _container_exec "$distro" "$user" bash /src/ppm/install.sh ${args[@]+"${args[@]}"}

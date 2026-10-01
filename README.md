@@ -34,6 +34,56 @@ curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install
 Run it as your normal user, not root. Open a new shell when it finishes, then `ppm list` to see
 what is available and `ppm` on its own for the commands.
 
+## Getting Started
+
+`ppm list` shows every package available to you and `ppm show <package>` explains one. A package
+brings its own software with it — you never install the tool and its configuration separately —
+and several can be named at once. Some places to start:
+
+**A terminal you'd want to live in**
+
+```bash
+ppm install zsh tmux nvim git
+```
+
+zsh with oh-my-zsh and powerlevel10k, and the rc file that sources everything else ppm installs;
+tmux with tmuxinator for per-project window layouts; neovim with a working plugin set and
+configuration rather than an empty `init.lua`; git configuration, a system-wide `.gitignore` and
+GitHub's `gh`.
+
+**Secrets and ssh, without private keys on disk**
+
+```bash
+ppm install op fnox ssh ghostty
+```
+
+1Password's CLI and desktop app, with ssh pointed at the 1Password agent so your keys never touch
+the filesystem, and a service account token that follows you onto remote hosts so `op` works there
+too. `fnox` is where a project declares which secrets it needs; `ssh` adds the hook registry those
+integrations plug into, plus mounting remote directories over sshfs. `ghostty` is a macOS-only
+terminal, and ppm will simply skip it elsewhere.
+
+**Languages, managed by mise**
+
+```bash
+ppm install ruby node python
+```
+
+Each installs a current runtime through mise and puts the shell activation in place, so versions
+are per project rather than per machine.
+
+**Then make it yours**
+
+```bash
+ppm customize
+```
+
+This creates a git repo for your own machine configuration and puts it at the top of your source
+list, so from then on your packages and your edits override the shared ones — file by file, without
+forking anything. It is the step that turns ppm from someone else's setup into yours, and it is
+what lets the next machine be one command. See
+[the `system` package](packages/system/README.md#your-own-repo).
+
 ## What the Installer Does
 
 The installer is the only part of ppm that has to work on a machine with nothing on it, so it
