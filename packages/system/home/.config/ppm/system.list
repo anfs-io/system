@@ -1,9 +1,0 @@
-# ppm system source list — shipped and managed by the ppm/system package.
-# Do NOT edit: it is a stow symlink into the ppm repo; changes here dirty the repo and
-# stop `ppm src update`. Add your own repos with `ppm src add` (they go in user.list and
-# take priority). Format per line: <git-url> [alias]
-https://github.com/maxcole/utils-ppm  utils
-https://github.com/maxcole/ai-ppm  ai
-https://github.com/maxcole/pdt-ppm  pdt
-https://github.com/maxcole/pde-ppm  pde
-https://github.com/maxcole/ppm  ppm

@@ -1,0 +1,3 @@
+# Engineering's space; installing it installs org first
+path: spaces/acme/tech
+depends: [org]

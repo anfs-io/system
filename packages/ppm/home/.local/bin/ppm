@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# ppm — personal package manager
+#
+# ppm is one tool of the anfs toolkit, and like the others a package of the anfs repo (anfs/ppm):
+# this script and its libraries are stowed from packages/ppm/home/ into ~/.local/bin and
+# ~/.local/lib/ppm. Sources are anfs's (`anfs src`); ppm reads the packages/ directory of each.
+# Settings come from ~/.config/anfs/anfs.conf (loaded by lib/anfs/paths.sh).
+#
+# Commands are implemented in the libraries under ~/.local/lib/ppm/ (stowed from
+# packages/ppm/home/.local/lib/ppm/):
+#   sources.sh     customize; the sources holding packages/ (collect_repos)
+#   packages.sh    list, show, path, deps
+#   installer.sh   install, remove
+#   file.sh        file (add, claim, reset, protect, unprotect)
+#   completion.sh  completion
+# core.sh holds the functions package hooks can call (install_dep, user_message, ...)
+# platform.sh detects the platform and locates Homebrew and its owner
+set -euo pipefail
+
+# Paths and settings: anfs's layout (sources, libraries, anfs.conf) and ppm's own XDG dirs
+PPM_LIB_DIR="$HOME/.local/lib/ppm"
+source "$HOME/.local/lib/anfs/paths.sh"
+anfs_tool_paths ppm
+# Installed state: per-package trackers, claims, protections, callbacks
+PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
+BIN_DIR="$ANFS_BIN_DIR"
+# The anfs repo's clone; ppm itself is its anfs/ppm package
+PPM_REPO_DIR="$ANFS_SOURCES_HOME/anfs"
+
+# The command line: commands are cmd_<name> functions, registered here (and by extensions as they
+# are sourced) so help and completion are generated from what exists
+source "$HOME/.local/lib/anfs/cli.sh"
+CLI_TOOL=ppm
+cli_cmd list       "list [filter] [--installed]"  "List available packages"
+cli_cmd install    "install [-cfrsy] <package|repo/>..." "Install packages and their dependencies
+-c config only (no hooks, no declared software)
+-f replace conflicting files   -r reinstall
+-s skip dependencies           -y no confirmation for repo/"
+cli_cmd remove     "remove <package|repo/>..."   "Remove packages (and the software ppm installed for them)"
+cli_cmd show       "show <package>"              "Show a package: layers, dependencies, what is installed"
+cli_cmd deps       "deps <package>"              "Show a package's dependency tree"
+cli_cmd path       "path <package>"              "Print a package's directory"
+cli_cmd file       "file <add|claim|reset|protect|unprotect>" "Own single files: claim into your repo, or detach from ppm"
+cli_cmd customize  "customize"                   "Create your own repo (the user source) to customize the toolkit"
+cli_cmd implode    "implode [-y]"                "Remove every package ppm installed, then ppm's own files"
+cli_cmd completion "completion <zsh|bash>"       "Output shell completion"
+cli_cmd help       "help"                        "Show this help"
+cli_alias ls list
+cli_help_epilogue() {
+  echo "ppm cd [package] changes to a package directory (needs the ppm shell function)."
+  echo "Sources are anfs's: anfs src list."
+}
+
+# Resolve a path through symlinks to the directory of its real target
+# (used here and by package extensions such as dev's container.sh)
+_resolve_path() {
+  local path="$1"
+  while [[ -L "$path" ]]; do
+    local dir="$(cd "$(dirname "$path")" && pwd)"
+    path="$(readlink "$path")"
+    [[ "$path" != /* ]] && path="$dir/$path"
+  done
+  echo "$(cd "$(dirname "$path")" && pwd)"
+}
+
+# Source ppm's own libraries and any package-contributed extensions. Both live in
+# PPM_LIB_DIR: ppm's core libs are stowed there by the anfs/ppm package, alongside
+# extensions from other packages (e.g. dev's container.sh, user.sh).
+for lib_file in "$PPM_LIB_DIR"/*.sh; do
+  [[ -f "$lib_file" ]] && source "$lib_file"
+done
+
+# Put Homebrew on PATH even without the user's shell setup (cron, sudo -iu, env -i)
+brew_env
+
+# Entrypoint for commands that need a source list
+main() {
+  if [[ ! -f "$ANFS_SYSTEM_LIST" && ! -f "$ANFS_USER_LIST" ]]; then
+    echo "ERROR: No sources configured (expected $ANFS_USER_LIST or $ANFS_SYSTEM_LIST)"
+    exit 1
+  fi
+
+  # Flags are locals of main(); the commands it calls (and their helpers) read them
+  # through bash's dynamic scoping
+  local command="$1" config=false force=false reinstall=false skip_deps=false yes=false
+  shift
+
+  local passthrough_args=()
+  while [[ "$#" -gt 0 && "$1" == -* ]]; do
+    case "$1" in
+      -c) config=true ;;
+      -f) force=true ;;
+      -r) reinstall=true ;;
+      -s) skip_deps=true ;;
+      --debug) PPM_DEBUG=true ;;
+      -y|--yes) yes=true ;;
+      --*) passthrough_args+=("$1") ;;
+      *) echo "Unknown flag: $1"; exit 1 ;;
+    esac
+    shift
+  done
+  set -- ${passthrough_args[@]+"${passthrough_args[@]}"} "$@"
+
+  # cmd_ functions only: a command never shadows a system binary in package hooks (install,
+  # file), and ppm's internals are not reachable from its command line
+  cli_dispatch "$command" "$@"
+}
+
+# Skip main() setup for commands that don't need it
+case "${1:-}" in
+  ""|help|-h|--help) cli_help ;;
+  completion) cmd_completion "${@:2}" ;;
+  src) echo "Sources are managed by anfs: anfs src ${*:2}" >&2; exit 1 ;;
+  *) main "$@" ;;
+esac

@@ -1,0 +1,14 @@
+# inspector — an idle alpine with every anfs source mounted read-only at /src, for looking at the
+# sources from inside a container (pcm exec acme/inspector -- ls /src).
+#
+# pcm service: `pcm up inspector`. No variables, so no .env.schema.
+
+x-pcm:
+  mounts:
+    - set: anfs-sources
+      target: /src
+
+services:
+  inspector:
+    image: docker.io/library/alpine:3
+    command: ["sleep", "infinity"]

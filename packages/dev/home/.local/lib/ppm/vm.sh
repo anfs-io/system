@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ppm/dev — adds `ppm vm`: disposable macOS VMs for testing ppm on Apple Silicon
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so vm() becomes a ppm command
+# anfs/dev — adds `ppm vm`: disposable macOS VMs for testing ppm on Apple Silicon
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_vm() is the command `ppm vm`
 #
 # The sibling of `ppm container`, with the same subcommands and the same contract: host source
 # repos are mounted read-only at /src/<alias> and each test user's ppm data dirs link to them, so
@@ -11,7 +11,7 @@
 # Backed by tart (https://tart.run), which boots Apple's Virtualization.framework. Snapshots are
 # APFS copy-on-write clones, so they cost seconds and almost no disk.
 
-# vms/<target>/{vm.conf,provision.sh} live in the ppm/dev package, found through the stow link
+# vms/<target>/{vm.conf,provision.sh} live in the anfs/dev package, found through the stow link
 PPM_VM_DIR="$(cd "$(_resolve_path "${BASH_SOURCE[0]}")/../../../.." && pwd)/vms"
 PPM_VM_STATE_DIR="$PPM_CACHE_HOME/vm"
 PPM_VM_KEY="$PPM_VM_STATE_DIR/id_ed25519"
@@ -19,7 +19,9 @@ PPM_VM_INSTALLER_URL=https://raw.githubusercontent.com/maxcole/ppm/refs/heads/ma
 PPM_VM_SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                  -o LogLevel=ERROR -o ConnectTimeout=10)
 
-vm() {
+cli_cmd vm "vm <command> <target> [...]" "Disposable macOS VMs (tart) for testing anfs installs"
+
+cmd_vm() {
   local subcommand="${1:-}"
   shift 2>/dev/null || true
 
@@ -280,18 +282,18 @@ _vm_start() {
     for i in "${!REPO_NAMES[@]}"; do
       alias="${REPO_NAMES[$i]}"
       [[ -z "$sources" || ",$sources," == *",$alias,"* ]] || continue
-      if [[ ! -d "$PPM_DATA_HOME/$alias" ]]; then
+      if [[ ! -d "$ANFS_SOURCES_HOME/$alias" ]]; then
         echo "Skipping $alias: not cloned on this host"
         continue
       fi
-      host_dir=$(cd "$PPM_DATA_HOME/$alias" && pwd -P)
+      host_dir=$(cd "$ANFS_SOURCES_HOME/$alias" && pwd -P)
       mounts+=("--dir=$alias:$host_dir:ro")
       aliases="$aliases $alias"
     done
   fi
   aliases="${aliases# }"
 
-  # ppm/dev's own commands (vm install) need the ppm source mounted; warn but allow,
+  # anfs/dev's own commands (vm install) need the ppm source mounted; warn but allow,
   # so the box is usable for general experimentation too.
   if [[ " $aliases " != *" ppm "* ]]; then
     echo "Note: ppm source not mounted; 'ppm vm install $target' won't work here" >&2
@@ -335,8 +337,8 @@ _vm_install() {
 
   if $pushed; then
     _vm_ssh "$name" "$user" "PPM_URL='$PPM_VM_INSTALLER_URL' PPM_ARGS='${args[*]-}' bash -s" <<'GUEST'
-      if [[ -L ~/.local/share/ppm/ppm ]]; then
-        echo "~/.local/share/ppm is linked to the working tree; ppm vm reset first"
+      if [[ -L ~/.local/share/anfs/sources/anfs ]]; then
+        echo "~/.local/share/anfs/sources is linked to the working tree; ppm vm reset first"
         exit 1
       fi
       curl -fsSL "$PPM_URL" | bash -s -- $PPM_ARGS
@@ -355,19 +357,19 @@ GUEST
   sources=$(cat "$PPM_VM_STATE_DIR/$name.sources" 2>/dev/null || true)
   _vm_ssh "$name" "$user" "PPM_VM_SOURCES='$sources' bash -s" <<'GUEST' || return 1
 set -euo pipefail
-mkdir -p ~/.local/share/ppm ~/.config/ppm
-: > ~/.config/ppm/user.list.new
+mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
+: > ~/.config/anfs/user.list.new
 for alias in $PPM_VM_SOURCES; do
-  target=~/.local/share/ppm/$alias
+  target=~/.local/share/anfs/sources/$alias
   if [[ -e $target && ! -L $target ]]; then
     echo "$target is a clone (from --pushed); ppm vm reset first"
     exit 1
   fi
   ln -sfn "/src/$alias" "$target"
-  printf "/src/%s  %s\n" "$alias" "$alias" >> ~/.config/ppm/user.list.new
+  printf "/src/%s  %s\n" "$alias" "$alias" >> ~/.config/anfs/user.list.new
 done
-rm -f ~/.config/ppm/sources.list
-mv ~/.config/ppm/user.list.new ~/.config/ppm/user.list
+rm -f ~/.config/anfs/sources.list
+mv ~/.config/anfs/user.list.new ~/.config/anfs/user.list
 GUEST
 
   # install.sh's _system_sudo primes the credential cache and then uses `sudo -n`; over ssh there
@@ -375,7 +377,7 @@ GUEST
   # provisioning is what keeps that cache alive for the length of a cold run.
   _vm_ssh "$name" "$user" "PPM_ARGS='${args[*]-}' bash -s" <<GUEST
 echo $user | sudo -S -p '' -v
-bash /src/ppm/install.sh \$PPM_ARGS
+bash /src/anfs/install.sh \$PPM_ARGS
 GUEST
 }
 

@@ -1,18 +1,38 @@
-# Personal Package Manager
+# anfs — Agent Native Full Stack
 
-ppm keeps your dotfiles and tool configuration in git repositories you control, and reproduces a
-machine from them. A package is a directory of files to be symlinked into `$HOME` plus a manifest
-of the software it needs; ppm resolves dependencies across repositories, installs what is missing
-through the platform's package managers, and links the files with GNU Stow.
+anfs makes a machine reproducible from git repositories you control — not just its dotfiles and
+tools, but its services, its agents' skills and its workspaces. It is a small toolkit of bash
+tools that share one idea of where things come from:
+
+| Tool | Reads | Does |
+| --- | --- | --- |
+| `ppm` | `packages/` | software and dotfiles: a manifest of what a package needs, files symlinked with GNU Stow |
+| `pcm` | `containers/` | podman compose services, with their configuration schema and dependencies |
+| `psm` | `skills/` | agent skills, synced to every AI agent installed |
+| `wsm` | `spaces/` | workspaces: where they live, what they depend on, the repos inside them |
+| `anfs` | — | the sources every tool reads, and the commands that span them |
+
+A **source** is one repo that may hold any of those directories, so an organization can ship its
+whole stack — the toolchain, the database, the skills, the workspaces — as a single repo:
+
+```bash
+anfs src add git@github.com:lgat/lgat-anfs.git lgat
+anfs src update lgat
+anfs install lgat          # its packages, containers, skills and spaces, in that order
+```
+
+Each tool still picks single resources on its own: `ppm install lgat/rails`,
+`pcm install lgat/postgres`, `wsm install lgat/tech`.
 
 Two ideas shape everything else:
 
-- **Your repo wins.** Repositories are layered in priority order, and the layering is per file, so
-  you can override one file from a shared repo without forking it.
+- **Your repo wins.** Sources are layered in priority order, and the layering is per resource
+  (per file, for packages), so you can override one thing from a shared repo without forking it.
 - **A machine is disposable.** Everything that makes a machine yours is committed somewhere, so a
-  new one is a single install command away.
+  new one is a single install command away — and `anfs implode` takes one back to vanilla, which
+  is how the toolkit proves it only writes where it says it does.
 
-ppm manages itself as a package, so it updates like anything else it installs.
+anfs manages itself as a package, so it updates like anything else it installs.
 
 ## Quick Start
 
@@ -31,8 +51,9 @@ wget -qO- https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.
 curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
 ```
 
-Run it as your normal user, not root. Open a new shell when it finishes, then `ppm list` to see
-what is available and `ppm` on its own for the commands.
+Run it as your normal user, not root. Open a new shell when it finishes, then `anfs src list` to
+see the sources, `ppm list` to see what packages are available, and `anfs` on its own for the
+commands.
 
 ## Getting Started
 
@@ -82,7 +103,7 @@ This creates a git repo for your own machine configuration and puts it at the to
 list, so from then on your packages and your edits override the shared ones — file by file, without
 forking anything. It is the step that turns ppm from someone else's setup into yours, and it is
 what lets the next machine be one command. See
-[the `system` package](packages/system/README.md#your-own-repo).
+[the `ppm` package](packages/ppm/README.md#your-own-repo).
 
 ## What the Installer Does
 
@@ -94,9 +115,12 @@ installs the irreducible prerequisites and then hands over to ppm itself:
 - Homebrew, if the machine has none — then `stow`, `yq` and `mise` from it, plus a current `bash`
   on macOS, where the system copy is still 3.2
 - GitHub's published SSH host keys, added to `~/.ssh/known_hosts`
-- ppm itself, by stowing the [`system`](packages/system/README.md) package, which is what puts
-  `ppm` on your PATH and seeds `~/.config/ppm/`
-- `ppm src update`, then any packages you named (none by default)
+- anfs itself, by stowing its two base packages, [`anfs`](packages/anfs/README.md) and
+  [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
+  `~/.config/anfs/` (your source list, `anfs.local.conf`)
+- `anfs src update`, then any packages you named, then `ppm install anfs/anfs`: the rest of the
+  toolkit — `pcm`, `psm`, `wsm` — and the software they run on (podman, varlock, node). On macOS
+  the podman machine is created the first time `pcm up` needs it, not at install.
 
 It asks for your sudo password at most once, and only when something above is actually missing.
 Passwordless sudo is not required, and re-running it on a machine that is already set up prompts
@@ -113,9 +137,9 @@ to ask the owner to run.
 
 ## A New Machine From Your Own Repo
 
-Once you have a customization repo (see [`ppm customize`](packages/system/README.md#your-own-repo)),
+Once you have a customization repo (see [`ppm customize`](packages/ppm/README.md#your-own-repo)),
 pass its URL to the installer. It is registered as the `user` source — the highest priority one —
-and its `system` package is installed, which brings your source list with it:
+and its `anfs` package is installed, which brings your source list and settings with it:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash -s -- \
@@ -126,8 +150,8 @@ Trailing arguments name packages to install, and the same thing can be said with
 variables, which is easier to paste into a fresh shell:
 
 ```bash
-export PPM_INSTALL_REPO=git@github.com:user/my-ppm
-export PPM_INSTALL_PACKAGES="git nvim zsh"
+export ANFS_INSTALL_REPO=git@github.com:user/my-ppm
+export ANFS_INSTALL_PACKAGES="git nvim zsh"
 curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
 ```
 
@@ -137,37 +161,60 @@ GitHub. When the key lives in 1Password, install its packages from
 the 1Password desktop app, and then register the repo by hand:
 
 ```bash
-ppm src add --top git@github.com:user/my-ppm user
-ppm src update user
-ppm install -f user/system
+anfs src add --top git@github.com:user/my-ppm user
+anfs src update user
+ppm install -f user/anfs
 ```
 
 ## Advanced Installation
 
-- `--script-only` installs ppm and stops, without installing any packages.
+- `--script-only` installs anfs and ppm and stops, without installing any packages (or the rest
+  of the toolkit).
 - `--skip-deps` skips the prerequisites and Homebrew entirely, for a machine where you manage them
   yourself. ppm still needs `git`, `stow` and `yq` on your PATH.
 - To read the script before running it, download it, `chmod +x` it and run it — the one-liners
   above are a convenience, not a requirement.
 
+## Removing It All
+
+```bash
+anfs implode            # every tool's implode, then the sources; asks first (-y to skip)
+anfs implode --all      # also stow, yq and mise (and bash on macOS) from Homebrew
+```
+
+wsm forgets its workspaces (their contents are kept), psm removes every skill, pcm deletes its
+containers, networks and data, and ppm removes every package it installed — the toolkit included —
+and the Homebrew formulas it installed for them. Homebrew itself is kept. Each tool's `implode`
+also works on its own.
+
 ## Packages in This Repo
 
 | Package | What it is |
 | --- | --- |
-| [`system`](packages/system/README.md) | ppm itself — the script, its libraries, its default configuration and its shell integration |
-| [`dev`](packages/dev/README.md) | tooling for working on ppm: disposable test machines and the git hooks that version packages |
+| [`anfs`](packages/anfs/README.md) | the anfs command, the libraries every tool shares, the source list and `anfs.conf`; depends on everything below |
+| [`ppm`](packages/ppm/README.md) | the package manager: its command, libraries and shell integration |
+| `pcm` | Personal Container Manager |
+| `psm` | Personal Skills Manager |
+| [`wsm`](packages/wsm/README.md) | work space manager |
+| `podman`, `varlock`, `node` | what pcm and psm run on |
+| [`dev`](packages/dev/README.md) | tooling for working on anfs: disposable test machines and the git hooks that version packages |
 
-## Package Repositories
+The repo's `skills/` holds the tools' own skills (`pcm-containers`); `packages/anfs/tests/` the
+end-to-end round trip (see CLAUDE.md, Testing).
 
-ppm ships a default source list and reads yours first. In priority order:
+## Sources
+
+anfs ships a default source list and reads yours first. In priority order:
 
 | Repo | Contents |
 | --- | --- |
-| [ai-ppm](https://github.com/maxcole/ai-ppm) | AI tooling |
-| [pdt-ppm](https://github.com/maxcole/pdt-ppm) | Product Development Toolkit |
+| [utils-ppm](https://github.com/maxcole/utils-ppm) | utilities: networking, storage, OS images |
+| [ai-ppm](https://github.com/maxcole/ai-ppm) | AI tooling: agent packages, and `skills/` |
+| [pdt-ppm](https://github.com/maxcole/pdt-ppm) | Product Development Toolkit, and `containers/` (dnsmasq, netboot) |
 | [pde-ppm](https://github.com/maxcole/pde-ppm) | Personal Development Environment |
-| [ppm](https://github.com/maxcole/ppm) | this repository |
+| core-pcm | container definitions (postgres, valkey, ...) |
+| [ppm](https://github.com/maxcole/ppm) | this repository, alias `anfs` — last, so everything may layer over it |
 
-See each repo's README for the packages it provides, and
-[the `system` package](packages/system/README.md#sources-and-precedence) for how the lists are
-merged and how one repo overrides another.
+`anfs src list` shows what each source provides. See each repo's README for what it holds, and
+[the `ppm` package](packages/ppm/README.md#sources-and-precedence) for how the lists are
+merged and how one source overrides another.

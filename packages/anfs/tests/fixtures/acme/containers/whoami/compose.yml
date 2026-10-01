@@ -1,0 +1,10 @@
+# whoami — a tiny HTTP server that echoes the request (https://github.com/traefik/whoami).
+#
+# pcm service: `pcm up whoami`. Every variable, with its default, lives in .env.schema.
+
+services:
+  whoami:
+    image: ${WHOAMI_IMAGE}:${WHOAMI_TAG}
+    restart: unless-stopped
+    ports:
+      - "${WHOAMI_PORT}:80"

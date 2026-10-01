@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+# anfs — Agent Native Full Stack: the toolkit's own command
+#
+# anfs owns what the tools share: the sources. Each source is a repo that may hold
+#   packages/    ppm   software and dotfiles
+#   containers/  pcm   podman compose services
+#   skills/      psm   agent skills
+#   spaces/      wsm   workspaces
+# and the tools each read their own directory of every source. anfs adds the commands that span
+# them all: install a whole source, and implode the whole toolkit.
+#
+# Commands:
+#   src <add|remove|list|ssh|update>   the source lists (~/.config/anfs/{user,system}.list)
+#   install [-y] <source>...           every resource of each source, tool by tool
+#   implode [-y] [--all]               every tool's implode, then anfs itself; --all also what
+#                                      install.sh added (Homebrew when it installed it)
+#
+# Cherry-picking within a source is each tool's business: ppm install lgat/rails,
+# pcm install lgat/postgres, wsm install lgat/tech.
+set -euo pipefail
+
+ANFS_LIB="$HOME/.local/lib/anfs"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+anfs_gitsrc_env
+
+# The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below
+# shellcheck source=/dev/null
+source "$ANFS_LIB/cli.sh"
+CLI_TOOL=anfs
+cli_cmd src        "src <add|remove|list|ssh|update>" "Manage the sources every tool reads"
+cli_cmd install    "install [-y] <source>..."  "Install everything a source holds: its packages (ppm),
+containers (pcm), skills (psm) and spaces (wsm), in that
+order. To pick single resources use the tool itself."
+cli_cmd implode    "implode [-y] [--all]"      "Remove everything the toolkit put on this machine:
+wsm, psm, pcm, then ppm (which removes the tools and the
+software they run on), then the sources. Space contents
+are kept. It ends by listing what anfs's installer added
+that is still there (mise and its tools, the base formulas,
+Homebrew if it installed it); --all removes that too, and
+nothing that was on the machine before anfs."
+cli_cmd completion "completion <shell>"        "Output shell completion code (zsh)"
+cli_cmd help       "help"                      "Show this help"
+
+cli_help_epilogue() {
+  cat <<'EOF'
+A source is a git repo (or a local directory) listed in ~/.config/anfs/user.list (yours,
+highest priority) or system.list (shipped). `anfs src list` shows what each one provides.
+EOF
+}
+
+die() { echo "anfs: $*" >&2; exit 1; }
+
+# The tool commands, from ~/.local/bin even when it is not on PATH
+tool() {
+  local bin="$ANFS_BIN_DIR/$1"
+  shift
+  [[ -x "$bin" ]] || die "$(basename "$bin") is not installed (ppm install anfs/anfs)"
+  "$bin" "$@"
+}
+
+confirm() {
+  local answer
+  [[ -t 0 ]] || die "$1; pass -y to confirm without a terminal"
+  read -r -p "$2 [y/N] " answer
+  [[ "$answer" == [yY]* ]] || die "nothing done"
+}
+
+cmd_src() {
+  gitsrc_command "$@"
+}
+
+cmd_install() {
+  local yes=false arg
+  local -a srcs=()
+  for arg in "$@"; do
+    case "$arg" in
+      -y|--yes) yes=true ;;
+      -*) die "install: unknown option '$arg'" ;;
+      */*) die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ppm|pcm|psm|wsm install $arg" ;;
+      *) srcs+=("$arg") ;;
+    esac
+  done
+  [[ ${#srcs[@]} -gt 0 ]] || die "Usage: anfs install [-y] <source>..."
+
+  gitsrc_update_stale >/dev/null 2>&1 || true
+  gitsrc_collect
+  local src dir t tld plan=""
+  for src in "${srcs[@]}"; do
+    [[ "$(gitsrc_index "$src")" != 9999 ]] || die "'$src' is not a source (anfs src list; anfs src add <url> $src)"
+    dir=$(gitsrc_dir "$src")
+    [[ -d "$dir" ]] || die "source '$src' is not cloned yet (anfs src update $src)"
+    for t in $ANFS_TOOLS; do
+      tld=$(anfs_tool_dir "$t")
+      [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
+    done
+  done
+  [[ -n "$plan" ]] || die "nothing to install: ${srcs[*]} hold no packages, containers, skills or spaces"
+
+  printf 'anfs install:\n%s' "$plan"
+  $yes || confirm "install changes this machine" "Install?"
+
+  # One tool at a time across all the sources: packages bring the software containers and skills
+  # run on, and spaces come last so whatever they open has been installed
+  local rc=0
+  for t in $ANFS_TOOLS; do
+    tld=$(anfs_tool_dir "$t")
+    local -a specs=()
+    for src in "${srcs[@]}"; do
+      [[ -d "$(gitsrc_dir "$src")/$tld" ]] && specs+=("$src/")
+    done
+    [[ ${#specs[@]} -gt 0 ]] || continue
+    echo "== $t install ${specs[*]}"
+    case "$t" in
+      ppm) tool ppm install -y "${specs[@]}" || rc=1 ;;
+      *)   tool "$t" install "${specs[@]}" || rc=1 ;;
+    esac
+  done
+  return $rc
+}
+
+cmd_implode() {
+  local yes=false all=false arg
+  for arg in "$@"; do
+    case "$arg" in
+      -y|--yes) yes=true ;;
+      --all) all=true ;;
+      *) die "Usage: anfs implode [-y] [--all]" ;;
+    esac
+  done
+
+  # Read before anything is deleted: the record lives in anfs's state dir
+  _record_load
+
+  echo "anfs implode runs, in order: wsm psm pcm ppm implode (each lists what it removes),"
+  echo "then deletes the sources ($(_tilde "$ANFS_DATA_HOME")), $(_tilde "$ANFS_CONFIG_HOME") and $(_tilde "$ANFS_CACHE_HOME")."
+  echo "Space contents are kept."
+  if $all; then
+    echo "--all: then everything anfs's installer added to this machine:"
+    _bootstrap_summary "  "
+  fi
+  $yes || confirm "implode removes the whole toolkit" "Implode anfs?"
+
+  # Reverse install order: spaces and skills and containers before the software under them; ppm
+  # last, since removing its packages removes the other tools' commands
+  local t rc=0
+  for t in wsm psm pcm ppm; do
+    [[ -x "$ANFS_BIN_DIR/$t" ]] || continue
+    echo "== $t implode"
+    "$ANFS_BIN_DIR/$t" implode -y || { echo "anfs: $t implode failed; continuing" >&2; rc=1; }
+  done
+
+  local dir
+  for dir in "$ANFS_DATA_HOME" "$ANFS_CONFIG_HOME" "$ANFS_CACHE_HOME" "$ANFS_LIB_DIR"; do
+    [[ -e "$dir" ]] || continue
+    echo "Deleting $(_tilde "$dir")"
+    rm -rf "${dir:?}"
+  done
+  for t in anfs $ANFS_TOOLS; do
+    [[ -L "$ANFS_BIN_DIR/$t" ]] && rm -f "$ANFS_BIN_DIR/$t"
+  done
+
+  if $all; then
+    _implode_bootstrap || rc=1
+  elif [[ -n "$(_bootstrap_summary)" ]]; then
+    echo ""
+    echo "Still on this machine, added by anfs's installer:"
+    _bootstrap_summary "  "
+    echo "Remove them too with: anfs implode --all"
+  else
+    rm -rf "${ANFS_STATE_HOME:?}"
+  fi
+  [[ $rc -eq 0 ]] && echo "anfs imploded. Open a new shell."
+  return $rc
+}
+
+# --- the bootstrap record ($ANFS_BOOTSTRAP_RECORD, written by install.sh) -------------------------
+
+REC_HOMEBREW="" REC_PREFIX="" REC_FORMULAS="" REC_KNOWN_HOSTS="" REC_EXISTING="" REC_CHECKED=""
+_record_load() {
+  [[ -f "$ANFS_BOOTSTRAP_RECORD" ]] || return 0
+  local key value
+  while IFS='=' read -r key value; do
+    case "$key" in
+      homebrew)        REC_HOMEBREW="$value" ;;
+      homebrew_prefix) REC_PREFIX="$value" ;;
+      formulas)        REC_FORMULAS="$value" ;;
+      known_hosts)     REC_KNOWN_HOSTS="$value" ;;
+      existing_homes)  REC_EXISTING="$value" ;;
+      checked_homes)   REC_CHECKED="$value" ;;
+    esac
+  done < "$ANFS_BOOTSTRAP_RECORD"
+}
+
+# The tool homes installed software created: of those install.sh checked, the ones that were not
+# there before the first install
+_created_homes() {
+  local rel
+  for rel in $REC_CHECKED; do
+    [[ "$rel" == .ssh ]] && continue   # only ever emptied, with known_hosts
+    [[ " $REC_EXISTING " == *" $rel "* ]] && continue
+    [[ -e "$HOME/$rel" ]] && echo "$rel"
+  done
+  return 0
+}
+
+# What install.sh added that is still here, one line each with <indent>; nothing when nothing is.
+# What was on the machine before anfs is never listed.
+_bootstrap_summary() {
+  local indent="${1:-}" homes
+  [[ -f "$ANFS_BOOTSTRAP_RECORD" ]] || return 0
+  homes=$(_created_homes | paste -sd ' ' -)
+  homes=$(for rel in $homes; do _is_bare_dir "$rel" || echo "$rel"; done | paste -sd ' ' -)
+  [[ -z "$homes" ]] || echo "${indent}tool homes   $homes (mise and the tools it installed, podman storage, brew caches)"
+  [[ -z "$REC_FORMULAS" ]] || echo "${indent}formulas     $REC_FORMULAS (from Homebrew)"
+  [[ "$REC_KNOWN_HOSTS" != added ]] || echo "${indent}known_hosts  GitHub's host keys in ~/.ssh/known_hosts"
+  [[ "$REC_HOMEBREW" != installed ]] || echo "${indent}Homebrew     ${REC_PREFIX:-its prefix}, installed by anfs"
+  return 0
+}
+
+# `--all`: remove what the record says install.sh added, and nothing that was already there
+_implode_bootstrap() {
+  [[ -f "$ANFS_BOOTSTRAP_RECORD" ]] || { echo "No bootstrap record ($(_tilde "$ANFS_BOOTSTRAP_RECORD")): nothing more to remove"; return 0; }
+  local rc=0 rel brew_bin=""
+  [[ -n "$REC_PREFIX" && -x "$REC_PREFIX/bin/brew" ]] && brew_bin="$REC_PREFIX/bin/brew"
+  [[ -z "$brew_bin" ]] && command -v brew >/dev/null 2>&1 && brew_bin=$(command -v brew)
+
+  # A login shell that runs from Homebrew would stop working: refuse, rather than lock the user out
+  local login_shell
+  login_shell=$(_login_shell)
+  if [[ -n "$brew_bin" && "$login_shell" == "$(dirname "$(dirname "$brew_bin")")"/* ]] &&
+     { [[ "$REC_HOMEBREW" == installed ]] || [[ " $REC_FORMULAS " == *" $(basename "$login_shell") "* ]]; }; then
+    echo "anfs: your login shell is $login_shell, from Homebrew; change it first (chsh -s /bin/zsh)," >&2
+    echo "anfs: then re-run: anfs implode --all" >&2
+    return 1
+  fi
+
+  # Tool homes the toolkit's software created. podman's rootless storage holds files owned by
+  # subordinate ids, which only podman can remove; resetting it first also recreates podman's own
+  # config dir, so the list is taken after.
+  if [[ " $(_created_homes | paste -sd ' ' -) " == *" .local/share/containers "* ]] &&
+     command -v podman >/dev/null 2>&1 && [[ "$OSTYPE" != darwin* ]]; then
+    podman system reset --force >/dev/null 2>&1 || true
+  fi
+  for rel in $(_created_homes); do
+    _is_bare_dir "$rel" && continue                                        # pruned once empty, below
+    [[ "$rel" == .cache/Homebrew && "$REC_HOMEBREW" == installed ]] && continue   # with Homebrew
+    echo "Deleting ~/$rel"
+    rm -rf "${HOME:?}/$rel" 2>/dev/null || { chmod -R u+w "$HOME/$rel" 2>/dev/null; rm -rf "${HOME:?}/$rel"; } || rc=1
+  done
+
+  if [[ "$REC_KNOWN_HOSTS" == added && -f "$ANFS_STATE_HOME/known_hosts" && -f "$HOME/.ssh/known_hosts" ]]; then
+    echo "Removing GitHub's host keys from ~/.ssh/known_hosts"
+    grep -vxF -f "$ANFS_STATE_HOME/known_hosts" "$HOME/.ssh/known_hosts" > "$HOME/.ssh/known_hosts.anfs" || true
+    if [[ -s "$HOME/.ssh/known_hosts.anfs" ]]; then
+      mv "$HOME/.ssh/known_hosts.anfs" "$HOME/.ssh/known_hosts"
+    else
+      rm -f "$HOME/.ssh/known_hosts.anfs" "$HOME/.ssh/known_hosts"
+    fi
+    [[ " $REC_EXISTING " == *" .ssh "* ]] || rmdir "$HOME/.ssh" 2>/dev/null || true
+  fi
+
+  if [[ "$REC_HOMEBREW" == installed && -n "$brew_bin" ]]; then
+    # Homebrew's own uninstaller removes the prefix, formulas included (it asks sudo for the prefix)
+    echo "Uninstalling Homebrew from $(dirname "$(dirname "$brew_bin")")"
+    if NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" -- --force </dev/null >/dev/null; then
+      rm -rf "${HOME:?}/.cache/Homebrew" "${HOME:?}/.homebrew"
+    else
+      echo "anfs: Homebrew's uninstaller failed" >&2
+      rc=1
+    fi
+  elif [[ -n "$REC_FORMULAS" && -n "$brew_bin" ]]; then
+    echo "Uninstalling $REC_FORMULAS from Homebrew (it was here before anfs, so it stays)"
+    # shellcheck disable=SC2086
+    "$brew_bin" uninstall --quiet $REC_FORMULAS || rc=1
+    "$brew_bin" autoremove --quiet >/dev/null 2>&1 || true
+  fi
+
+  # The record has served; then the bare XDG dirs the toolkit made, once nothing is left in them
+  # (deepest first)
+  local bare
+  bare=$(_created_homes | awk -F/ '{ print NF "\t" $0 }' | sort -rn | cut -f2)
+  rm -rf "${ANFS_STATE_HOME:?}"
+  for rel in $bare; do
+    _is_bare_dir "$rel" && rmdir "$HOME/$rel" 2>/dev/null || true
+  done
+  return $rc
+}
+
+# .local, .config, ... themselves: removed only when empty, never with what is in them
+_is_bare_dir() {
+  case "$1" in .local|.local/share|.local/state|.local/bin|.local/lib|.config|.cache) return 0 ;; esac
+  return 1
+}
+
+# The user's login shell from the account database (getent on Linux, dscl on macOS)
+_login_shell() {
+  if command -v getent >/dev/null 2>&1; then
+    getent passwd "$(id -un)" | cut -d: -f7
+  elif command -v dscl >/dev/null 2>&1; then
+    dscl . -read "/Users/$(id -un)" UserShell 2>/dev/null | awk '{print $2}'
+  fi
+}
+
+_tilde() { echo "${1/#$HOME/~}"; }
+
+cmd_completion() {
+  [[ "${1:-}" == zsh ]] || { echo "Usage: anfs completion <zsh>" >&2; return 1; }
+  cat <<'COMPLETION'
+#compdef anfs
+
+_anfs_sources() {
+  compadd -- ${(f)"$(command anfs src list 2>/dev/null | awk '!/^#/ { print $2 }')"}
+}
+
+_anfs() {
+  local -a subcmds=(
+COMPLETION
+  cli_zsh_commands
+  cat <<'COMPLETION'
+  )
+  if (( CURRENT == 2 )); then
+    _describe 'command' subcmds
+    return
+  fi
+  case "${words[2]}" in
+    src)
+      if (( CURRENT == 3 )); then
+        compadd add remove list ssh update
+      elif [[ "${words[3]}" == (remove|ssh|update) ]]; then
+        _anfs_sources
+      fi
+      ;;
+    install) compadd -- -y; _anfs_sources ;;
+    implode) compadd -- -y --all ;;
+    completion) (( CURRENT == 3 )) && compadd zsh ;;
+  esac
+}
+
+if [[ "${funcstack[1]}" == "_anfs" ]]; then
+  _anfs "$@"
+else
+  compdef _anfs anfs
+fi
+COMPLETION
+}
+
+cli_dispatch "$@"

@@ -1,0 +1,1143 @@
+#!/usr/bin/env bash
+# wsm — work space manager
+#
+# Workspaces can live anywhere under $HOME, at any depth. wsm never walks the filesystem to find
+# them: each workspace carries a marker (.wsm/id) and wsm keeps a registry indexing them. The
+# marker is the source of truth; the registry is a rebuildable cache (`wsm scan`).
+#
+# Written for bash 3.2, the version macOS ships: no associative arrays, no mapfile/readarray.
+# Deleting a registry entry tombstones it (REG_ID[i]="") rather than shifting the arrays, so an
+# index stays valid for the life of a command.
+#
+# See docs/spec.md in this package for the specification, including where this implementation
+# deliberately departs from it.
+set -euo pipefail
+
+# Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
+# cannot read at runtime, so the two are kept in step manually.
+WSM_VERSION=0.1.0
+
+# Paths, sources and the command line come from anfs: every anfs source with a spaces/ directory
+# defines spaces, spaces/<name>/space.yml, which `wsm install` puts in place.
+ANFS_LIB="$HOME/.local/lib/anfs"
+if [[ ! -f "$ANFS_LIB/cli.sh" ]]; then
+  echo "wsm: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  exit 69
+fi
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/resolve.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/cli.sh"
+anfs_gitsrc_env
+
+# An XDG variable that is set but empty counts as unset
+[[ -n "${XDG_STATE_HOME:-}" ]] || XDG_STATE_HOME="$HOME/.local/state"
+
+: "${WSM_STATE_DIR:=$XDG_STATE_HOME/wsm}"
+WSM_REGISTRY="$WSM_STATE_DIR/workspaces"
+WSM_LOCK="$WSM_STATE_DIR/workspaces.lock"
+WSM_MARKER=.wsm
+
+UUID_RE='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+
+# The registry's field separator, and the other character a field may not contain
+TAB=$'\t' NL=$'\n'
+
+# $HOME itself may contain a symlink (macOS /var -> /private/var, a home on a linked volume).
+# Every path wsm stores is canonical, so the boundary they are compared against has to be too.
+WSM_HOME=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || WSM_HOME="$HOME"
+
+# Exit codes
+EX_NOTFOUND=1 EX_AMBIGUOUS=2 EX_STALE=3
+EX_USAGE=64 EX_DATA=65 EX_UNAVAIL=69 EX_EXISTS=73 EX_LOCK=75
+
+# Directories `scan` never descends into
+WSM_PRUNE_DIRS=(.git node_modules vendor .cache Library .Trash)
+
+# The command line (lib/anfs/cli.sh): every command is a cmd_<name> function; the registry is
+# the help, in this order, and the completion's command list
+CLI_TOOL=wsm
+CLI_EX_USAGE=64
+cli_cmd init       "init [DIR] [--name NAME]"     "Mark DIR (default: .) as a workspace and register it"
+cli_cmd new        "new PATH [--name NAME]"       "Create PATH, then behave like init"
+cli_cmd ls         "ls [FILTER] [FORMAT]"         "List registered workspaces"
+cli_cmd cd         "cd [QUERY]"                   "Change to a workspace (requires the wsm shell function)"
+cli_cmd path       "path [QUERY]"                 "Print a workspace path; no QUERY means the one containing ."
+cli_cmd forget     "forget [QUERY]"               "Drop an entry, leaving its marker in place"
+cli_cmd prune      "prune [--dry-run]"            "Drop every stale entry"
+cli_cmd scan       "scan [DIR...] [--dry-run]"    "Search for markers and register what it finds (default: \$HOME)"
+cli_cmd install    "install SPACE... [--dry-run]" "Put spaces from anfs sources in place, dependencies first:
+create, register, clone what space.yml declares. SPACE is
+name, source/name or source/ (all of them)"
+cli_cmd implode    "implode [-y]"                 "Forget every workspace, delete wsm's state (contents are kept)"
+cli_cmd completion "completion <shell>"           "Output shell completion code (zsh)"
+cli_cmd help       "help, --version"              "Show this help, or the version"
+
+cmd_cd() {
+  echo "wsm cd needs the wsm shell function (source ~/.config/sh/wsm.sh)" >&2
+  exit 1
+}
+
+cli_help_epilogue() {
+  cat <<'EOF'
+ls filters:   --stale (stale only), --all (both, stale marked); default is valid only
+ls formats:   --paths (absolute paths), --ids (ids); default is aligned NAME/PATH columns,
+              or tab-separated when stdout is not a terminal
+
+A workspace is any directory holding .wsm/id. That marker is the source of truth: the registry
+at $WSM_STATE_DIR/workspaces only indexes it, and `wsm scan` rebuilds it from scratch.
+
+An entry is stale when its path is gone or its marker no longer holds the recorded id. `wsm ls`
+hides stale entries, `wsm prune` removes them.
+
+A space is defined in an anfs source, at spaces/<name>/space.yml (YAML):
+
+  path: spaces/acme/tech     # where it lives, relative to $HOME (default: spaces/<name>)
+  id: <uuid>                 # optional: the same identity on every machine
+  depends: [org]             # other spaces, installed first (same rules as ppm packages)
+  resources:                 # what belongs inside it, paths relative to the space
+    - type: repo
+      url: git@github.com:you/thing
+      path: repos/thing
+      ref: main            # optional
+
+`wsm install` clones what is missing and leaves alone what is already there; re-running it
+is how a space picks up resources added since.
+
+Rename a workspace by re-running init with a new name:  wsm init --name NEW
+Forget leaves the marker, so a later wsm command run inside the workspace re-registers it. To be
+rid of it for good, remove the marker: rm -r .wsm
+
+Jump around with fzf:  cd "$(wsm ls --all --paths | fzf)"
+EOF
+}
+
+# --- Output helpers -----------------------------------------------------------------------
+
+warn() { echo "wsm: $*" >&2; }
+die()  { echo "wsm: $*" >&2; exit 1; }
+
+# Exit with a specific code from the table in the spec
+# Usage: fail <code> <message>
+fail() { local code="$1"; shift; echo "wsm: $*" >&2; exit "$code"; }
+
+# Wrong arity or flags for a known command: the usage line reads better unprefixed
+usage_err() { echo "Usage: $*" >&2; exit "$EX_USAGE"; }
+
+_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Shorten a leading $HOME for display only; the stored value is always absolute
+_display() {
+  case "$1" in
+    "$WSM_HOME")    printf '~\n' ;;
+    "$WSM_HOME"/*)  printf '~/%s\n' "${1#"$WSM_HOME"/}" ;;
+    *)              printf '%s\n' "$1" ;;
+  esac
+}
+
+# --- Paths --------------------------------------------------------------------------------
+
+# Absolute, symlinks resolved, no trailing slash. Not realpath or readlink -f: neither is POSIX
+# and their flags differ between macOS and Linux.
+_canon() {
+  (cd -P -- "$1" 2>/dev/null && pwd -P)
+}
+
+_require_in_home() {
+  case "$1" in
+    "$WSM_HOME"|"$WSM_HOME"/*) return 0 ;;
+    *) fail "$EX_USAGE" "outside \$HOME: $1" ;;
+  esac
+}
+
+# A path holding a tab or a newline cannot round-trip through the registry format
+_require_storable() {
+  case "$1" in
+    *"$TAB"*) fail "$EX_USAGE" "path contains a tab: $1" ;;
+    *"$NL"*)  fail "$EX_USAGE" "path contains a newline: $1" ;;
+  esac
+}
+
+_basename() {
+  local b="${1##*/}"
+  printf '%s\n' "${b:-$1}"
+}
+
+# --- Marker (.wsm/id) ---------------------------------------------------------------------
+
+# Print the workspace id at <root>. Returns 1 when there is no marker, 2 when it is invalid,
+# so callers can tell "not a workspace" from "broken workspace".
+_marker_read() {
+  local file="$1/$WSM_MARKER/id" id
+  [[ -f "$file" ]] || return 1
+  id=$(cat -- "$file" 2>/dev/null) || return 1
+  # Trim surrounding whitespace only: whitespace in the middle leaves it invalid, as it should
+  id="${id#"${id%%[![:space:]]*}"}"
+  id="${id%"${id##*[![:space:]]}"}"
+  [[ "$id" =~ $UUID_RE ]] || return 2
+  printf '%s\n' "$id"
+}
+
+_marker_write() {
+  local root="$1" id="$2"
+  mkdir -p "$root/$WSM_MARKER" || die "cannot create $root/$WSM_MARKER"
+  printf '%s\n' "$id" > "$root/$WSM_MARKER/id" || die "cannot write $root/$WSM_MARKER/id"
+}
+
+# A lowercase UUID, trying each source the spec lists in turn
+_uuid() {
+  local id=""
+  if command -v uuidgen >/dev/null 2>&1; then
+    id=$(uuidgen 2>/dev/null | tr '[:upper:]' '[:lower:]') || id=""
+  fi
+  if [[ ! "$id" =~ $UUID_RE ]] && [[ -r /proc/sys/kernel/random/uuid ]]; then
+    id=$(tr '[:upper:]' '[:lower:]' < /proc/sys/kernel/random/uuid) || id=""
+  fi
+  if [[ ! "$id" =~ $UUID_RE ]]; then
+    id=$(_uuid_urandom) || id=""
+  fi
+  [[ "$id" =~ $UUID_RE ]] || die "could not generate a workspace id"
+  printf '%s\n' "$id"
+}
+
+# 16 bytes of /dev/urandom shaped into a v4 UUID
+_uuid_urandom() {
+  local hex variant
+  hex=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n') || return 1
+  [[ ${#hex} -eq 32 ]] || return 1
+  # Nibble 16 carries the variant: it must be one of 8, 9, a, b
+  case "${hex:16:1}" in
+    0|4|8|c) variant=8 ;;
+    1|5|9|d) variant=9 ;;
+    2|6|a|e) variant=a ;;
+    *)       variant=b ;;
+  esac
+  # Nibble 12 carries the version, always 4
+  hex="${hex:0:12}4${hex:13:3}${variant}${hex:17:15}"
+  printf '%s-%s-%s-%s-%s\n' \
+    "${hex:0:8}" "${hex:8:4}" "${hex:12:4}" "${hex:16:4}" "${hex:20:12}"
+}
+
+# --- Walk-up ------------------------------------------------------------------------------
+
+# Print the root of the workspace containing <dir>, or return 1. Checks $HOME itself but never
+# walks above it, and stops at / for a starting point outside $HOME.
+_find_root() {
+  local dir
+  dir=$(_canon "$1") || return 1
+  while :; do
+    [[ -f "$dir/$WSM_MARKER/id" ]] && { printf '%s\n' "$dir"; return 0; }
+    [[ "$dir" == "$WSM_HOME" || "$dir" == "/" ]] && return 1
+    dir=$(dirname -- "$dir")
+  done
+}
+
+# --- Registry -----------------------------------------------------------------------------
+#
+# Four parallel arrays, one slot per entry. A slot with an empty id is a tombstone: deleted, but
+# still occupying its index so other indexes stay valid.
+
+REG_ID=() REG_NAME=() REG_ADDED=() REG_PATH=()
+
+# Split a registry line into F1..F4, failing unless it has exactly four tab-separated fields.
+# `path` is last so it may contain spaces; a fifth field means the path held a tab.
+_split4() {
+  local line="$1" rest prev
+  F1="${line%%$TAB*}"; rest="${line#*$TAB}"
+  [[ "$rest" != "$line" ]] || return 1
+  prev="$rest"; F2="${rest%%$TAB*}"; rest="${rest#*$TAB}"
+  [[ "$rest" != "$prev" ]] || return 1
+  prev="$rest"; F3="${rest%%$TAB*}"; rest="${rest#*$TAB}"
+  [[ "$rest" != "$prev" ]] || return 1
+  F4="$rest"
+  [[ "$F4" != *"$TAB"* ]] || return 1
+  return 0
+}
+
+# Load the registry into REG_*. A missing file is an empty registry, not an error.
+# Malformed lines and duplicates are dropped with a warning; the next write cleans them up.
+# Usage: _registry_load [quiet]
+_registry_load() {
+  local quiet="${1:-}" line lineno=0 i dup
+  REG_ID=() REG_NAME=() REG_ADDED=() REG_PATH=()
+  [[ -f "$WSM_REGISTRY" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    lineno=$((lineno + 1))
+    [[ -z "$line" || "$line" == \#* ]] && continue
+
+    if ! _split4 "$line"; then
+      [[ -n "$quiet" ]] || warn "$WSM_REGISTRY line $lineno: wrong field count, skipped"
+      continue
+    fi
+    if [[ ! "$F1" =~ $UUID_RE ]]; then
+      [[ -n "$quiet" ]] || warn "$WSM_REGISTRY line $lineno: invalid id, skipped"
+      continue
+    fi
+    if [[ "$F4" != /* ]]; then
+      [[ -n "$quiet" ]] || warn "$WSM_REGISTRY line $lineno: path is not absolute, skipped"
+      continue
+    fi
+
+    dup=""
+    for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+      if [[ "${REG_ID[$i]}" == "$F1" ]]; then dup="id"; break; fi
+      if [[ "${REG_PATH[$i]}" == "$F4" ]]; then dup="path"; break; fi
+    done
+    if [[ -n "$dup" ]]; then
+      [[ -n "$quiet" ]] || warn "$WSM_REGISTRY line $lineno: duplicate $dup, keeping the first"
+      continue
+    fi
+
+    REG_ID+=("$F1") REG_NAME+=("$F2") REG_ADDED+=("$F3") REG_PATH+=("$F4")
+  done < "$WSM_REGISTRY"
+}
+
+# Write REG_* out atomically. The lock must be held. Sorted by name then path under LC_ALL=C so
+# the file does not churn, and created 0600 before it is renamed into place.
+_registry_write() {
+  local tmp="$WSM_REGISTRY.tmp.$$" i
+  mkdir -p "$WSM_STATE_DIR" || fail "$EX_LOCK" "cannot create $WSM_STATE_DIR"
+  (umask 077; : > "$tmp") || fail "$EX_LOCK" "cannot write $tmp"
+
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" ]] || continue
+    printf '%s\t%s\t%s\t%s\n' \
+      "${REG_ID[$i]}" "${REG_NAME[$i]}" "${REG_ADDED[$i]}" "${REG_PATH[$i]}"
+  done | LC_ALL=C sort -t"$TAB" -k2,2 -k4,4 >> "$tmp"
+
+  mv -- "$tmp" "$WSM_REGISTRY" || fail "$EX_LOCK" "cannot replace $WSM_REGISTRY"
+}
+
+_reg_delete() { REG_ID[$1]=""; }
+
+# Index of the entry with this id, or -1
+_reg_by_id() {
+  local id="$1" i
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" && "${REG_ID[$i]}" == "$id" ]] && { printf '%s\n' "$i"; return 0; }
+  done
+  printf '%s\n' -1
+}
+
+# Index of the entry at this path, or -1
+_reg_by_path() {
+  local path="$1" i
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" && "${REG_PATH[$i]}" == "$path" ]] && { printf '%s\n' "$i"; return 0; }
+  done
+  printf '%s\n' -1
+}
+
+# --- Locking ------------------------------------------------------------------------------
+#
+# mkdir is the atomic primitive; the created file inside records when, because reading a
+# directory's mtime portably is not possible (stat's flags differ between macOS and Linux).
+
+WSM_LOCK_HELD=false
+
+# Only ever consulted after the retry window has expired, so "no created file" means the holder
+# died between mkdir and the write, not that it is a microsecond old. Checking it during normal
+# contention would be a race: every waiter would see a just-created lock as stale and clear it.
+_lock_is_stale() {
+  local created age now
+  created=$(cat -- "$WSM_LOCK/created" 2>/dev/null) || return 0
+  [[ "$created" =~ ^[0-9]+$ ]] || return 0
+  now=$(date +%s)
+  age=$((now - created))
+  [[ $age -gt 60 ]]
+}
+
+# mkdir is the atomic step. Retry every 100ms for 5s, then give up so the caller can decide
+# whether the lock is worth breaking.
+_lock_try() {
+  local tries=0
+  while ! mkdir "$WSM_LOCK" 2>/dev/null; do
+    tries=$((tries + 1))
+    [[ $tries -ge 50 ]] && return 1
+    sleep 0.1
+  done
+  date +%s > "$WSM_LOCK/created" 2>/dev/null || true
+  WSM_LOCK_HELD=true
+  trap _lock_release EXIT INT TERM HUP
+  return 0
+}
+
+_lock_acquire() {
+  mkdir -p "$WSM_STATE_DIR" || fail "$EX_LOCK" "cannot create $WSM_STATE_DIR"
+  chmod 700 "$WSM_STATE_DIR" 2>/dev/null || true
+
+  _lock_try && return 0
+
+  # Five seconds of no progress: the holder is probably never coming back
+  if _lock_is_stale; then
+    warn "clearing a stale lock at $WSM_LOCK"
+    rm -rf "$WSM_LOCK"
+    _lock_try && return 0
+  fi
+  fail "$EX_LOCK" "could not acquire $WSM_LOCK after 5s"
+}
+
+_lock_release() {
+  $WSM_LOCK_HELD || return 0
+  WSM_LOCK_HELD=false
+  rm -rf "$WSM_LOCK"
+}
+
+# --- register -----------------------------------------------------------------------------
+#
+# The one operation init, new, scan and auto-registration all go through. Pure in-memory: the
+# caller holds the lock, loads the registry and writes it back, so scan can batch a whole run
+# into a single write.
+
+REG_STATUS="" REG_OLD=""
+
+# Usage: _register <canonical root> <name or empty> <id>
+_register() {
+  local root="$1" name="$2" id="$3" by_id by_path
+  REG_STATUS="" REG_OLD=""
+  by_id=$(_reg_by_id "$id")
+  by_path=$(_reg_by_path "$root")
+
+  # Known id, same path: nothing to do unless an explicit name differs
+  if [[ $by_id -ge 0 && "${REG_PATH[$by_id]}" == "$root" ]]; then
+    if [[ -n "$name" && "$name" != "${REG_NAME[$by_id]}" ]]; then
+      REG_NAME[$by_id]="$name"
+      REG_STATUS=updated
+    else
+      REG_STATUS=unchanged
+    fi
+    return 0
+  fi
+
+  # Known id at a different path: the workspace moved. Keep its original `added`, and drop
+  # whatever used to sit at the new path.
+  if [[ $by_id -ge 0 ]]; then
+    REG_OLD="${REG_PATH[$by_id]}"
+    if [[ $by_path -ge 0 ]]; then _reg_delete "$by_path"; fi
+    REG_PATH[$by_id]="$root"
+    if [[ -n "$name" ]]; then REG_NAME[$by_id]="$name"; fi
+    REG_STATUS=moved
+    return 0
+  fi
+
+  # Known path, new id: the marker was replaced, e.g. the workspace was deleted and remade
+  if [[ $by_path -ge 0 ]]; then
+    REG_ID[$by_path]="$id"
+    REG_ADDED[$by_path]=$(_now)
+    if [[ -n "$name" ]]; then REG_NAME[$by_path]="$name"; fi
+    REG_STATUS=updated
+    return 0
+  fi
+
+  REG_ID+=("$id")
+  REG_NAME+=("${name:-$(_basename "$root")}")
+  REG_ADDED+=("$(_now)")
+  REG_PATH+=("$root")
+  REG_STATUS=added
+}
+
+# register a single workspace, taking and releasing the lock around it
+_register_locked() {
+  _lock_acquire
+  _registry_load
+  _register "$1" "$2" "$3"
+  _registry_write
+  _lock_release
+}
+
+# --- Staleness ----------------------------------------------------------------------------
+
+# True when the entry no longer describes a live workspace. This reads the marker's contents,
+# so it is an open+read per entry, not a stat.
+_is_stale() {
+  local path="$1" id="$2" actual
+  [[ -d "$path" ]] || return 0
+  actual=$(_marker_read "$path") || return 0
+  [[ "$actual" != "$id" ]]
+}
+
+# --- Query resolution ---------------------------------------------------------------------
+#
+# Exact id, then a unique id prefix of at least 4 characters, then an exact name. Sets
+# MATCHES to the matching indexes.
+
+MATCHES=()
+
+_resolve() {
+  local query="$1" i
+  MATCHES=()
+
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" && "${REG_ID[$i]}" == "$query" ]] && { MATCHES=("$i"); return 0; }
+  done
+
+  if [[ ${#query} -ge 4 && "$query" =~ ^[0-9a-f-]+$ ]]; then
+    for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+      [[ -n "${REG_ID[$i]}" && "${REG_ID[$i]}" == "$query"* ]] && MATCHES+=("$i")
+    done
+    [[ ${#MATCHES[@]} -gt 0 ]] && return 0
+  fi
+
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" && "${REG_NAME[$i]}" == "$query" ]] && MATCHES+=("$i")
+  done
+  [[ ${#MATCHES[@]} -gt 0 ]]
+}
+
+# Print the candidates behind an ambiguous query, as NAME<space><space>PATH
+_print_candidates() {
+  local i idx
+  for idx in ${MATCHES[@]+"${MATCHES[@]}"}; do
+    printf '%s  %s\n' "${REG_NAME[$idx]}" "$(_display "${REG_PATH[$idx]}")" >&2
+  done
+}
+
+# Resolve a query to exactly one entry, left in MATCH_IDX. Exits 1 on no match and 2 on several
+# — so it must be called directly, never in $(...), where the exit would only kill a subshell.
+MATCH_IDX=-1
+
+_resolve_one() {
+  local query="$1"
+  MATCH_IDX=-1
+  if ! _resolve "$query"; then
+    fail "$EX_NOTFOUND" "no workspace matching '$query'"
+  fi
+  if [[ ${#MATCHES[@]} -gt 1 ]]; then
+    warn "'$query' is ambiguous:"
+    _print_candidates
+    exit "$EX_AMBIGUOUS"
+  fi
+  MATCH_IDX="${MATCHES[0]}"
+}
+
+# --- Auto-registration --------------------------------------------------------------------
+#
+# Runs before most commands so a cloned workspace registers itself the first time any wsm
+# command is run inside it. Takes the lock only when something actually has to change, and
+# never fails the command it precedes.
+
+_auto_register() {
+  ( _auto_register_inner ) || warn "auto-registration failed; continuing"
+}
+
+_auto_register_inner() {
+  local root id idx
+
+  root=$(_find_root "$PWD") || return 0
+  # The walk-up finds workspaces anywhere, but only those under $HOME can be registered.
+  # Skip the rest silently: warning on every invocation would be noise, not news.
+  case "$root" in
+    "$WSM_HOME"|"$WSM_HOME"/*) ;;
+    *) return 0 ;;
+  esac
+  case "$root" in *"$TAB"*|*"$NL"*) return 0 ;; esac
+
+  id=$(_marker_read "$root") || return 0
+
+  # The common case is "already registered at this path", which must not take the lock or write
+  _registry_load quiet
+  idx=$(_reg_by_id "$id")
+  [[ $idx -ge 0 && "${REG_PATH[$idx]}" == "$root" ]] && return 0
+
+  _register_locked "$root" "" "$id"
+}
+
+# --- Commands -----------------------------------------------------------------------------
+
+_validate_name() {
+  case "$1" in
+    "")     fail "$EX_USAGE" "name must not be empty" ;;
+    *"$TAB"*|*"$NL"*|*/*)
+            fail "$EX_USAGE" "name must not contain a tab, a newline or /" ;;
+  esac
+}
+
+# The one-line result of init/new: <status> <name> <display-path>
+_report_register() {
+  local root="$1" idx
+  idx=$(_reg_by_path "$root")
+  [[ $idx -ge 0 ]] || die "internal: $root is not registered"
+  printf '%s %s %s\n' "$REG_STATUS" "${REG_NAME[$idx]}" "$(_display "$root")"
+  if [[ "$REG_STATUS" == moved ]]; then
+    warn "moved: $(_display "$REG_OLD") -> $(_display "$root")"
+  fi
+}
+
+cmd_init() {
+  local dir="" name="" u="wsm init [DIR] [--name NAME]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)   [[ $# -ge 2 ]] || usage_err "$u"; name="$2"; shift ;;
+      --name=*) name="${1#*=}" ;;
+      -*)       usage_err "$u" ;;
+      *)        [[ -z "$dir" ]] || usage_err "$u"; dir="$1" ;;
+    esac
+    shift
+  done
+  [[ -z "$name" ]] || _validate_name "$name"
+
+  dir="${dir:-$PWD}"
+  [[ -d "$dir" ]] || fail "$EX_USAGE" "not a directory: $dir"
+
+  local root
+  root=$(_canon "$dir") || fail "$EX_USAGE" "cannot resolve: $dir"
+  _require_in_home "$root"
+  _require_storable "$root"
+
+  local id rc=0
+  id=$(_marker_read "$root") || rc=$?
+  case $rc in
+    0) ;;
+    1) id=$(_uuid); _marker_write "$root" "$id" ;;
+    2) fail "$EX_DATA" "invalid marker: $root/$WSM_MARKER/id" ;;
+  esac
+
+  _register_locked "$root" "$name" "$id"
+  _report_register "$root"
+}
+
+cmd_new() {
+  local path="" name="" u="wsm new PATH [--name NAME]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)   [[ $# -ge 2 ]] || usage_err "$u"; name="$2"; shift ;;
+      --name=*) name="${1#*=}" ;;
+      -*)       usage_err "$u" ;;
+      *)        [[ -z "$path" ]] || usage_err "$u"; path="$1" ;;
+    esac
+    shift
+  done
+  [[ -n "$path" ]] || usage_err "$u"
+  [[ -z "$name" ]] || _validate_name "$name"
+
+  [[ -e "$path" || -L "$path" ]] && fail "$EX_EXISTS" "already exists: $path"
+  mkdir -p -- "$path" || die "cannot create $path"
+
+  # Registration happens only once the directory and its marker exist
+  if [[ -n "$name" ]]; then cmd_init "$path" --name "$name"; else cmd_init "$path"; fi
+}
+
+cmd_ls() {
+  local filter=valid format=columns seen_format="" u="wsm ls [--stale|--all] [--paths|--ids]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --stale) filter=stale ;;
+      --all)   filter=all ;;
+      --paths) [[ -z "$seen_format" ]] || usage_err "$u"; format=paths; seen_format=1 ;;
+      --ids)   [[ -z "$seen_format" ]] || usage_err "$u"; format=ids; seen_format=1 ;;
+      *)       usage_err "$u" ;;
+    esac
+    shift
+  done
+
+  _registry_load
+
+  # --all in a format that cannot mark staleness needs no validation at all: nothing is
+  # filtered and nothing is annotated, so this is the cheap path for piping into fzf.
+  local check=true
+  [[ "$filter" == all && "$format" != columns ]] && check=false
+
+  local i stale rows_name=() rows_path=() rows_stale=() width=0
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" ]] || continue
+
+    stale=false
+    if $check && _is_stale "${REG_PATH[$i]}" "${REG_ID[$i]}"; then stale=true; fi
+    case "$filter" in
+      valid) $stale && continue ;;
+      stale) $stale || continue ;;
+    esac
+
+    case "$format" in
+      paths) printf '%s\n' "${REG_PATH[$i]}"; continue ;;
+      ids)   printf '%s\n' "${REG_ID[$i]}"; continue ;;
+    esac
+
+    rows_name+=("${REG_NAME[$i]}")
+    rows_path+=("$(_display "${REG_PATH[$i]}")")
+    rows_stale+=("$stale")
+    [[ ${#REG_NAME[$i]} -gt $width ]] && width=${#REG_NAME[$i]}
+  done
+
+  [[ "$format" == columns ]] || return 0
+
+  local suffix
+  for ((i = 0; i < ${#rows_name[@]}; i++)); do
+    suffix=""
+    [[ "$filter" == all && "${rows_stale[$i]}" == true ]] && suffix=" (stale)"
+    if [[ -t 1 ]]; then
+      printf '%-*s  %s%s\n' "$width" "${rows_name[$i]}" "${rows_path[$i]}" "$suffix"
+    else
+      printf '%s\t%s%s\n' "${rows_name[$i]}" "${rows_path[$i]}" "$suffix"
+    fi
+  done
+}
+
+cmd_path() {
+  [[ $# -le 1 ]] || usage_err "wsm path [QUERY]"
+
+  # No query: the workspace containing the current directory, which is what a bare `wsm cd` uses
+  if [[ $# -eq 0 ]]; then
+    local root
+    root=$(_find_root "$PWD") || fail "$EX_NOTFOUND" "not inside a workspace"
+    printf '%s\n' "$root"
+    return 0
+  fi
+
+  _registry_load
+  local idx
+  _resolve_one "$1"; idx=$MATCH_IDX
+
+  printf '%s\n' "${REG_PATH[$idx]}"
+  # Stale entries still match and still print, so a `cd` wrapper can act on them
+  if _is_stale "${REG_PATH[$idx]}" "${REG_ID[$idx]}"; then
+    warn "${REG_NAME[$idx]} is stale: $(_display "${REG_PATH[$idx]}")"
+    exit "$EX_STALE"
+  fi
+}
+
+cmd_forget() {
+  [[ $# -le 1 ]] || usage_err "wsm forget [QUERY]"
+  local idx
+
+  _lock_acquire
+  _registry_load
+
+  if [[ $# -eq 1 ]]; then
+    _resolve_one "$1"; idx=$MATCH_IDX
+  else
+    local root
+    root=$(_find_root "$PWD") || fail "$EX_NOTFOUND" "not inside a workspace"
+    idx=$(_reg_by_path "$root")
+    [[ $idx -ge 0 ]] || fail "$EX_NOTFOUND" "not registered: $(_display "$root")"
+  fi
+
+  local name="${REG_NAME[$idx]}" path="${REG_PATH[$idx]}"
+  _reg_delete "$idx"
+  _registry_write
+  _lock_release
+
+  # The marker stays put, so the workspace re-registers itself on the next wsm command run
+  # inside it. `rm -r .wsm` is what makes it permanent.
+  printf 'forgot %s %s\n' "$name" "$(_display "$path")"
+}
+
+cmd_prune() {
+  local dry=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry=true ;;
+      *) usage_err "wsm prune [--dry-run]" ;;
+    esac
+    shift
+  done
+
+  # A dry run needs no lock: it writes nothing
+  $dry || _lock_acquire
+  _registry_load
+
+  local i count=0
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    [[ -n "${REG_ID[$i]}" ]] || continue
+    _is_stale "${REG_PATH[$i]}" "${REG_ID[$i]}" || continue
+    if $dry; then
+      printf 'would prune %s %s\n' "${REG_NAME[$i]}" "$(_display "${REG_PATH[$i]}")"
+    else
+      printf 'pruned %s %s\n' "${REG_NAME[$i]}" "$(_display "${REG_PATH[$i]}")"
+      _reg_delete "$i"
+    fi
+    count=$((count + 1))
+  done
+
+  if ! $dry; then
+    [[ $count -gt 0 ]] && _registry_write
+    _lock_release
+  fi
+  return 0
+}
+
+cmd_scan() {
+  local dry=false dirs=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry=true ;;
+      -*) usage_err "wsm scan [DIR...] [--dry-run]" ;;
+      *) dirs+=("$1") ;;
+    esac
+    shift
+  done
+  [[ ${#dirs[@]} -gt 0 ]] || dirs=("$WSM_HOME")
+
+  # Collect first, so the whole run lands in one locked write
+  local roots=() dir canon marker root
+  for dir in "${dirs[@]}"; do
+    canon=$(_canon "$dir") || { warn "cannot resolve: $dir"; continue; }
+    while IFS= read -r marker; do
+      [[ -n "$marker" ]] || continue
+      root="${marker%/$WSM_MARKER}"
+      [[ -f "$root/$WSM_MARKER/id" ]] || continue
+      roots+=("$root")
+    done < <(_scan_find "$canon")
+  done
+
+  $dry || _lock_acquire
+  _registry_load
+
+  local added=0 moved=0 updated=0 unchanged=0 id rc idx name
+  for root in ${roots[@]+"${roots[@]}"}; do
+    case "$root" in
+      "$WSM_HOME"|"$WSM_HOME"/*) ;;
+      *) warn "outside \$HOME, skipped: $root"; continue ;;
+    esac
+    case "$root" in
+      *"$TAB"*|*"$NL"*) warn "path holds a tab or newline, skipped: $root"; continue ;;
+    esac
+
+    rc=0
+    id=$(_marker_read "$root") || rc=$?
+    if [[ $rc -eq 2 ]]; then
+      warn "invalid marker, skipped: $root/$WSM_MARKER/id"
+      continue
+    fi
+    [[ $rc -eq 0 ]] || continue
+
+    _register "$root" "" "$id"
+    idx=$(_reg_by_path "$root")
+    name="${REG_NAME[$idx]}"
+    if $dry; then
+      printf 'would %s %s %s\n' "$REG_STATUS" "$name" "$(_display "$root")"
+    else
+      printf '%s %s %s\n' "$REG_STATUS" "$name" "$(_display "$root")"
+    fi
+    case "$REG_STATUS" in
+      added)     added=$((added + 1)) ;;
+      moved)     moved=$((moved + 1)) ;;
+      updated)   updated=$((updated + 1)) ;;
+      unchanged) unchanged=$((unchanged + 1)) ;;
+    esac
+  done
+
+  if ! $dry; then
+    _registry_write
+    _lock_release
+  fi
+
+  # The spec lists three counts, but register has four outcomes; updated would otherwise vanish
+  printf '%d added, %d moved, %d updated, %d unchanged\n' "$added" "$moved" "$updated" "$unchanged"
+}
+
+# find, pruning the directories the spec names and never following symlinks
+_scan_find() {
+  local dir="$1" args=() name first=true
+  for name in "${WSM_PRUNE_DIRS[@]}"; do
+    $first || args+=(-o)
+    args+=(-name "$name")
+    first=false
+  done
+  find "$dir" \( "${args[@]}" \) -prune -o -type d -name "$WSM_MARKER" -print 2>/dev/null
+}
+
+# --- space resources -------------------------------------------------------------------------
+#
+# A workspace declares what belongs inside it in .wsm/resources. Only `repo` is implemented; the
+# type field is carried from the start so `link`, `mkdir` and the rest can arrive without
+# invalidating files already written. An unknown type is a warning and a skip, not an error.
+#
+# This is the one command that needs yq. It is not declared in package.yml: yq is a bootstrap
+# formula ppm's own install.sh owns, and declaring it would let `ppm remove` take it away.
+
+# Print the resources file for a workspace root, or return 1
+# A path from a resources file must stay inside the workspace
+_resource_path_ok() {
+  case "$1" in
+    "") return 1 ;;
+    /*) return 1 ;;
+    ..|../*|*/../*|*/..) return 1 ;;
+  esac
+  return 0
+}
+
+# Clone the repo resources <file> declares into the workspace at <root>
+# Usage: _space_resources <root> <file> <dry:true|false>
+_space_resources() {
+  local root="$1" file="$2" dry="$3"
+  command -v yq >/dev/null 2>&1 ||
+    fail "$EX_UNAVAIL" "install needs yq (https://github.com/mikefarah/yq) to read $file"
+  command -v git >/dev/null 2>&1 || fail "$EX_UNAVAIL" "install needs git"
+
+  # One field per line rather than @tsv: tab is IFS whitespace, so `IFS=$TAB read` collapses
+  # adjacent tabs and an entry with a field left out would slide the rest along by one.
+  local type url path ref target cloned=0 present=0 skipped=0 failed=0
+  while IFS= read -r type && IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+    [[ -n "$type$url$path" ]] || continue
+
+    if [[ "$type" != repo ]]; then
+      warn "unknown resource type '$type', skipped${path:+ ($path)}"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if [[ -z "$url" ]] || ! _resource_path_ok "$path"; then
+      warn "a repo resource needs a url and a path inside the workspace: url='$url' path='$path'"
+      failed=$((failed + 1))
+      continue
+    fi
+
+    target="$root/$path"
+    if [[ -d "$target/.git" ]]; then
+      # Deliberately no pull: a pull can conflict or fail, and what is already checked out is
+      # the user's, not ours. `ppm src update` is equally conservative.
+      echo "present $path"
+      present=$((present + 1))
+      continue
+    fi
+    if [[ -e "$target" || -L "$target" ]]; then
+      warn "in the way and not a git repo: $path"
+      failed=$((failed + 1))
+      continue
+    fi
+    if $dry; then
+      echo "would clone $path <- $url"
+      cloned=$((cloned + 1))
+      continue
+    fi
+
+    mkdir -p "$(dirname "$target")"
+    if ! git clone -- "$url" "$target"; then
+      warn "clone failed: $url"
+      rm -rf "$target"
+      failed=$((failed + 1))
+      continue
+    fi
+    # A ref is checked out after the clone rather than passed as --branch, so a commit SHA works
+    if [[ -n "$ref" ]] && ! git -C "$target" checkout -q "$ref"; then
+      warn "cloned $path but could not check out '$ref'"
+      failed=$((failed + 1))
+      continue
+    fi
+    echo "cloned $path"
+    cloned=$((cloned + 1))
+  done < <(yq -r '.resources[]? | [(.type // "repo"), (.url // ""), (.path // ""), (.ref // "")] | .[]' "$file")
+
+  printf '  %d cloned, %d present, %d skipped, %d failed\n' "$cloned" "$present" "$skipped" "$failed"
+  [[ $failed -eq 0 ]]
+}
+
+# --- install ------------------------------------------------------------------------------
+
+# The spaces a space depends on, one per line (anfs_resolve's deps callback)
+_space_deps() {
+  local file="$1/space.yml"
+  [[ -f "$file" ]] || return 0
+  yq -r '.depends[]? // ""' "$file" 2>/dev/null
+}
+
+# `wsm install <space|source/space|source/>... [--dry-run]`: put spaces from anfs sources in
+# place, dependencies first. Each one is created at $HOME/<path>, marked and registered (named
+# after the space), then filled with the resources its space.yml declares. The marker records
+# where the definition came from in .wsm/source. Idempotent: an existing space is re-registered
+# and only its missing resources are cloned.
+cmd_install() {
+  local dry=false arg
+  local -a specs=()
+  for arg in "$@"; do
+    case "$arg" in
+      --dry-run) dry=true ;;
+      -*) usage_err "wsm install SPACE... [--dry-run]" ;;
+      *) specs+=("$arg") ;;
+    esac
+  done
+  [[ ${#specs[@]} -gt 0 ]] || usage_err "wsm install SPACE... [--dry-run]"
+  declare -F anfs_resolve >/dev/null || fail "$EX_UNAVAIL" "install needs anfs (~/.local/lib/anfs)"
+  command -v yq >/dev/null 2>&1 || fail "$EX_UNAVAIL" "install needs yq to read space.yml"
+
+  anfs_sources spaces
+  local -a wanted=()
+  local spec src entry
+  for spec in "${specs[@]}"; do
+    if [[ "$spec" == */ ]]; then
+      src="${spec%/}"
+      anfs_is_source "$src" || fail "$EX_NOTFOUND" "'$src' is not an anfs source with spaces (anfs src list)"
+      while IFS= read -r entry; do
+        [[ -n "$entry" ]] && wanted+=("$entry")
+      done < <(anfs_list spaces "$src")
+    else
+      wanted+=("$spec")
+    fi
+  done
+  [[ ${#wanted[@]} -gt 0 ]] || { echo "No spaces to install"; return 0; }
+
+  # Dependency order; a missing space or a cycle exits here, before anything is created
+  # A name means one space, the highest-priority one (spaces do not layer like packages do), and
+  # a dependency the first at or below the space depending on it
+  ANFS_RESOLVE_FIRST=true
+  ( anfs_resolve spaces _space_deps "${wanted[@]}" ) >/dev/null || exit "$EX_NOTFOUND"
+  anfs_resolve spaces _space_deps "${wanted[@]}"
+
+  local i id dir name path target sid failed=0
+  for i in "${!ANFS_ORDER[@]}"; do
+    id="${ANFS_ORDER[$i]}" dir="${ANFS_ORDER_DIRS[$i]}" name="${id##*/}"
+    path=$(yq -r '.path // ""' "$dir/space.yml" 2>/dev/null) || path=""
+    [[ -n "$path" ]] || path="spaces/$name"
+    if ! _resource_path_ok "$path"; then
+      warn "$id: path must be relative to \$HOME and stay inside it: $path"
+      failed=$((failed + 1))
+      continue
+    fi
+    target="$HOME/$path"
+    echo "space $id -> $(_display "$target")"
+    if $dry; then
+      [[ -f "$dir/space.yml" ]] && _space_resources "$target" "$dir/space.yml" true || true
+      continue
+    fi
+    mkdir -p -- "$target" || { warn "cannot create $target"; failed=$((failed + 1)); continue; }
+    # A fixed id gives the space the same identity on every machine
+    sid=$(yq -r '.id // ""' "$dir/space.yml" 2>/dev/null) || sid=""
+    if [[ -n "$sid" && ! -f "$target/$WSM_MARKER/id" ]]; then
+      [[ "$sid" =~ $UUID_RE ]] || { warn "$id: id is not a lowercase UUID: $sid"; failed=$((failed + 1)); continue; }
+      _marker_write "$target" "$sid"
+    fi
+    ( cmd_init "$target" --name "$name" >/dev/null ) || { failed=$((failed + 1)); continue; }
+    printf '%s\n' "$id" > "$target/$WSM_MARKER/source"
+    if [[ -f "$dir/space.yml" ]]; then
+      _space_resources "$target" "$dir/space.yml" false || failed=$((failed + 1))
+    fi
+  done
+  [[ $failed -eq 0 ]]
+}
+
+cmd_completion() {
+  case "${1:-}" in
+    zsh)
+      cat <<'COMPLETION'
+#compdef wsm
+
+# Workspace names, read straight out of the registry
+_wsm_workspaces() {
+  local state=${WSM_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/wsm}
+  local -a names
+  [[ -r $state/workspaces ]] && names=(${(f)"$(cut -f2 -- $state/workspaces 2>/dev/null)"})
+  compadd -a names
+}
+
+_wsm() {
+  local -a subcmds=(
+COMPLETION
+      cli_zsh_commands
+      cat <<'COMPLETION'
+  )
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' subcmds
+    return
+  fi
+
+  case "${words[2]}" in
+    init|new)
+      _arguments '--name[display name]:name:' '*:directory:_path_files -/'
+      ;;
+    ls)
+      compadd -- --stale --all --paths --ids
+      ;;
+    cd|path|forget)
+      (( CURRENT == 3 )) && _wsm_workspaces
+      ;;
+    prune)
+      compadd -- --dry-run
+      ;;
+    install)
+      compadd -- --dry-run ${(f)"$(command anfs src list 2>/dev/null | awk '/\[.*spaces.*\]/ { print $2 "/" }')"}
+      ;;
+    scan)
+      compadd -- --dry-run
+      _path_files -/
+      ;;
+    completion)
+      (( CURRENT == 3 )) && compadd zsh
+      ;;
+  esac
+}
+
+if [[ "${funcstack[1]}" == "_wsm" ]]; then
+  _wsm "$@"
+else
+  compdef _wsm wsm
+fi
+COMPLETION
+      ;;
+    *)
+      echo "Usage: wsm completion <zsh>" >&2
+      return 1
+      ;;
+  esac
+}
+
+# --- implode ------------------------------------------------------------------------------
+
+# `wsm implode [-y]`: forget every workspace and delete wsm's state. Space contents are never
+# touched. A marker goes only when wsm wrote it: one a space repo commits (tracked by git) is
+# part of that repo, so it stays and the space keeps its identity if wsm comes back.
+cmd_implode() {
+  local yes=false arg
+  for arg in "$@"; do
+    case "$arg" in
+      -y|--yes) yes=true ;;
+      *) usage_err "wsm implode [-y]" ;;
+    esac
+  done
+
+  _registry_load quiet
+  local i path marker
+  local -a drop=() keep=()
+  for ((i = 0; i < ${#REG_ID[@]}; i++)); do
+    path="${REG_PATH[$i]}" marker="${REG_PATH[$i]}/$WSM_MARKER"
+    [[ -d "$marker" ]] || continue
+    if git -C "$path" ls-files --error-unmatch -- "$WSM_MARKER/id" >/dev/null 2>&1; then
+      keep+=("$path")
+    else
+      drop+=("$path")
+    fi
+  done
+
+  {
+    echo "wsm implode removes:"
+    echo "  registry     ${#REG_ID[@]} workspace(s) in $(_display "$WSM_STATE_DIR")"
+    for path in ${drop[@]+"${drop[@]}"}; do echo "  marker       $(_display "$path")/$WSM_MARKER"; done
+    for path in ${keep[@]+"${keep[@]}"}; do echo "  kept         $(_display "$path")/$WSM_MARKER (committed to its repo)"; done
+    echo "Kept: everything inside the workspaces"
+  } >&2
+
+  if ! $yes; then
+    [[ -t 0 ]] || die "implode forgets every workspace; pass -y to confirm without a terminal"
+    local answer
+    read -r -p "Implode wsm? [y/N] " answer
+    [[ "$answer" == [yY]* ]] || die "nothing removed"
+  fi
+
+  for path in ${drop[@]+"${drop[@]}"}; do
+    rm -rf -- "${path:?}/$WSM_MARKER"
+  done
+  rm -rf -- "${WSM_STATE_DIR:?}"
+  echo "wsm imploded" >&2
+}
+
+# --- Dispatch -----------------------------------------------------------------------------
+
+# Auto-registration is skipped for the commands that manage the registry themselves, and for the
+# ones that touch nothing. init and new are on that list although the spec is not: they call
+# register on the very directory the walk-up would find, so auto-registration would do their work
+# first and leave them reporting `unchanged` for a move they were the ones asked to record.
+case "${1:-}" in
+  init|new|forget|prune|scan|install|implode|completion|help|--help|--version|cd|"") ;;
+  *) _auto_register ;;
+esac
+
+if [[ "${1:-}" == --version ]]; then
+  printf 'wsm %s\n' "$WSM_VERSION"
+else
+  cli_dispatch "$@"
+fi

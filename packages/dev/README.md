@@ -27,11 +27,16 @@ the differences between them are the whole point:
 cheapest way to see what a *second* user experiences — the non-owner Homebrew path in particular —
 but it shares your machine, so it proves nothing about a bare one.
 
-**`ppm container`** is the workhorse. It builds a Debian or Fedora image with two test users
-(`owner`, who has sudo with a password, and `other`, who has none) and mounts your source repos
-read-only at `/src`, so the container tests your **working tree** — edits show up without
-committing. Snapshots make the expensive part reusable: install Homebrew once, snapshot, and every
-later run starts from there in seconds. It needs podman (`ppm install podman`).
+**`ppm container`** is the workhorse. The boxes are ordinary pcm services, the anfs repo's
+`containers/anfs-test-debian` and `anfs-test-fedora`. Each has two test users (`owner`, who has
+sudo with a password, and `other`, who has none) and every source repo mounted read-only at
+`/src/<alias>` (pcm's `anfs-sources` mount set), so the box tests your **working tree** — edits
+show up without committing. The boxes run privileged so podman works inside them, and that is
+declared in their definitions with the reason. Snapshots make the expensive part reusable:
+install Homebrew once, `ppm container snapshot debian brew`, and every later
+`ppm container reset debian brew` starts from there in seconds. `ppm container` itself only adds
+what is about anfs (linking the mounts and running `install.sh`); the rest is
+`pcm up|shell|snapshot|reset anfs-test-<distro>`.
 
 What containers cannot reach is the reason the third row exists: no systemd services, no login
 sessions (so nothing that `chsh` touches, and no rc files being sourced for real), no kernel
@@ -89,5 +94,5 @@ push bumps once, `--amend` does not bump again, and a version you set by hand is
 with nothing pushed yet gets no bumps at all, so a new package sits at `0.1.0` until its first
 push.
 
-Because hooks are wired per repo, `ppm hooks install` has to be re-run after `ppm src add` — this
+Because hooks are wired per repo, `ppm hooks install` has to be re-run after `anfs src add` — this
 package's install hook cannot know about a repo you add later.

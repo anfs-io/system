@@ -1,0 +1,12 @@
+# anfs system source list — shipped and managed by the anfs/anfs package.
+# Do NOT edit: it is a stow symlink into the anfs repo; changes here dirty the repo and
+# stop `anfs src update`. Add your own sources with `anfs src add` (they go in user.list and
+# take priority). Format per line: <git-url-or-path> [alias]
+# Each source may hold packages/ (ppm), containers/ (pcm), skills/ (psm) and spaces/ (wsm).
+# anfs is last: everything else may layer over it, and depend on what it ships (podman, node...).
+https://github.com/maxcole/utils-ppm  utils
+https://github.com/maxcole/ai-ppm  ai
+https://github.com/maxcole/pdt-ppm  pdt
+https://github.com/maxcole/pde-ppm  pde
+git@github.com:maxcole/core-pcm.git  core
+https://github.com/maxcole/ppm  anfs

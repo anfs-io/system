@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# Standalone Linux test harness for the anfs toolkit: needs only podman and bash.
+#
+# Frozen copy of ppm/dev's `ppm container`, cut loose from ppm's libs so the anfs refactor cannot
+# break the thing that tests it. It knows nothing about ppm: it mounts host source repos read-only
+# at /src/<alias> and runs commands as a test user. What a test does with those mounts (linking
+# them into a tool's data dir, running install.sh) belongs to the test scripts next to this file.
+set -euo pipefail
+
+HARNESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The boxes are the anfs repo's pcm definitions (containers/anfs-test-<distro>), built from the
+# same Containerfile without pcm
+HARNESS_CONTAINERS="$(cd "$HARNESS_DIR/../../../containers" && pwd)"
+HARNESS_IMAGE=localhost/anfs-test
+HARNESS_SRC_ROOT="${HARNESS_SRC_ROOT:-$HOME/.local/share/ppm}"
+
+usage() {
+  cat <<EOF
+Usage: harness <command> <distro> [...]
+  build <distro> [podman build args]       Build the base image
+  start <distro> [--from SNAPSHOT] [--src alias=path]... [--nested] [-- podman-run-args]
+                                           Start anfs-test-<distro>; sources mounted ro at /src/<alias>
+                                           (default: every git repo under \$HARNESS_SRC_ROOT,
+                                            currently $HARNESS_SRC_ROOT;
+                                            --nested: privileged + /dev/fuse so podman runs inside)
+  exec <distro> [owner|other] -- cmd...    Run a command as a test user (default owner)
+  shell <distro> [owner|other]             Login shell as a test user
+  snapshot <distro> <name>                 Save the container as a snapshot image
+  reset <distro> [snapshot]                Recreate from the base image or a snapshot (same mounts)
+  rm <distro>                              Remove the container
+  list                                     Containers and images
+
+Distros: $(distros)
+Users: owner (sudo, password 'owner'), other (no sudo)
+EOF
+}
+
+die() { echo "harness: $*" >&2; exit 1; }
+
+distros() {
+  local dir names=""
+  for dir in "$HARNESS_CONTAINERS"/anfs-test-*/; do
+    [[ -f "$dir/Containerfile" ]] && names="$names $(basename "$dir" | sed 's/^anfs-test-//')"
+  done
+  echo "${names# }"
+}
+
+check_distro() {
+  [[ -n "${1:-}" && -f "$HARNESS_CONTAINERS/anfs-test-$1/Containerfile" ]] \
+    || die "unknown distro '${1:-}' (available: $(distros))"
+}
+
+check_user() {
+  case "${1:-}" in owner|other) ;; *) die "unknown user '${1:-}' (owner, other)" ;; esac
+}
+
+name_of() { echo "anfs-test-$1"; }
+
+check_running() {
+  [[ "$(podman inspect -f '{{.State.Running}}' "$(name_of "$1")" 2>/dev/null)" == "true" ]] \
+    || die "$(name_of "$1") is not running (harness start $1)"
+}
+
+# podman exec as a test user; a TTY only when we have one
+run_as() {
+  local distro="$1" user="$2"
+  shift 2
+  local tty=()
+  [[ -t 0 && -t 1 ]] && tty=(-t)
+  podman exec -i ${tty[@]+"${tty[@]}"} -e TERM="${TERM:-xterm-256color}" \
+    -u "$user" -w "/home/$user" "$(name_of "$distro")" "$@"
+}
+
+cmd_build() {
+  local distro="${1:-}"
+  shift || true
+  check_distro "$distro"
+  podman build -t "$HARNESS_IMAGE:$distro" "$@" "$HARNESS_CONTAINERS/anfs-test-$distro"
+}
+
+cmd_start() {
+  local distro="${1:-}"
+  shift || true
+  check_distro "$distro"
+
+  local from="" srcs=() extra=() nested=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --from) from="${2:?--from needs a snapshot name}"; shift ;;
+      --src) srcs+=("${2:?--src needs alias=path}"); shift ;;
+      # Rootless podman inside the box (pcm tests): verified with compose on an external network.
+      # Debian also needs nftables + aardvark-dns, which are only Recommends of podman.
+      --nested) nested=true ;;
+      --) shift; extra=("$@"); break ;;
+      *) die "unknown option: $1" ;;
+    esac
+    shift
+  done
+
+  local name image="$HARNESS_IMAGE:$distro"
+  name=$(name_of "$distro")
+  [[ -z "$from" ]] || image="$image-$from"
+  podman container exists "$name" && die "$name already exists (harness reset $distro)"
+  if ! podman image exists "$image"; then
+    [[ -z "$from" ]] || die "no snapshot '$from' for $distro"
+    cmd_build "$distro"
+  fi
+
+  if [[ ${#srcs[@]} -eq 0 ]]; then
+    local dir
+    for dir in "$HARNESS_SRC_ROOT"/*/; do
+      [[ -e "$dir/.git" ]] && srcs+=("$(basename "$dir")=${dir%/}")
+    done
+  fi
+
+  # The label records the mounts so reset can recreate them
+  local mounts=() label="" spec alias path
+  for spec in ${srcs[@]+"${srcs[@]}"}; do
+    alias="${spec%%=*}" path="${spec#*=}"
+    [[ -d "$path" ]] || die "source $alias: $path is not a directory"
+    path=$(cd "$path" && pwd -P)
+    mounts+=(-v "$path:/src/$alias:ro")
+    label="$label $alias=$path"
+  done
+  label="${label# }"
+
+  $nested && extra=(--privileged --device /dev/fuse ${extra[@]+"${extra[@]}"})
+  podman run -d --name "$name" --hostname "$distro" --label "anfs.test.srcs=$label" \
+    --label "anfs.test.nested=$nested" \
+    ${mounts[@]+"${mounts[@]}"} ${extra[@]+"${extra[@]}"} "$image" >/dev/null
+  echo "Started $name from $image"
+  for spec in $label; do echo "  /src/${spec%%=*}  <-  ${spec#*=}"; done
+}
+
+cmd_exec() {
+  local distro="${1:-}" user=owner
+  shift || true
+  if [[ "${1:-}" == owner || "${1:-}" == other ]]; then user="$1"; shift; fi
+  [[ "${1:-}" == "--" ]] && shift
+  [[ $# -gt 0 ]] || die "exec needs a command"
+  check_distro "$distro"
+  check_running "$distro"
+  run_as "$distro" "$user" "$@"
+}
+
+cmd_shell() {
+  local distro="${1:-}" user="${2:-owner}"
+  check_distro "$distro"
+  check_user "$user"
+  check_running "$distro"
+  local login_shell
+  login_shell=$(podman exec "$(name_of "$distro")" getent passwd "$user" | cut -d: -f7)
+  run_as "$distro" "$user" "${login_shell:-/bin/bash}" -l
+}
+
+cmd_snapshot() {
+  local distro="${1:-}" snapshot="${2:-}"
+  check_distro "$distro"
+  [[ "$snapshot" =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || die "snapshot name: lowercase letters, digits, . _ -"
+  podman container exists "$(name_of "$distro")" || die "$(name_of "$distro") does not exist"
+  podman commit -q "$(name_of "$distro")" "$HARNESS_IMAGE:$distro-$snapshot" >/dev/null
+  echo "Saved $HARNESS_IMAGE:$distro-$snapshot"
+}
+
+cmd_reset() {
+  local distro="${1:-}" snapshot="${2:-}"
+  check_distro "$distro"
+  local name label="" opts=() spec
+  name=$(name_of "$distro")
+  if podman container exists "$name"; then
+    label=$(podman inspect -f '{{index .Config.Labels "anfs.test.srcs"}}' "$name")
+    [[ "$(podman inspect -f '{{index .Config.Labels "anfs.test.nested"}}' "$name")" == true ]] \
+      && opts+=(--nested)
+    podman rm -f "$name" >/dev/null
+  fi
+  [[ -z "$snapshot" ]] || opts+=(--from "$snapshot")
+  for spec in $label; do opts+=(--src "$spec"); done
+  cmd_start "$distro" ${opts[@]+"${opts[@]}"}
+}
+
+cmd_rm() {
+  check_distro "${1:-}"
+  podman rm -f "$(name_of "$1")" >/dev/null && echo "Removed $(name_of "$1")"
+}
+
+cmd_list() {
+  echo "Containers:"
+  podman ps -a --filter 'name=^anfs-test-' --format '  {{.Names}}  {{.Status}}  {{.Image}}'
+  echo "Images:"
+  podman images "$HARNESS_IMAGE" --format '  {{.Repository}}:{{.Tag}}  {{.CreatedSince}}'
+}
+
+command -v podman >/dev/null 2>&1 || die "needs podman"
+cmd="${1:-help}"
+shift || true
+if declare -F "cmd_$cmd" >/dev/null; then
+  "cmd_$cmd" "$@"
+else
+  usage
+  [[ "$cmd" == help ]] || exit 1
+fi

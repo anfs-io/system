@@ -1,0 +1,4 @@
+version: 0.1.1
+author: rjayroach
+# The tap ships macOS and Linux (x64/arm64) builds
+brew: [dmno-dev/tap/varlock]

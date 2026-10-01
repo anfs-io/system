@@ -1,0 +1,14 @@
+version: 0.1.1
+author: rjayroach
+# Linux takes podman from the distro: rootless setup and the systemd socket are wired up there
+brew:
+  macos: [podman, podman-compose]
+system:
+  # Debian only Recommends what rootless podman needs, so a host with recommends off gets a podman
+  # that cannot start a container: uidmap (newuidmap/newgidmap, and the /etc/subuid files),
+  # passt (pasta, podman 5's rootless network) and dbus-user-session (the systemd user session).
+  # Fedora's podman Requires them, and shadow-utils ships newuidmap. nftables and aardvark-dns are
+  # Recommends too: without them a compose project on a shared network (pcm's dev-net) cannot
+  # start, and container DNS is off (found running podman nested in a test container).
+  debian: [podman, podman-compose, uidmap, passt, dbus-user-session, nftables, aardvark-dns]
+  linux: [podman, podman-compose]

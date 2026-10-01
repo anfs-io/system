@@ -1,0 +1,24 @@
+# anfs-test-fedora — a fresh fedora box for testing anfs installs: two users (owner, with sudo and the
+# password 'owner'; other, without), every anfs source mounted read-only at /src/<alias>.
+#
+# pcm service: `pcm up anfs-test-fedora`, then `ppm container install fedora` (anfs/dev) or
+# `pcm shell anfs-test-fedora -u owner`. `pcm snapshot` / `pcm reset` keep a box at a point (say,
+# Homebrew installed) and go back to it. The same Containerfile builds the standalone round-trip
+# harness's box (packages/anfs/tests/harness).
+
+x-pcm:
+  privileges:
+    privileged: "rootless podman runs inside the box, so pcm's own services can be tested in it"
+    devices: "/dev/fuse, which podman's overlay storage inside the box needs"
+  mounts:
+    - set: anfs-sources
+      target: /src
+
+services:
+  box:
+    build: .
+    image: localhost/anfs-test-fedora
+    hostname: fedora
+    command: ["sleep", "infinity"]
+    privileged: true
+    devices: ["/dev/fuse"]

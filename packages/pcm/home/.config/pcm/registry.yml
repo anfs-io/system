@@ -1,0 +1,12 @@
+# ~/.config/pcm/registry.yml
+shared_network: dev-net
+
+network_attached_services:
+  - postgres
+  - valkey
+  # - headroom
+
+autostart_services:
+  - postgres
+  # - headroom
+

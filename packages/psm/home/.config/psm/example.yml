@@ -1,0 +1,40 @@
+# Agent skills synced by `psm sync`. This file is stowed by the psm package and
+# declares nothing — copy a stanza into your own <name>.yml to use it.
+#
+# Drop any number of *.yml files in this directory. Each declares a `sources:`
+# list; every entry is installed for each AI agent ppm has installed (any
+# package whose package.yml carries a `meta.agent` key).
+#
+# Skills that a ppm package stows into ~/.local/share/psm/skills need no entry
+# here at all: psm syncs that directory as the `builtin` repo. Use a config for
+# everything else — remote repos, and local skills you keep outside ppm.
+#
+# For a local directory, `psm repo add` writes the config for you: cd into it
+# and run `psm repo add .`, which names the file after the directory. Remote
+# repos are declared by hand, as below.
+
+# sources:
+#   # A remote repo, by name. `repo` accepts anything the skills CLI does:
+#   # owner/repo, a full GitHub or GitLab URL, a git@ URL, or a subpath like
+#   # owner/repo/tree/main/skills/<name>.
+#   - repo: DietrichGebert/ponytail
+#     skills:
+#       - ponytail
+#       - ponytail-audit
+#
+#   - repo: obra/superpowers
+#     skills: ["*"]           # every skill in the repo
+#
+#   # A local repo: any directory holding <skill-name>/SKILL.md. A leading ~ is
+#   # expanded. Local skills are COPIED, so run `psm update` after editing them.
+#   - repo: ~/spaces/cnfs-io/skills
+#     skills:
+#       - tenant-onboarding
+#       - ledger-reconcile
+#
+#   # `agents:` overrides auto-detection, so a source installs only where it
+#   # makes sense. Ids come from `psm agents ls`: claude-code, opencode, pi,
+#   # hermes-agent, antigravity, antigravity-cli.
+#   - repo: ~/spaces/cnfs-io/skills
+#     skills: ["*"]
+#     agents: [claude-code, opencode]

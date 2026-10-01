@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ppm/dev — adds `ppm hooks`: wire ppm's git hooks into the package repos
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so hooks() becomes a ppm command
+# anfs/dev — adds `ppm hooks`: wire ppm's git hooks into the package repos
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_hooks() is the command `ppm hooks`
 #
 # Each repo gets core.hooksPath pointed at the stowed hook directory, set per repo. It is never
 # set globally: a global core.hooksPath applies to every repo on the machine AND suppresses each
@@ -10,7 +10,9 @@
 
 PPM_HOOKS_DIR="$XDG_CONFIG_HOME/git/ppm-hooks"
 
-hooks() {
+cli_cmd hooks "hooks [install|uninstall] [--all] [repo...]" "Wire the package-versioning git hooks into the source repos"
+
+cmd_hooks() {
   local subcommand="${1:-status}"
   shift 2>/dev/null || true
 
@@ -61,7 +63,7 @@ _hooks_target_repos() {
     return 0
   fi
   {
-    _hooks_aliases_in "$PPM_SYSTEM_SOURCES"
+    _hooks_aliases_in "$ANFS_SYSTEM_LIST"
     $all && _hooks_aliases_in "$(_user_sources_read)"
   } | awk '!seen[$0]++'
 }
@@ -77,13 +79,13 @@ _hooks_apply() {
   local alias dir current changed=0
 
   if [[ "$action" == set && ! -d "$PPM_HOOKS_DIR" ]]; then
-    echo "Error: $PPM_HOOKS_DIR does not exist (is ppm/dev installed?)"
+    echo "Error: $PPM_HOOKS_DIR does not exist (is anfs/dev installed?)"
     return 1
   fi
 
   while IFS= read -r alias; do
     [[ -n "$alias" ]] || continue
-    dir="$PPM_DATA_HOME/$alias"
+    dir="$ANFS_SOURCES_HOME/$alias"
     if [[ ! -d "$dir/.git" ]]; then
       debug "hooks: $alias is not a git repo, skipping"
       continue
@@ -138,7 +140,7 @@ _hooks_status() {
   echo "Hook directory: $PPM_HOOKS_DIR$([[ -d "$PPM_HOOKS_DIR" ]] || echo ' (missing)')"
   while IFS= read -r alias; do
     [[ -n "$alias" ]] || continue
-    dir="$PPM_DATA_HOME/$alias"
+    dir="$ANFS_SOURCES_HOME/$alias"
     if [[ ! -d "$dir/.git" ]]; then
       state="not a git repo"
     else

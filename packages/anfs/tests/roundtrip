@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# The anfs round trip, on a fresh Linux box:
+#
+#   install.sh                       the toolkit: anfs/anfs and everything it depends on
+#   ppm install ai/pi                an agent, so psm has somewhere to put skills
+#   anfs install acme                the fixture org source (packages/anfs/tests/fixtures/acme): its packages,
+#                                    containers, skills and spaces, tool by tool
+#   checks                           each tool's view of what acme put there
+#   anfs implode                     and $HOME compared with what it was before install.sh
+#
+# Usage: packages/anfs/tests/roundtrip [--all] [--scratch] [distro] [source...]
+#                                                               (default: debian, and acme)
+#   --all      implode with --all, and hold $HOME to the stricter standard: only what was there
+#              before install.sh may remain (no mise, no tool homes, no host keys)
+#   --scratch  start from the bare distro image instead of the bootstrap snapshot, so install.sh
+#              installs Homebrew itself; with --all, Homebrew must be gone at the end
+#
+# The box starts from a `bootstrap` snapshot: Homebrew, stow, yq and mise already brewed (the
+# software install.sh owns and implode keeps), passwordless sudo for `owner`, and nothing of
+# anfs's. It is built on first use. The source repos are copied from $ROUNDTRIP_SRC_ROOT (default
+# ~/anfs-dev, one directory per alias) and mounted read-only, so a run tests one consistent
+# snapshot of the working tree while editing goes on.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+H=./harness
+all=false scratch=false
+while [[ "${1:-}" == --* ]]; do
+  case "$1" in
+    --all) all=true ;;
+    --scratch) scratch=true ;;
+    *) echo "unknown option: $1" >&2; exit 64 ;;
+  esac
+  shift
+done
+distro="${1:-debian}"
+shift || true
+installs=("$@")
+[[ ${#installs[@]} -gt 0 ]] || installs=(acme)
+
+# $HOME paths a round trip may leave behind or change: state of the software implode keeps on
+# purpose (Homebrew and its taps, mise and the npm tooling it runs, podman's rootless storage and cache),
+# the GitHub host keys install.sh adds, the directories the bootstrap made, and space contents
+# (implode keeps them by design; the markers inside are checked separately). mise's tools are
+# mise's: rust's rustup homes, the sigstore cache mise verifies downloads with, and the
+# default-gems file mise's ruby creates stay with it, and so does anfs's bootstrap record: a plain
+# implode keeps it, so that a later `anfs implode --all` still knows what install.sh added.
+IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.bash_history|\.config/ruby|\.config/ruby/default-gems)$|^\./(\.cache/(Homebrew|mise|aube|sigstore-rust)|\.homebrew|\.npm|\.rustup|\.cargo|\.local/share/(mise|containers)|\.cache/containers|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
+
+podman_x() { podman exec -u root "anfs-test-$distro" "$@"; }
+
+build_bootstrap() {
+  echo "== building $distro-bootstrap snapshot (once)"
+  podman rm -f "anfs-test-$distro" >/dev/null 2>&1 || true
+  $H start "$distro" --src anfs=../../.. >/dev/null
+  podman_x bash -c 'echo "owner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/owner && chmod 440 /etc/sudoers.d/owner'
+  case "$distro" in
+    debian) podman_x bash -c 'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq build-essential procps curl file git >/dev/null' ;;
+    fedora) podman_x bash -c 'dnf install -y -q procps-ng curl file git gcc make >/dev/null' ;;
+  esac
+  $H exec "$distro" -- bash -c '
+    NONINTERACTIVE=1 bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" >/dev/null
+    eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    brew install -q stow yq mise >/dev/null'
+  $H snapshot "$distro" bootstrap
+}
+
+$scratch || podman image exists "localhost/anfs-test:$distro-bootstrap" || build_bootstrap
+# With --all only Homebrew's own churn may differ (a Homebrew that was already there), and spaces.
+# .config, .local and .local/share are made by this script before install.sh runs (to link the
+# mounted sources), so install.sh rightly records them as there before it, and they stay.
+$all && IGNORE_RE='^\./(\.bash_history|\.sudo_as_admin_successful|\.config|\.local|\.local/share)$|^\./(\.cache/Homebrew|spaces)(/|$)'
+$all && $scratch && IGNORE_RE='^\./(\.bash_history|\.sudo_as_admin_successful|\.config|\.local|\.local/share)$|^\./spaces(/|$)'
+
+
+src_root="${ROUNDTRIP_SRC_ROOT:-$HOME/anfs-dev}"
+copy=$(mktemp -d "${TMPDIR:-/tmp}/anfs-roundtrip.XXXXXX")
+trap 'rm -rf "$copy"' EXIT
+srcs=()
+for dir in "$src_root"/*/; do
+  [[ -e "$dir/.git" ]] || continue
+  cp -R "${dir%/}" "$copy/"
+  srcs+=(--src "$(basename "$dir")=$copy/$(basename "$dir")")
+done
+# The fixture org is a source of its own
+srcs+=(--src "acme=$copy/anfs/packages/anfs/tests/fixtures/acme")
+podman rm -f "anfs-test-$distro" >/dev/null 2>&1 || true
+if $scratch; then
+  $H start "$distro" --nested "${srcs[@]}"
+  podman_x bash -c 'echo "owner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/owner && chmod 440 /etc/sudoers.d/owner'
+else
+  $H start "$distro" --from bootstrap --nested "${srcs[@]}"
+fi
+# Fedora's newuidmap/newgidmap rely on file capabilities, which do not survive into a container
+# image layer; nested rootless podman then cannot map ids. setuid is what they fall back to.
+[[ "$distro" == fedora ]] && podman_x chmod u+s /usr/bin/newuidmap /usr/bin/newgidmap
+
+snapshot_home() { $H exec "$distro" -- bash -c 'cd ~ && find . -mindepth 1 | LC_ALL=C sort'; }
+before=$(snapshot_home)
+
+# In the box: brew and ~/.local/bin on PATH, the way a login shell has them
+box() {
+  $H exec "$distro" -- bash -c '[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH"; '"$1"
+}
+
+echo "== install.sh (every /src mounted as a local source)"
+box '
+  set -e
+  mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
+  : > ~/.config/anfs/user.list
+  # Linked ahead of install.sh, which would otherwise clone anfs from GitHub. anfs goes last, as
+  # in system.list: a dependency resolves to the same or a lower-priority source, so everything
+  # that needs what anfs ships (node, podman) must rank above it.
+  for src in $(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
+    ln -sfn "$src" ~/.local/share/anfs/sources/"$(basename "$src")"
+    printf "%s  %s\n" "$src" "$(basename "$src")" >> ~/.config/anfs/user.list
+  done
+  bash /src/anfs/install.sh
+'
+
+echo "== anfs src list"
+box 'anfs src list'
+
+echo "== ppm install ai/pi, then anfs install ${installs[*]}"
+box 'ppm install ai/pi' || echo "!! ppm install ai/pi failed"
+box "anfs install -y ${installs[*]}" || echo "!! anfs install failed"
+
+status=0
+check() {
+  local what="$1" cmd="$2"
+  if box "$cmd" >/dev/null 2>&1; then
+    echo "  ok    $what"
+  else
+    echo "  FAIL  $what"
+    status=1
+  fi
+}
+
+if [[ " ${installs[*]} " == *" acme "* ]]; then
+  echo "== checks"
+  check "ppm: acme/hello stowed and runs"            'acme-hello | grep -q "hello from acme"'
+  check "ppm: acme/acme-infra pulled in pdt/opentofu" 'ppm list --installed | grep -q "pdt/opentofu"'
+  check "pcm: whoami is running"                     'pcm ps | grep -q whoami'
+  check "pcm: whoami answers on its port"            'curl -fsS localhost:8099 | grep -qi hostname'
+  check "pcm: anfs-sources mount set, read via exec" 'pcm exec acme/inspector -- ls /src/acme/packages | grep -qx hello'
+  check "pcm: the mount set is read-only"            '! pcm exec acme/inspector -- touch /src/acme/x'
+  check "pcm: snapshot, then reset to it"            'pcm snapshot whoami s1 && pcm reset -y whoami s1 && pcm snapshot whoami | grep -qx "\* s1" && pcm ps | grep -q whoami'
+  check "pcm: the test boxes are valid pcm services"  'pcm validate anfs-test-debian anfs-test-fedora'
+  check "cli: help and completion come from the registry" 'anfs help | grep -q "implode \[-y\]" && pcm completion zsh | grep -q "snapshot:" && ppm completion zsh | grep -q "implode:"'
+  check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
+  check "psm: acme-hello installed for pi"           'psm skills ls | grep -E "^ok +acme +acme-hello"'
+  check "wsm: org installed before tech"             'wsm ls | grep -q "^org" && wsm ls | grep -q "^tech"'
+  check "wsm: org cloned its repo"                   'test -d ~/spaces/acme/org/hello-world/.git'
+  check "wsm: tech records its source"               'grep -qx acme/tech ~/spaces/acme/tech/.wsm/source'
+fi
+
+if [[ " ${installs[*]} " == *" lgat "* ]]; then
+  echo "== checks (lgat)"
+  check "ppm: lgat/lgat installed"                   'ppm list --installed | grep -q "lgat/lgat"'
+  check "ppm: ruby from pde, via mise"               'mise which ruby && mise exec -- ruby -e "exit 0"'
+  check "ppm: solana pulled in pdt/rust"             'mise which cargo'
+  check "pcm: postgres is running"                   'pcm ps | grep -q postgres'
+  check "pcm: postgres accepts connections"          'c=$(podman ps --filter label=io.pcm.name=postgres --format "{{.Names}}" | head -n1); for i in $(seq 30); do podman exec "$c" pg_isready -U postgres && exit 0; sleep 2; done; exit 1'
+  check "wsm: org at ~/spaces/lgat"                  'test -f ~/spaces/lgat/.wsm/id'
+  check "wsm: tech and marketing installed"          'wsm ls | grep -q "^tech" && wsm ls | grep -q "^marketing"'
+fi
+
+if $all; then
+  echo "== anfs implode --all"
+  box 'anfs implode -y --all' || { echo "!! anfs implode --all failed"; status=1; }
+  if $scratch && box 'test -e /home/linuxbrew/.linuxbrew/bin/brew'; then
+    echo "== Homebrew, which install.sh installed, is still there"
+    status=1
+  fi
+else
+  echo "== anfs implode"
+  implode_out=$(box 'anfs implode -y' 2>&1) || { echo "!! anfs implode failed"; status=1; }
+  echo "$implode_out"
+  # What install.sh added is reported, with the way to remove it; Homebrew only when it added it
+  if grep -q "Still on this machine, added by anfs's installer" <<< "$implode_out" &&
+     grep -q "anfs implode --all" <<< "$implode_out" &&
+     { $scratch || ! grep -q "^  Homebrew " <<< "$implode_out"; }; then
+    echo "  ok    implode: reports what install.sh added, and --all"
+  else
+    echo "  FAIL  implode: reports what install.sh added, and --all"
+    status=1
+  fi
+fi
+
+after=$(snapshot_home)
+added=$(comm -13 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
+removed=$(comm -23 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
+markers=$(echo "$after" | grep -E '^\./spaces/.*/\.wsm(/|$)' || true)
+
+if [[ -n "$added" ]]; then
+  echo "== left behind in \$HOME:"
+  echo "$added" | sed 's/^/  /'
+  status=1
+fi
+if [[ -n "$removed" ]]; then
+  echo "== deleted from \$HOME (was there before install):"
+  echo "$removed" | sed 's/^/  /'
+  status=1
+fi
+if [[ -n "$markers" ]]; then
+  echo "== wsm markers left in spaces (wsm wrote them; implode should have):"
+  echo "$markers" | sed 's/^/  /'
+  status=1
+fi
+[[ $status -eq 0 ]] && echo "== PASS: everything installed and checked, and \$HOME is back to its pre-install state"
+exit $status

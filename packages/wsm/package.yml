@@ -1,0 +1,4 @@
+version: 0.1.1
+author: rjayroach
+# No dependencies: wsm is one bash script using find, date, sort and od. uuidgen is used when
+# present but is not required — the marker id falls back to /dev/urandom.

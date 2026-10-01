@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# ppm/dev — adds `ppm user`: throwaway users for testing ppm installs from scratch
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so user() becomes a ppm command
+# anfs/dev — adds `ppm user`: throwaway users for testing ppm installs from scratch
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_user() is the command `ppm user`
 
-user() {
+cli_cmd user "user <command> ..." "Throwaway users on this machine, to test installs as someone else"
+
+cmd_user() {
   local subcommand="${1:-}"
   shift 2>/dev/null || true
 

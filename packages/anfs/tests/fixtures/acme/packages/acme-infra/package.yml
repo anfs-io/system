@@ -1,0 +1,4 @@
+version: 0.1.0
+author: acme
+# opentofu is in pdt: a dependency resolves to the same or a lower-priority source
+depends: [opentofu]

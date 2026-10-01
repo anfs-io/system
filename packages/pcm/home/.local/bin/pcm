@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
+# cloned once under ~/.local/share/anfs/sources; pcm reads the containers/ directory of each
+ANFS_LIB="$HOME/.local/lib/anfs"
+if [[ ! -f "$ANFS_LIB/sources.sh" ]]; then
+  echo "pcm: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+anfs_tool_paths pcm
+anfs_gitsrc_env
+: "${PCM_CONTAINERS_HOME:=$PCM_CONFIG_HOME/containers}"
+: "${PCM_VOLUMES_HOME:=$PCM_DATA_HOME/volumes}"
+: "${PCM_ENV_HOME:=$PCM_CONFIG_HOME/env}"
+: "${PCM_HEALTH_TIMEOUT:=120}"
+export PCM_CONFIG_HOME PCM_CONTAINERS_HOME PCM_DATA_HOME PCM_VOLUMES_HOME
+
+# The implicit, highest-priority source: hand-made definitions in $PCM_CONTAINERS_HOME
+PCM_LOCAL_SOURCE=local
+
+# Compose runner: "podman compose" (default) or "podman-compose"
+read -ra RUNNER <<< "${PCM_COMPOSE:-podman compose}"
+
+# varlock resolves each service's env; don't send usage analytics from pcm runs
+: "${VARLOCK_TELEMETRY_DISABLED:=1}"
+export VARLOCK_TELEMETRY_DISABLED
+
+# The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pcm/; the
+# registry below is the help, in this order, and the completion's command list
+# shellcheck source=/dev/null
+source "$ANFS_LIB/cli.sh"
+CLI_TOOL=pcm
+cli_cmd list       "list, ls"                       "List services: NAME SOURCE STATUS (running, stopped, shadowed)"
+cli_cmd show       "show <service>"                 "Definition, dependencies, data, containers, ports and mounts
+(declared ones when nothing is created)"
+cli_cmd path       "path <service>"                 "Output path to a service definition"
+cli_cmd cd         "cd [service]"                   "Change to a service definition (requires pcm.zsh)"
+cli_cmd install    "install <service|source/>..."   "Validate and start services; source/ is every service that
+source defines (\`anfs install\` uses this)"
+cli_cmd up         "up [options] <service>..."      "Start services (detached unless -d/--detach given)"
+cli_cmd down       "down [options] <service>..."    "Stop services; refuses if running services depend on them
+unless --force (stops dependents first)"
+cli_cmd remove     "remove, rm [-y] [-f] <service>..." "Down, then delete everything pcm created for it: containers,
+networks, built images, its data under \${PCM_VOLUMES_HOME}/<name>/;
+runs dependencies' deprovision hooks. Asks first unless -y; -f
+stops running dependents. The definition is kept."
+cli_cmd ps         "ps [service...] [flags]"        "pcm's containers (podman ps; flags pass through)"
+cli_cmd exec       "exec <service> [-u user] [-s svc] -- <cmd>..." "Run a command in a running service's container (-s picks
+the compose service, -u the user)"
+cli_cmd shell      "shell <service> [-u user] [-s svc]" "A login shell in a running service's container"
+cli_cmd snapshot   "snapshot <service> [name]"      "Save the service as it is: containers committed to images,
+its data copied. No name lists the snapshots (* = active)"
+cli_cmd reset      "reset [-y] <service> [snapshot]" "Recreate the service from a snapshot, or from its definition
+with fresh data; replaces its data, so asks unless -y"
+cli_cmd validate   "validate [service...]"          "Check services against pcm conventions (all if none given);
+\`up\` runs it before starting anything"
+cli_cmd implode    "implode [-y]"                   "Delete every container, network, volume and directory pcm
+created, whichever definition it came from"
+cli_cmd completion "completion <shell>"             "Output shell completion code (zsh)"
+cli_cmd help       "help"                           "Show this help"
+cli_alias ls list
+cli_alias rm remove
+
+cli_help_epilogue() {
+  cat <<'EOF'
+A <service> is `name` or `source/name`. A plain name resolves to the highest-priority
+source that defines it: local ($PCM_CONTAINERS_HOME), then the anfs sources in order.
+Only one service of a name runs at a time; `source/name` picks which definition.
+
+Any compose subcommand also works via the podman wrapper in pcm.zsh:
+  podman compose --pcm logs -f postgres
+
+Dependencies: a service's compose.yml may declare other pcm services it needs
+
+  x-pcm:
+    depends_on:
+      postgres:
+        database: glitchtip
+
+`pcm up` starts any that aren't running, waits for them to be healthy, attaches
+the service to the shared network and runs the dependency's `provision` hook
+(if present) with the settings as key=value args. Each KEY=VALUE line the hook
+prints is exported to the service's compose as PCM_<DEP>_<KEY>, e.g.
+PCM_POSTGRES_URL. A value already set in the environment wins. `pcm remove`
+runs the dependency's `deprovision` hook (if present) with the same settings.
+
+Runtime: every service runs as compose project <name> (a definition's top-level
+name: is ignored) and its containers carry the labels io.pcm.id (source/name),
+io.pcm.name and io.pcm.source; ps, list, show and remove find them by those.
+
+Configuration: a service's .env.schema declares every variable its compose.yml
+uses, with types and defaults. pcm runs compose and provision hooks through
+`varlock run` from the service directory, so values resolve as
+environment > .env > .env.schema defaults, and invalid values stop the command.
+Put local overrides in $PCM_ENV_HOME/<name>.env (KEY=VALUE lines), not next to
+the schema: definitions live in git clones. They are exported before varlock
+runs, below anything already in the environment. If fnox is installed and a
+fnox.toml is in the service directory or $PCM_CONFIG_HOME, the call is wrapped
+in `fnox exec` so its secrets are in the environment first.
+
+Validation:
+  errors    env that doesn't pass the service's .env.schema (or no schema when
+            compose.yml uses variables)
+            volumes that aren't bind mounts under ${PCM_VOLUMES_HOME}/<service>/
+            (read-only :ro mounts from the service directory are allowed);
+            unknown or cyclic x-pcm.depends_on
+  warnings  image-declared VOLUMEs with nothing mounted there (pulled images
+            only); host ports also published by another pcm service; a
+            top-level name: other than the service name
+
+  Other host paths must be listed in the service's compose.yml, and must exist:
+
+    x-pcm:
+      allow_mounts:
+        - ${PCM_PODMAN_SOCKET}
+
+  PCM_PODMAN_SOCKET is set to the podman API socket (inside the podman machine
+  VM on macOS) for services that reference it.
+
+Sources:
+  local     $PCM_CONTAINERS_HOME/<name>/compose.yml
+  anfs      ~/.local/share/anfs/sources/<source>/containers/<name>/compose.yml
+            (every anfs source with a containers/ directory: anfs src list)
+EOF
+}
+
+cmd_cd() {
+  echo "pcm cd requires the pcm shell function (source pcm.zsh)" >&2
+  return 1
+}
+
+# pcm's own libraries, plus any a package contributes: every *.sh in PCM_LIB_DIR. A function
+# named cmd_<name> there is the command `pcm <name>`. The stowed dir is preferred so contributed
+# libs load; next to this script's real path is the fallback (right after a pull, or unstowed).
+pcm_lib_dir() {
+  local self="${BASH_SOURCE[0]}" dir link
+  if [[ -n "${PCM_LIB_DIR:-}" ]]; then echo "$PCM_LIB_DIR"; return; fi
+  if [[ -f "$HOME/.local/lib/pcm/sources.sh" ]]; then echo "$HOME/.local/lib/pcm"; return; fi
+  dir="$(cd "$(dirname "$self")" && pwd)"
+  while [[ -L "$self" ]]; do
+    link="$(readlink "$self")"
+    [[ "$link" == /* ]] || link="$dir/$link"
+    self="$link"
+    dir="$(cd "$(dirname "$self")" && pwd)"
+  done
+  echo "$dir/../lib/pcm"
+}
+PCM_LIB_DIR="$(pcm_lib_dir)"
+if [[ ! -f "$PCM_LIB_DIR/sources.sh" ]]; then
+  echo "pcm: libraries not found in $PCM_LIB_DIR; run: ppm install -f anfs/pcm" >&2
+  exit 1
+fi
+for lib_file in "$PCM_LIB_DIR"/*.sh; do
+  # shellcheck source=/dev/null
+  [[ -f "$lib_file" ]] && source "$lib_file"
+done
+
+PRE=()
+PROVISIONED=()
+NAMED=""
+ORDER=()
+CLOSURE=()
+VALIDATE_ERRORS=0
+
+# Subcommand dispatch
+cmd=$(cli_resolve "${1:-help}")
+shift 2>/dev/null || true
+
+# up and install pull stale sources first, like ppm install
+[[ "$cmd" == "up" || "$cmd" == "install" ]] && { gitsrc_update_stale >&2 || true; }
+case "$cmd" in
+  completion|help|-h|--help) ;;
+  *) load_sources ;;
+esac
+
+# __compose is the podman wrapper's plumbing (pcm.zsh), not a command
+if [[ "$cmd" == "__compose" ]]; then
+  compose_wrapper "$@"
+else
+  cli_dispatch "$cmd" "$@"
+fi

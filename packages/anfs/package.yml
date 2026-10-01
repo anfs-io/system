@@ -1,0 +1,8 @@
+version: 0.2.0
+author: rjayroach
+# anfs/anfs is the toolkit: the anfs command and the libraries every tool shares (this package),
+# plus every tool and the software they run on. install.sh stows this package and anfs/ppm, then
+# `ppm install anfs/anfs` brings the rest in as dependencies, tracked like any other, so
+# `anfs implode` takes them out again. The tools don't declare a dependency back on anfs: like
+# stow and yq it is base software, always present.
+depends: [ppm, podman, varlock, node, pcm, psm, wsm]

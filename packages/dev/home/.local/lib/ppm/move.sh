@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# ppm/dev — adds `ppm move`: relocate a package to another source repo
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so move() becomes a ppm command
+# anfs/dev — adds `ppm move`: relocate a package to another source repo
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_move() is the command `ppm move`
 #
 # Moving a package is four things, not one: unstow it from the old location, move the directory,
 # stow it from the new one, and carry ppm's bookkeeping across (the install tracker, and any
@@ -24,7 +24,9 @@ _move_usage() {
   echo "  -f, --force   move despite uncommitted changes or a broken dependency"
 }
 
-move() {
+cli_cmd move "move <repo/package> <target-repo>" "Move a package to another source repo (trackers, claims and commits too)"
+
+cmd_move() {
   local args=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -56,7 +58,7 @@ move() {
 
   collect_repos
 
-  local src_root="$PPM_DATA_HOME/$src_repo" target_root="$PPM_DATA_HOME/$target"
+  local src_root="$ANFS_SOURCES_HOME/$src_repo" target_root="$ANFS_SOURCES_HOME/$target"
   local src_dir="$src_root/packages/$pkg" dst_dir="$target_root/packages/$pkg"
 
   [[ -d "$src_dir" ]] || { echo "Error: package '$spec' not found"; return 1; }
@@ -75,8 +77,8 @@ move() {
     echo "Error: $target/$pkg already exists; remove or rename it first"
     return 1
   fi
-  if [[ "$src_repo/$pkg" == "ppm/system" ]] && ! ${force:-false}; then
-    echo "Error: ppm/system is ppm itself — install.sh stows it from $PPM_REPO_DIR (use -f to override)"
+  if [[ "$src_repo/$pkg" == anfs/anfs || "$src_repo/$pkg" == anfs/ppm ]] && ! ${force:-false}; then
+    echo "Error: $src_repo/$pkg is a base package — install.sh stows it from $PPM_REPO_DIR (use -f to override)"
     return 1
   fi
 
@@ -175,7 +177,7 @@ _move_broken_dependents() {
   local pkg="$1" src_repo="$2" target="$3" i repo dir other
   for i in "${!REPO_NAMES[@]}"; do
     repo="${REPO_NAMES[$i]}"
-    for dir in "$PPM_DATA_HOME/$repo/packages"/*/; do
+    for dir in "$ANFS_SOURCES_HOME/$repo/packages"/*/; do
       [[ -d "$dir" ]] || continue
       other="${dir%/}"; other="${other##*/}"
       # A layer of the package itself is satisfied by its own group (see _resolve_one)
@@ -195,7 +197,7 @@ _move_resolvable() {
     repo="${REPO_NAMES[$i]}"
     [[ "$repo" == "$src_repo" ]] && continue
     [[ "$repo" == "$target" ]] && return 0
-    [[ -d "$PPM_DATA_HOME/$repo/packages/$pkg" ]] && return 0
+    [[ -d "$ANFS_SOURCES_HOME/$repo/packages/$pkg" ]] && return 0
   done
   return 1
 }
