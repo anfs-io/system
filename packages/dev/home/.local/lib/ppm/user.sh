@@ -43,7 +43,7 @@ _user_install() {
   local userid="${1:-}"
   [[ -n "$userid" ]] || { echo "Usage: ppm user install <user>"; return 1; }
 
-  _user_run_as "$userid" "curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash"
+  _user_run_as "$userid" "curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash"
 }
 
 # Open a login shell as a user; --ssh temporarily opens your agent socket to them

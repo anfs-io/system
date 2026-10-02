@@ -38,8 +38,8 @@
 #   ~/.local/state/ppm/installed/         what ppm installed
 #
 # EXTERNAL FETCHES:
-#   https://github.com/maxcole/ppm.git                                  the anfs repo
-#   https://raw.githubusercontent.com/maxcole/ppm/...                  ppm's libraries, only when
+#   https://github.com/anfs-io/system.git                                  the anfs repo
+#   https://raw.githubusercontent.com/anfs-io/system/...                  ppm's libraries, only when
 #                                                                      piped (no checkout to read)
 #   https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh  only when Homebrew is missing
 #
@@ -77,8 +77,8 @@ XDG_STATE_HOME=$HOME/.local/state
 ANFS_CONFIG_HOME=$XDG_CONFIG_HOME/anfs
 ANFS_SOURCES_HOME=$XDG_DATA_HOME/anfs/sources
 
-ANFS_REPO_URL=https://github.com/maxcole/ppm.git
-ANFS_RAW_URL=https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main
+ANFS_REPO_URL=https://github.com/anfs-io/system.git
+ANFS_RAW_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main
 ANFS_REPO_DIR=$ANFS_SOURCES_HOME/anfs
 # The packages stowed by hand before ppm can run: anfs (what every tool sources) and ppm itself
 ANFS_BASE_PACKAGES="anfs ppm"

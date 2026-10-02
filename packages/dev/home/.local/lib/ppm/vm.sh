@@ -15,7 +15,7 @@
 PPM_VM_DIR="$(cd "$(_resolve_path "${BASH_SOURCE[0]}")/../../../.." && pwd)/vms"
 PPM_VM_STATE_DIR="$PPM_CACHE_HOME/vm"
 PPM_VM_KEY="$PPM_VM_STATE_DIR/id_ed25519"
-PPM_VM_INSTALLER_URL=https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh
+PPM_VM_INSTALLER_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh
 PPM_VM_SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
                  -o LogLevel=ERROR -o ConnectTimeout=10)
 

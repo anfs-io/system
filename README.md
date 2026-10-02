@@ -38,17 +38,17 @@ anfs manages itself as a package, so it updates like anything else it installs.
 
 **macOS**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash
 ```
 
 **Debian 13**
 ```bash
-wget -qO- https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash
 ```
 
 **Fedora**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash
 ```
 
 Run it as your normal user, not root. Open a new shell when it finishes, then `anfs src list` to
@@ -142,7 +142,7 @@ pass its URL to the installer. It is registered as the `user` source — the hig
 and its `anfs` package is installed, which brings your source list and settings with it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash -s -- \
   --repo git@github.com:user/my-ppm
 ```
 
@@ -152,12 +152,12 @@ variables, which is easier to paste into a fresh shell:
 ```bash
 export ANFS_INSTALL_REPO=git@github.com:user/my-ppm
 export ANFS_INSTALL_PACKAGES="git nvim zsh"
-curl -fsSL https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh | bash
 ```
 
 If your repo is private, the installer can only clone it once the machine can authenticate to
 GitHub. When the key lives in 1Password, install its packages from
-[pde-ppm](https://github.com/maxcole/pde-ppm) first (`ppm install op ssh`), authorize the CLI from
+[pde](https://github.com/anfs-io/pde) first (`ppm install op ssh`), authorize the CLI from
 the 1Password desktop app, and then register the repo by hand:
 
 ```bash
@@ -208,12 +208,12 @@ anfs ships a default source list and reads yours first. In priority order:
 
 | Repo | Contents |
 | --- | --- |
-| [utils-ppm](https://github.com/maxcole/utils-ppm) | utilities: networking, storage, OS images |
-| [ai-ppm](https://github.com/maxcole/ai-ppm) | AI tooling: agent packages, and `skills/` |
-| [pdt-ppm](https://github.com/maxcole/pdt-ppm) | Product Development Toolkit, and `containers/` (dnsmasq, netboot) |
-| [pde-ppm](https://github.com/maxcole/pde-ppm) | Personal Development Environment |
+| [utils](https://github.com/anfs-io/utils) | utilities: networking, storage, OS images |
+| [ai](https://github.com/anfs-io/ai) | AI tooling: agent packages, and `skills/` |
+| [pdt](https://github.com/anfs-io/pdt) | Product Development Toolkit, and `containers/` (dnsmasq, netboot) |
+| [pde](https://github.com/anfs-io/pde) | Personal Development Environment |
 | core-pcm | container definitions (postgres, valkey, ...) |
-| [ppm](https://github.com/maxcole/ppm) | this repository, alias `anfs` — last, so everything may layer over it |
+| [system](https://github.com/anfs-io/system) | this repository, alias `anfs` — last, so everything may layer over it |
 
 `anfs src list` shows what each source provides. See each repo's README for what it holds, and
 [the `ppm` package](packages/ppm/README.md#sources-and-precedence) for how the lists are

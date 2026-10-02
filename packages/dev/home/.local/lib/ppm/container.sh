@@ -13,7 +13,7 @@
 # The end-to-end round trip (packages/anfs/tests/roundtrip) builds the same boxes without pcm, so
 # testing pcm never depends on pcm.
 
-PPM_CONTAINER_INSTALLER_URL=https://raw.githubusercontent.com/maxcole/ppm/refs/heads/main/install.sh
+PPM_CONTAINER_INSTALLER_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh
 
 cli_cmd container "container <command> <distro> [...]" "Disposable Linux boxes for testing anfs installs (pcm services)"
 
