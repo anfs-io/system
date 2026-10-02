@@ -64,7 +64,11 @@ _tart_root() {  # <key> <ip> <script> [NAME=value...]
   local key="$1" ip="$2" script="$3" env="" kv
   shift 3
   for kv in "$@"; do env+=" $(shq "$kv")"; done
-  _tart_ssh "$key" "$ip" "$BOOT_USER" "printf '%s\n' $(shq "$BOOT_PW") | sudo -S -p '' env$env bash -s" < "$script" 2>&1 | sed 's/^/  | /'
+  # sudo -A with an askpass helper (sudo -S would read the password from stdin, which carries
+  # the script). The helper holds the stock image's own password, readable only by its account.
+  printf '#!/bin/sh\necho %s\n' "$(shq "$BOOT_PW")" |
+    _tart_ssh "$key" "$ip" "$BOOT_USER" 'umask 077; cat > /tmp/pim-askpass && chmod 700 /tmp/pim-askpass' || return 1
+  _tart_ssh "$key" "$ip" "$BOOT_USER" "SUDO_ASKPASS=/tmp/pim-askpass sudo -A env$env bash -s" < "$script" 2>&1 | sed 's/^/  | /'
   return "${PIPESTATUS[0]}"
 }
 
@@ -126,6 +130,16 @@ _tart_shutdown() {  # <vm> <pid> <key> <ip>
   wait_exit "$pid" 30 || kill -9 "$pid" 2>/dev/null || true
 }
 
+TART_BUILDING=""
+
+# A failed build: stop its VM and delete it
+_tart_build_cleanup() {
+  [[ -n "$BUILD_PID" ]] && pid_alive "$BUILD_PID" && { tart stop "$TART_BUILDING" >/dev/null 2>&1 || kill "$BUILD_PID" 2>/dev/null; wait_exit "$BUILD_PID" 20 || kill -9 "$BUILD_PID" 2>/dev/null; }
+  [[ -n "$TART_BUILDING" ]] && tart delete "$TART_BUILDING" >/dev/null 2>&1
+  BUILD_PID="" TART_BUILDING=""
+  return 0
+}
+
 tart_build() {
   local id="$1" arch="$2" key="$3"
   local name base vm built sshkey user ip pid start log s cpus mem disk
@@ -158,6 +172,9 @@ tart_build() {
 
   pid=$(_tart_run "$vm" "$log/boot.log")
   BUILD_PID="$pid"
+  TART_BUILDING="$vm"
+  trap _tart_build_cleanup EXIT
+  trap 'exit 130' INT TERM
   ip=$(tart ip "$vm" --wait 180 2>/dev/null) || die "$vm got no address; see $(tilde "$log/boot.log")"
   echo "Booted ($ip); installing the image's key for $BOOT_USER"
   if [[ -z "$parent" ]]; then
@@ -183,11 +200,13 @@ tart_build() {
   echo "Shutting down"
   _tart_shutdown "$vm" "$pid" "$sshkey" "$ip"
   BUILD_PID=""
+  trap - EXIT INT TERM
+  TART_BUILDING=""
   built=$(tart_vm_build "$name" "$key")
   tart delete "$built" >/dev/null 2>&1 || true
   tart rename "$vm" "$built"
   # superseded builds: nothing is an overlay on a tart build (clones are independent)
-  _tart_names | grep -E "^pim-$name-[0-9a-f]{16}\$" | grep -vx "$built" | while read -r s; do tart delete "$s" >/dev/null 2>&1 || true; done
+  _tart_names | grep -E "^pim-$name-[0-9a-f]{16}\$" | grep -vx "$built" | while read -r s; do tart delete "$s" >/dev/null 2>&1 || true; done || true
   meta_write_build "$id" "$arch" "$key" "$parent"
   meta_set "$name" "$arch" '.disk = strenv(v)' "$built"
   echo "Built $id (tart) in $(( $(date +%s) - start ))s: $built"
@@ -314,16 +333,16 @@ tart_reset() {
   return 0
 }
 
-tart_snapshots() { _tart_names | sed -n "s/^pim-$1-snap-//p"; }
+tart_snapshots() { _tart_names | sed -n "s/^pim-$1-snap-//p" || true; }
 
 tart_rm() {
   local name="$1" vm
   command -v tart >/dev/null || return 0
-  _tart_names | grep -E "^pim-$name(-|\$)" | while read -r vm; do tart delete "$vm" >/dev/null 2>&1 || true; done
+  _tart_names | grep -E "^pim-$name(-|\$)" | while read -r vm; do tart delete "$vm" >/dev/null 2>&1 || true; done || true
 }
 
 tart_implode() {
   local vm
   command -v tart >/dev/null || return 0
-  _tart_names | grep '^pim-' | while read -r vm; do tart stop "$vm" >/dev/null 2>&1 || true; tart delete "$vm" >/dev/null 2>&1 || true; done
+  _tart_names | grep '^pim-' | while read -r vm; do tart stop "$vm" >/dev/null 2>&1 || true; tart delete "$vm" >/dev/null 2>&1 || true; done || true
 }
