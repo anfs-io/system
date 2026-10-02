@@ -10,7 +10,7 @@ _dev_load_hooks() {
 
 # Wire ppm's git hooks into the package repos. Hooks are not carried by git clone, so this runs
 # on install rather than being part of a repo's contents; re-run `ppm hooks install` after
-# `ppm src add`. user.list repos are opt-in (`ppm hooks install --all`).
+# `anfs src add`. user.list repos are opt-in (`ppm hooks install --all`).
 post_install() {
   _dev_load_hooks || return 0
   echo "Wiring git hooks into the system.list repos:"
