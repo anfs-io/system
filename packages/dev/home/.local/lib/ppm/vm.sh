@@ -279,8 +279,8 @@ _vm_start() {
   collect_repos
   local mounts=() aliases="" i alias host_dir
   if [[ "$sources" != "none" ]]; then
-    for i in "${!REPO_NAMES[@]}"; do
-      alias="${REPO_NAMES[$i]}"
+    for i in "${!GITSRC_NAMES[@]}"; do
+      alias="${GITSRC_NAMES[$i]}"
       [[ -z "$sources" || ",$sources," == *",$alias,"* ]] || continue
       if [[ ! -d "$ANFS_SOURCES_HOME/$alias" ]]; then
         echo "Skipping $alias: not cloned on this host"
@@ -293,10 +293,10 @@ _vm_start() {
   fi
   aliases="${aliases# }"
 
-  # anfs/dev's own commands (vm install) need the ppm source mounted; warn but allow,
+  # anfs/dev's own commands (vm install) need the anfs source mounted; warn but allow,
   # so the box is usable for general experimentation too.
-  if [[ " $aliases " != *" ppm "* ]]; then
-    echo "Note: ppm source not mounted; 'ppm vm install $target' won't work here" >&2
+  if [[ " $aliases " != *" anfs "* ]]; then
+    echo "Note: anfs source not mounted; 'ppm vm install $target' won't work here" >&2
   fi
 
   tart clone "$image" "$name" || return 1
