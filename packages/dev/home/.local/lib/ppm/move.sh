@@ -5,7 +5,7 @@
 # Moving a package is four things, not one: unstow it from the old location, move the directory,
 # stow it from the new one, and carry ppm's bookkeeping across (the install tracker, and any
 # `ppm file claim` that names the package as claimant or owner). Both repos are then committed,
-# because a package that has only moved on disk comes back on the next `ppm src update`.
+# because a package that has only moved on disk comes back on the next `anfs src update`.
 #
 # Install hooks are deliberately NOT re-run: the package's content is unchanged, only its path,
 # so pre_remove/post_install would tear down services and rewrite generated config for nothing.
@@ -56,7 +56,7 @@ cmd_move() {
   local src_repo="${spec%%/*}" pkg="${spec##*/}"
   [[ -n "$src_repo" && -n "$pkg" ]] || { _move_usage; return 1; }
 
-  collect_repos
+  collect_repos   # also collects every source (GITSRC_NAMES), with or without packages/
 
   local src_root="$ANFS_SOURCES_HOME/$src_repo" target_root="$ANFS_SOURCES_HOME/$target"
   local src_dir="$src_root/packages/$pkg" dst_dir="$target_root/packages/$pkg"
@@ -64,12 +64,12 @@ cmd_move() {
   [[ -d "$src_dir" ]] || { echo "Error: package '$spec' not found"; return 1; }
   [[ "$target" != "$src_repo" ]] || { echo "Error: $pkg is already in $target"; return 1; }
 
-  if [[ "$(_repo_index "$target")" -ge 9999 ]]; then
-    echo "Error: '$target' is not a configured source (see 'ppm src list')"
+  if [[ "$(gitsrc_index "$target")" -ge 9999 ]]; then
+    echo "Error: '$target' is not a configured source (see 'anfs src list')"
     return 1
   fi
   if [[ ! -d "$target_root" ]]; then
-    echo "Error: $target_root does not exist; run 'ppm src update $target' first"
+    echo "Error: $target_root does not exist; run 'anfs src update $target' first"
     return 1
   fi
   # -f must never overwrite package sources
@@ -175,8 +175,8 @@ _move_repo_dirty() {
 # after the move. Usage: _move_broken_dependents <pkg> <src_repo> <target_repo>
 _move_broken_dependents() {
   local pkg="$1" src_repo="$2" target="$3" i repo dir other
-  for i in "${!REPO_NAMES[@]}"; do
-    repo="${REPO_NAMES[$i]}"
+  for i in "${!GITSRC_NAMES[@]}"; do
+    repo="${GITSRC_NAMES[$i]}"
     for dir in "$ANFS_SOURCES_HOME/$repo/packages"/*/; do
       [[ -d "$dir" ]] || continue
       other="${dir%/}"; other="${other##*/}"
@@ -192,9 +192,9 @@ _move_broken_dependents() {
 # Usage: _move_resolvable <pkg> <min_index> <src_repo> <target_repo>
 _move_resolvable() {
   local pkg="$1" min_index="$2" src_repo="$3" target="$4" i repo
-  for i in "${!REPO_NAMES[@]}"; do
+  for i in "${!GITSRC_NAMES[@]}"; do
     [[ $i -lt $min_index ]] && continue
-    repo="${REPO_NAMES[$i]}"
+    repo="${GITSRC_NAMES[$i]}"
     [[ "$repo" == "$src_repo" ]] && continue
     [[ "$repo" == "$target" ]] && return 0
     [[ -d "$ANFS_SOURCES_HOME/$repo/packages/$pkg" ]] && return 0
