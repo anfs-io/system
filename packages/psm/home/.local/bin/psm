@@ -514,7 +514,7 @@ cmd_sync() {
 _sync_rows() {
   local force_local="$1" detected="$2"
   local config repo skills agents item
-  local installed=0 current=0 failed=0
+  local installed=0 current=0 failed=0 waiting=0
   local -a list args
 
   while IFS='|' read -r config repo skills agents; do
@@ -522,9 +522,10 @@ _sync_rows() {
     repo=$(_expand_home "$repo")
     [[ -n "$agents" ]] || agents=$detected
 
+    # No agent installed yet is the normal state of a fresh machine, not a failure: installing an
+    # agent package syncs these (psm's ppm callback)
     if [[ -z "$agents" ]]; then
-      warn "$repo: no agents — install an agent package or set agents: in $config"
-      failed=$((failed + 1))
+      waiting=$((waiting + 1))
       continue
     fi
 
@@ -556,10 +557,14 @@ _sync_rows() {
     fi
   done
 
-  if [[ $((installed + current + failed)) -eq 0 ]]; then
+  if [[ $((installed + current + failed + waiting)) -eq 0 ]]; then
     echo "No skill sources: no anfs source has skills/ and $PSM_CONFIG_HOME has no configs"
+  elif [[ $((installed + current + failed)) -eq 0 ]]; then
+    echo "No agent installed yet: $waiting skill source(s) sync when an agent package is installed"
   else
-    echo "Sources: $installed synced, $current up to date, $failed failed"
+    local note=""
+    [[ $waiting -eq 0 ]] || note=", $waiting waiting for an agent"
+    echo "Sources: $installed synced, $current up to date, $failed failed$note"
   fi
   [[ $failed -eq 0 ]]
 }

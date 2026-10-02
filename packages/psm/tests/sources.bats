@@ -110,3 +110,13 @@ psm() { "$PSM" "$@"; }
   [ ! -e "$HOME/.pi" ]
   [ -f "$HOME/.keep/settings" ]
 }
+
+@test "sync: no agent installed yet is waiting, not a failure" {
+  rm "$XDG_STATE_HOME/ppm/installed/ai/pi.yml"
+  source_dir acme
+  skill acme hello
+  run psm sync
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No agent installed yet: 1 skill source(s) sync when an agent package is installed"* ]]
+  [ ! -s "$NPX_LOG" ]
+}
