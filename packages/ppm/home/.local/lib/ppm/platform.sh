@@ -152,7 +152,9 @@ system_pkg_install() {
 _system_sudo() {
   local what="$1"
   local msg="${2:-Installing system packages needs sudo; ask an admin to install: $what}"
-  if command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || sudo -v; }; then
+  # Not just primed once: every brew command resets sudo's cached credentials, so a hook after the
+  # brew phase authenticates again (SUDO_ASKPASS, like Homebrew's own scripts, for unattended runs)
+  if command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || sudo ${SUDO_ASKPASS:+-A} -v; }; then
     return 0
   fi
   ppm_fail "$msg"

@@ -269,7 +269,13 @@ _implode_bootstrap() {
   if [[ "$REC_HOMEBREW" == installed && -n "$brew_bin" ]]; then
     # Homebrew's own uninstaller removes the prefix, formulas included (it asks sudo for the prefix)
     echo "Uninstalling Homebrew from $(dirname "$(dirname "$brew_bin")")"
-    if NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" -- --force </dev/null >/dev/null; then
+    # Every brew command resets sudo's cached credentials (brew.sh: sudo --reset-timestamp), and
+    # ppm implode just ran some; the uninstaller runs without a terminal, so authenticate here, now:
+    # a prompt in a terminal, or SUDO_ASKPASS for an unattended run
+    if ! sudo -n true 2>/dev/null && ! sudo ${SUDO_ASKPASS:+-A} -v; then
+      echo "anfs: removing Homebrew needs sudo; run implode --all in a terminal (or set SUDO_ASKPASS)" >&2
+      rc=1
+    elif NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" -- --force </dev/null >/dev/null; then
       rm -rf "${HOME:?}/.cache/Homebrew" "${HOME:?}/.homebrew"
     else
       echo "anfs: Homebrew's uninstaller failed" >&2

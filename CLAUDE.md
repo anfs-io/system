@@ -224,7 +224,7 @@ Available functions packages can call from their hooks:
 - `debug "message"` — log debug info (visible with `--debug` flag)
 - `user_message "message"` — queue a message for the user (displayed after install completes). Supports `\n` for line breaks. Auto-prefixed with `[repo/package]`.
 - `ppm_fail "message"` — signal a non-fatal install failure. Prints to stderr immediately and queues for end-of-run summary. Caller should `return` after calling.
-- `_system_sudo "<what>" ["<message>"]` — obtain sudo for a hook that needs root. Returns 0 with the credential cache primed, so the real command can use `sudo -n` and never block an unattended install; on failure it `ppm_fail`s with `<message>` (default: the system-package wording) and returns 1. `pde/bash` uses it to write `/etc/shells`.
+- `_system_sudo "<what>" ["<message>"]` — obtain sudo for a hook that needs root. Returns 0 with the credential cache primed, so the real command can use `sudo -n` and never block an unattended install; on failure it `ppm_fail`s with `<message>` (default: the system-package wording) and returns 1. `pde/bash` uses it to write `/etc/shells`. Call it right before the command that needs root, not once up front: **every `brew` command resets sudo's cached credentials** (Homebrew's `brew.sh` runs `sudo --reset-timestamp`), so a cache primed before the brew phase is gone by the time hooks run. With no terminal it uses `SUDO_ASKPASS` (`sudo -A`) when that is set, as Homebrew's own scripts do; that is how the macOS round trip runs unattended. `anfs implode --all` authenticates the same way right before Homebrew's uninstaller.
 - `ppm_register_callback <function>` — call from `post_install` to hear about every later run
   (below). `ppm_unregister_callback` drops it.
 

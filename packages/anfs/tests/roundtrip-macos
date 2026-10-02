@@ -51,6 +51,9 @@ pim up --fresh "${shares[@]}" "$IMG" | tail -n 1
 box() {
   pim shell "$IMG" -- 'bash -s' <<GUEST
 echo owner | sudo -S -p '' -v 2>/dev/null
+# brew resets sudo's cache on every command; hooks after it re-authenticate through this helper
+[ -x /tmp/askpass ] || { printf '#!/bin/sh\necho owner\n' > /tmp/askpass; chmod 700 /tmp/askpass; }
+export SUDO_ASKPASS=/tmp/askpass
 [ -x /opt/homebrew/bin/brew ] && eval "\$(/opt/homebrew/bin/brew shellenv)"
 export PATH="\$HOME/.local/bin:\$PATH"
 export PIM_INSTALL=validate
