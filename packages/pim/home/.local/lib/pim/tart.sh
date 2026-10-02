@@ -336,12 +336,16 @@ tart_reset() {
 tart_snapshots() { _tart_names | sed -n "s/^pim-$1-snap-//p" || true; }
 
 tart_rm() {
+  # tart creates its home on any command; a machine that never ran tart has none to clean
+  [[ -d "${TART_HOME:-$HOME/.tart}" ]] || return 0
   local name="$1" vm
   command -v tart >/dev/null || return 0
   _tart_names | grep -E "^pim-$name(-|\$)" | while read -r vm; do tart delete "$vm" >/dev/null 2>&1 || true; done || true
 }
 
 tart_implode() {
+  # tart creates its home on any command; a machine that never ran tart has none to clean
+  [[ -d "${TART_HOME:-$HOME/.tart}" ]] || return 0
   local vm
   command -v tart >/dev/null || return 0
   _tart_names | grep '^pim-' | while read -r vm; do tart stop "$vm" >/dev/null 2>&1 || true; tart delete "$vm" >/dev/null 2>&1 || true; done || true

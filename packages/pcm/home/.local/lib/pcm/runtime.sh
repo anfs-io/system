@@ -234,8 +234,8 @@ pcm_podman_ready() {
     # a machine that fails to init or start is still removed. "clean": podman had no machine state
     # before this, so implode may delete what podman wrote for it too.
     mkdir -p "$PCM_STATE_HOME"
-    if [[ -e "${XDG_CONFIG_HOME:-$HOME/.config}/containers/podman/machine" || \
-          -e "${XDG_DATA_HOME:-$HOME/.local/share}/containers/podman/machine" ]]; then
+    # A machine's config is a json file; `podman machine list` (above) creates the empty dirs itself
+    if ls "${XDG_CONFIG_HOME:-$HOME/.config}"/containers/podman/machine/*/*.json >/dev/null 2>&1; then
       echo existing > "$PCM_STATE_HOME/machine-created"
     else
       echo clean > "$PCM_STATE_HOME/machine-created"
