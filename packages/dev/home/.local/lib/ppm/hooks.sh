@@ -37,7 +37,7 @@ cmd_hooks() {
       echo "  status [--all] [repo...]     Show which repos are wired up (default)"
       echo ""
       echo "Without repo names: the repos in system.list. --all adds your user.list repos."
-      echo "Hooks are not carried by git clone, so this is re-run after 'ppm src add'."
+      echo "Hooks are not carried by git clone, so this is re-run after 'anfs src add'."
       [[ "$subcommand" == "help" ]] || return 1
       ;;
   esac
@@ -64,7 +64,7 @@ _hooks_target_repos() {
   fi
   {
     _hooks_aliases_in "$ANFS_SYSTEM_LIST"
-    $all && _hooks_aliases_in "$(_user_sources_read)"
+    $all && _hooks_aliases_in "$ANFS_USER_LIST"
   } | awk '!seen[$0]++'
 }
 
