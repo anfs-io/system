@@ -1,0 +1,2 @@
+# A VM image built on anfs's debian-13 (from: resolves to the same or a lower-priority source)
+from: debian-13

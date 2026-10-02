@@ -67,7 +67,7 @@ cmd_up() {
   validate_quiet "$id" || die "$id does not validate (pim validate $id)"
   build_one "$id" "$arch" false false
   if [[ "$(img_backend "$id")" == tart ]]; then
-    tart_up "$id" "$fresh"
+    tart_up "$id" "$fresh" ${shares[@]+"${shares[@]}"}
     return
   fi
 
@@ -143,26 +143,28 @@ cmd_up() {
 }
 
 cmd_shell() {
-  [[ $# -gt 0 ]] || die "Usage: pim shell <image> [-- cmd...]"
-  local name r cmd=""
+  [[ $# -gt 0 ]] || die "Usage: pim shell <image> [-u user] [-- cmd...]"
+  local name r user cmd=""
   name=$(img_name "$(canon "$1" || echo "x/$1")")
   shift
-  [[ "${1:-}" == "--" ]] && shift
   vm_running "$name" || die "$name is not running (pim up $name)"
   r=$(run_dir "$name")
+  user=$(cat "$r/user")
+  [[ "${1:-}" == "-u" ]] && { user="${2:?-u needs a user}"; shift 2; }
+  [[ "${1:-}" == "--" ]] && shift
   if [[ "$(cat "$r/backend")" == tart ]]; then
-    tart_shell "$name" "$@"
+    tart_shell "$name" "$user" "$@"
     return
   fi
   # Like ssh itself: the words are joined and the guest's shell parses them, so both
   # `pim shell x -- ls -l /tmp` and `pim shell x -- 'cd /tmp && ls'` work
   cmd="$*"
   if [[ -n "$cmd" ]]; then
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$(cat "$r/user")" "$cmd"
+    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" "$cmd"
   elif [[ -t 0 ]]; then
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$(cat "$r/user")" -t
+    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" -t
   else
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$(cat "$r/user")" bash -s
+    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" bash -s
   fi
 }
 
@@ -205,7 +207,9 @@ cmd_snapshot() {
   id=$(canon_or_die "$1")
   name=$(img_name "$id")
   if [[ -z "$snap" ]]; then
-    ls "$(snap_dir "$name")" 2>/dev/null | sed -n 's/\.qcow2$//p'
+    if [[ "$(img_backend "$id")" == tart ]]; then tart_snapshots "$name"
+    else ls "$(snap_dir "$name")" 2>/dev/null | sed -n 's/\.qcow2$//p'
+    fi
     return 0
   fi
   [[ "$snap" =~ ^[a-z0-9][a-z0-9_.-]*$ ]] || die "snapshot names are lowercase letters, digits, . _ -"

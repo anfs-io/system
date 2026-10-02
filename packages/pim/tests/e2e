@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# pim end to end, for real: qemu with hvf (macOS) or kvm (Linux), the host's arch.
+# Usage: packages/pim/tests/e2e [debian|fedora|all]   (default: debian)
+#
+# Runs the working tree's pim against an isolated pim (a temp dir for config, data and state;
+# the ISO cache is the real one, so an ISO downloads once) with this repo's images/ as the local
+# source. Each step is checked; the temp dir must be empty of pim's files at the end.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PIM="$here/../home/.local/bin/pim"
+root=$(mktemp -d "${TMPDIR:-/tmp}/pim-e2e.XXXXXX")
+export PIM_LIB_DIR="$here/../home/.local/lib/pim"
+export PIM_IMAGES_HOME="$here/../../../images"
+export PIM_CONFIG_HOME="$root/config" PIM_DATA_HOME="$root/data" PIM_STATE_HOME="$root/state"
+export PIM_SSH_PORT_BASE=2322
+case "${1:-debian}" in
+  debian) images=(debian-13) ;;
+  fedora) images=(fedora-44) ;;
+  all) images=(debian-13 fedora-44) ;;
+  *) echo "usage: e2e [debian|fedora|all]" >&2; exit 64 ;;
+esac
+
+status=0
+step() {
+  local what="$1"; shift
+  local t0=$(date +%s)
+  if "$@" > "$root/step.log" 2>&1; then
+    echo "  ok    $what ($(( $(date +%s) - t0 ))s)"
+  else
+    echo "  FAIL  $what"; sed 's/^/        /' "$root/step.log" | tail -n 25; status=1
+  fi
+}
+pim() { "$PIM" "$@"; }
+mkdir -p "$root/share" && echo shared > "$root/share/f"
+
+for img in "${images[@]}"; do
+  echo "== $img"
+  step "validate"                     pim validate "$img"
+  step "build --verify"               pim build --verify "$img"
+  step "rebuild is a cache hit"       bash -c "'$PIM' build $img | grep -q 'is up to date'"
+  step "up, with a read-only share"   pim up --share "$root/share:sh:ro" "$img"
+  step "shell runs a command"         bash -c "'$PIM' shell $img -- 'cat /mnt/sh/f; echo kept > ~/kept' | grep -qx shared"
+  step "the share is read-only"       bash -c "! '$PIM' shell $img -- touch /mnt/sh/x"
+  step "ps lists it"                  bash -c "'$PIM' ps | grep -q '^$img '"
+  step "down"                         pim down "$img"
+  step "up again: the disk persisted" bash -c "'$PIM' up $img >/dev/null && '$PIM' shell $img -- cat kept | grep -qx kept"
+  step "snapshot, change, reset to it" bash -c "'$PIM' snapshot $img s1 >/dev/null && '$PIM' shell $img -- rm kept && '$PIM' reset -y $img s1 >/dev/null && '$PIM' shell $img -- cat kept | grep -qx kept"
+  step "down"                         pim down "$img"
+  step "publish -c, a standalone qcow2" bash -c "'$PIM' publish -c -o '$root/out.qcow2' $img && qemu-img check -q '$root/out.qcow2' && ! qemu-img info '$root/out.qcow2' | grep -q 'backing file'"
+  step "rm"                           pim rm -y "$img"
+done
+step "implode"                        pim implode -y
+left=$(find "$root" -mindepth 1 -not -path "$root/share*" -not -name 'step.log' -not -name 'out*' | head -5)
+[[ -z "$left" ]] && echo "  ok    implode left nothing" || { echo "  FAIL  implode left: $left"; status=1; }
+rm -rf "$root"
+[[ $status -eq 0 ]] && echo "== PASS" || echo "== FAIL"
+exit $status

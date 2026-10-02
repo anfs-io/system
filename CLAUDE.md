@@ -9,11 +9,12 @@ A source is a git repo (or a local directory) that may hold any of:
 | --- | --- | --- |
 | `packages/` | `ppm` | software and dotfiles: GNU Stow plus install hooks (most of this file) |
 | `containers/` | `pcm` | podman compose services (`containers/<name>/compose.yml`) |
+| `images/` | `pim` | VM images: built, verified, run (`images/<name>/image.yml`; see pim) |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
 | `spaces/` | `wsm` | workspaces (`spaces/<name>/space.yml`) |
 
 `anfs` owns the sources (`anfs src`) and the commands that span the tools: `anfs install
-<source>` installs everything a source holds, tool by tool (ppm, pcm, psm, wsm), and `anfs
+<source>` installs everything a source holds, tool by tool (ppm, pcm, pim, psm, wsm), and `anfs
 implode` runs every tool's `implode` in reverse, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
 `psm install lgat/skill`, `wsm install lgat/tech`; `source/` means all of that kind).
@@ -21,6 +22,45 @@ resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install l
 What the tools share lives in `lib/anfs/` and nothing else does: paths (`paths.sh`), the
 source lists and clones (`sources.sh`), and finding resources plus ordering them by dependency
 (`resolve.sh`). What `install` *does* stays in each tool.
+
+## pim: VM images
+
+pim builds, verifies and runs VM images defined in `images/<name>/` of any source (or
+`~/.config/pim/images/`, the implicit `local` source). `pim help` documents the definition;
+the shape:
+
+```
+images/<name>/
+  image.yml       backend (qemu|tart), distro, arch, iso.<arch>.{url,sha256} | from: <image> | base
+  preseed.cfg | kickstart.ks   optional answer file (${VAR} templated; defaults ship with pim)
+  scripts/*.sh    run as root over ssh after the install, in name order
+  files/          copied to the guest for the scripts
+  verify.sh       what `pim verify` runs on a throwaway boot
+```
+
+- **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
+  and the rendered answer file (plus the image's public key) is appended to the initrd as one
+  more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
+  dependency on the host. The installer powers the VM off (`-no-reboot`), then pim boots the disk.
+- **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
+  dependency: to the same or a lower-priority source, so `lgat/images/app` may build on
+  `anfs/images/debian-13` but not the reverse. Naming its own name is the next layer down.
+- **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
+  sha256, the answer file, the scripts, `files/`, pim's finalize step and the parent's key.
+  `pim build` is a no-op while the key is unchanged; `meta.yml` beside each build records it.
+- **Every build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first boot
+  by a unit pim installs), machine-id. A published image is a new machine wherever it boots.
+- **Access is by key only.** Each root image has its own ed25519 key in `$PIM_DATA_HOME/keys/`;
+  the user's password is locked unless `user.password_hash` is set. ssh is forwarded on
+  127.0.0.1 only.
+- **qemu**: hvf on macOS and kvm on Linux for a guest of the host's arch, TCG emulation
+  otherwise (works, slowly). arm64 guests boot UEFI (a per-disk copy of the vars).
+- **tart** (macOS guests, Apple silicon only) builds from an OCI base image instead of an ISO.
+- One VM per image name (`pim up`), a persistent overlay on the build in `$PIM_DATA_HOME/vms/`.
+- **Out of scope:** deploying to hypervisors or clouds (Proxmox, AWS). pim's job ends at a
+  verified build or a published qcow2; deployment targets are a later kind of their own.
+- `pim install` (what `anfs install` runs) builds; `PIM_INSTALL=validate` only validates, which
+  is what the Linux round trip uses (no KVM in a podman box).
 
 ## Repository Layout
 
@@ -41,11 +81,12 @@ This repo (`anfs/`) contains:
   suites and the end-to-end round trip (Testing).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
-- `packages/{pcm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
-- `packages/{podman,varlock,node}` — the software the tools run on, part of the base install
+- `packages/{pcm,pim,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
+- `packages/{podman,varlock,node,qemu}` — the software the tools run on, part of the base install
 - `packages/dev` — dev/test tooling: containers, macOS VMs, `ppm user`, `ppm move`, the git hooks
 - `skills/` — the tools' own skills (`pcm-containers`), synced by psm like any source's
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
+- `images/` — base VM images (`debian-13`, `fedora-44`) for pim; other sources build on them with `from:`
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `anfs/anfs` and `anfs/ppm`,
   then `ppm install anfs/anfs`)
@@ -521,6 +562,7 @@ bats packages/ppm/tests      # ppm: callbacks, meta
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: registry, scan, install (space.yml, dependencies)
+bats packages/pim/tests      # pim: sources, templates, validate, qemu argv, build (qemu/ssh stubbed)
 ```
 
 End to end, on a fresh Linux box:
@@ -529,6 +571,26 @@ End to end, on a fresh Linux box:
 packages/anfs/tests/roundtrip [debian|fedora] [source...]
     # install.sh, ppm install ai/pi, anfs install acme (or the named sources), checks,
     # anfs implode, then $HOME diffed against its pre-install state
+```
+
+On macOS (Apple silicon), in a tart VM from `ppm vm build macos`'s vanilla base:
+
+```
+packages/anfs/tests/roundtrip-macos [--all]
+    # the same sequence on a Mac with no Homebrew or CLT: install.sh installs both. Checks the CLT,
+    # /opt/homebrew, a cask (acme/acme-mac), lib/anfs under /bin/bash 3.2, and with --all the
+    # login-shell guard (pde/bash makes Homebrew's bash the login shell; implode --all refuses)
+```
+
+pcm cannot run containers in the macOS VM: a macOS guest gets no nested virtualization, so the
+podman machine cannot start (the check is that pcm reports it and implode leaves nothing).
+
+pim, for real (qemu, hvf/kvm; about 3 minutes for Debian, 5 for Fedora, on Apple silicon):
+
+```
+packages/pim/tests/e2e [debian|fedora|all]
+    # validate, build --verify, a cache-hit rebuild, up with a share, shell, down, up again
+    # (the disk persists), snapshot/reset, publish -c, qemu-img check, rm, implode
 ```
 
 - `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
@@ -548,7 +610,8 @@ packages/anfs/tests/roundtrip [debian|fedora] [source...]
 
 `anfs/dev` provides the throwaway machines to validate them on. `ppm container` (Debian, Fedora; the
 boxes are pcm services, `containers/anfs-test-<distro>`) and
-`ppm vm` (macOS on Apple silicon, via tart) share one contract: two test users, `owner` (sudo with
+`ppm vm` (macOS on Apple silicon; the boxes are pim images, `images/anfs-test-<target>`, on the
+tart backend) share one contract: two test users, `owner` (sudo with
 a password) and `other` (none), and the host's source repos mounted **read-only at `/src/<alias>`**,
 so a box tests the working tree rather than the pushed repos. `ppm user` makes a throwaway user on
 the host instead, which is the cheapest way to exercise the non-owner Homebrew path.
@@ -558,14 +621,15 @@ Both harnesses link the mounted sources into `~/.local/share/anfs/sources` and l
 and test the pushed repo instead of the mount.
 
 `ppm vm` differs from `ppm container` in four places, each forced by the platform rather than by
-taste (see `chorus/units/testing/01-macos-vm/` for the evidence):
+taste (the first two live in the image, `images/anfs-test-macos/scripts/10-provision.sh`; the
+second two in pim's tart backend):
 
 - **`/src` comes from `/etc/synthetic.conf`**, realized at boot. tart mounts shares under
   `/Volumes/My Shared Files/<name>`, and `collect_repos` splits source lines on whitespace, so a
   path with spaces is unusable; `/` is read-only, so the link cannot be made directly.
 - **A snapshot recreates the box rather than restarting it.** `tart clone` of a stopped VM captures
   its state correctly, but the restarted original has been observed to come back without those
-  writes. `_vm_shutdown` also shuts the guest down from inside and waits, because `tart stop` can
+  writes. pim's tart backend also shuts the guest down from inside and waits, because `tart stop` can
   return while writes are still buffered and the clone then catches an older APFS checkpoint.
 - **Provisioning raises sudo's `timestamp_timeout`.** `_system_sudo` primes the cache then uses
   `sudo -n`, but macOS defaults to 5 minutes with per-tty tickets and there is no tty over ssh, so
@@ -573,5 +637,5 @@ taste (see `chorus/units/testing/01-macos-vm/` for the evidence):
 - **ssh re-parses the remote command line** where `podman exec` passes argv straight through, so
   multi-word values travel as env vars, not positional arguments.
 
-`vm.sh` runs under ppm's `set -euo pipefail`, so every best-effort `tart` call needs an explicit
-guard (`tart delete` on a missing VM exits 2 and would otherwise kill the command mid-run).
+pim runs under `set -euo pipefail`, so every best-effort `tart` call needs an explicit guard
+(`tart delete` on a missing VM exits 2 and would otherwise kill the command mid-run).

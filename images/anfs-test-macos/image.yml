@@ -1,0 +1,14 @@
+# The macOS test box (ppm vm, roundtrip-macos): a vanilla macOS with the two test users and the
+# host's sources at /src/<alias>, read-only. Vanilla on purpose: no Homebrew and no Xcode CLT, so a
+# run exercises all of install.sh (the -base images ship both).
+description: macOS test box for anfs installs
+backend: tart
+distro: macos
+arch: [arm64]
+base: ghcr.io/cirruslabs/macos-tahoe-vanilla:latest
+cpus: 4
+memory: 8192
+user:
+  name: owner                                  # created by scripts/10-provision.sh
+  bootstrap: {name: admin, password: admin}    # the stock image's account
+shares: ["${ANFS_SOURCES_HOME}/*:ro"]          # each source, as /src/<alias> in the guest

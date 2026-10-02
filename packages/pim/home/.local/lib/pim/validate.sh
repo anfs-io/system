@@ -65,6 +65,9 @@ validate_image() {
     [[ -s "$f" ]] || _v_warn "scripts/$(basename "$f") is empty"
   done
   case "$(img_get "$id" .scripts.defaults true)" in true|false) ;; *) _v_err "scripts.defaults must be true or false" ;; esac
+  if img_has_anfs "$id"; then
+    case "$(img_get "$id" .anfs.sources pushed)" in host|pushed) ;; *) _v_err "anfs.sources must be host or pushed" ;; esac
+  fi
   return 0
 }
 

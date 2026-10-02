@@ -100,7 +100,7 @@ before=$(snapshot_home)
 
 # In the box: brew and ~/.local/bin on PATH, the way a login shell has them
 box() {
-  $H exec "$distro" -- bash -c '[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH"; '"$1"
+  $H exec "$distro" -- bash -c '[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH"; export PIM_INSTALL=validate; '"$1"
 }
 
 echo "== install.sh (every /src mounted as a local source)"
@@ -147,6 +147,8 @@ if [[ " ${installs[*]} " == *" acme "* ]]; then
   check "pcm: snapshot, then reset to it"            'pcm snapshot whoami s1 && pcm reset -y whoami s1 && pcm snapshot whoami | grep -qx "\* s1" && pcm ps | grep -q whoami'
   check "pcm: the test boxes are valid pcm services"  'pcm validate anfs-test-debian anfs-test-fedora'
   check "cli: help and completion come from the registry" 'anfs help | grep -q "implode \[-y\]" && pcm completion zsh | grep -q "snapshot:" && ppm completion zsh | grep -q "implode:"'
+  check "pim: acme/hello is listed, and validates with its from: parent" 'pim list | grep -q "^hello" && pim validate acme/hello debian-13'
+  check "pim: from: resolves to anfs/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        anfs/debian-13"'
   check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
   check "psm: acme-hello installed for pi"           'psm skills ls | grep -E "^ok +acme +acme-hello"'
   check "wsm: org installed before tech"             'wsm ls | grep -q "^org" && wsm ls | grep -q "^tech"'

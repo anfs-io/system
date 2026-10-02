@@ -34,6 +34,9 @@ build_key() {
       (cd "$dir/files" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do echo "file $f $(_sha256 < "$f")"; done)
     fi
     echo "finalize $(_sha256 < "$(pim_defaults)/finalize.sh")"
+    if img_has_anfs "$id" && [[ "$(img_get "$id" .anfs.sources pushed)" == host ]]; then
+      anfs_host_fingerprint
+    fi
   } | _sha256 | cut -c1-16
 }
 
@@ -122,7 +125,7 @@ build_one() {
   key=$(build_key "$id" "$arch") || die "$id: its parent has no $arch build"
   dir=$(meta_dir "$name" "$arch")
   if ! $force && [[ "$(meta_get "$name" "$arch" .cache_key)" == "$key" && "$(meta_get "$name" "$arch" .id)" == "$id" ]] &&
-     [[ -f "$dir/$key.qcow2" ]]; then
+     build_present "$name" "$arch" "$key" "$(img_backend "$id")"; then
     echo "$id ($arch) is up to date ($key)"
     return 0
   fi
@@ -223,13 +226,13 @@ _build_qemu() {
   fi
   : > "$logs/provision.log"
   while IFS= read -r s; do
-    _provision "$logs/provision.log" "$(basename "$s")" "$sshkey" "$port" "$user" "$s" \
+    _provision "$logs/provision.log" "$(basename "$s")" run_script "$sshkey" "$port" "$user" "$s" \
       PIM_IMAGE="$name" PIM_ARCH="$arch" PIM_USER="$user" PIM_FILES="$files"
   done < <(img_scripts "$id")
   if declare -F build_anfs_step >/dev/null; then
     build_anfs_step "$id" "$sshkey" "$port" "$user" "$logs/provision.log"
   fi
-  _provision "$logs/provision.log" finalize "$sshkey" "$port" "$user" "$(pim_defaults)/finalize.sh" \
+  _provision "$logs/provision.log" finalize run_script "$sshkey" "$port" "$user" "$(pim_defaults)/finalize.sh" \
     PIM_IMAGE="$name" PIM_ARCH="$arch"
 
   echo "Shutting down"
@@ -247,9 +250,9 @@ _build_qemu() {
   echo "Built $id ($arch) in $(( $(date +%s) - start ))s: $(tilde "$dir/$key.qcow2")"
 }
 
-# Run one provisioning script: its output goes to <log> (and the terminal with -v); on failure the
-# end of the log is shown and the build stops
-# Usage: _provision <log> <label> <key> <port> <user> <script> [NAME=value...]
+# Run one provisioning step (a command that runs a script in the guest): its output goes to <log>
+# (and the terminal with -v); on failure the end of the log is shown and the build stops
+# Usage: _provision <log> <label> <command...>
 _provision() {
   local log="$1" label="$2" start rc=0
   shift 2
@@ -258,9 +261,9 @@ _provision() {
   echo "== $label" >> "$log"
   if [[ "${PIM_VERBOSE:-false}" == true ]]; then
     echo
-    set +e; run_script "$@" | tee -a "$log"; rc=${PIPESTATUS[0]}; set -e
+    set +e; "$@" | tee -a "$log"; rc=${PIPESTATUS[0]}; set -e
   else
-    run_script "$@" >> "$log" 2>&1 || rc=$?
+    "$@" >> "$log" 2>&1 || rc=$?
   fi
   if [[ $rc -ne 0 ]]; then
     echo " FAILED (exit $rc)"

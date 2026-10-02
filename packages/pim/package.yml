@@ -2,3 +2,7 @@ version: 0.1.0
 author: rjayroach
 depends:
   - qemu
+# tart runs macOS guests (the tart backend); it is in OpenAI's tap, which ppm trusts because it is
+# declared here. Linux has no tart: pim's tart images are macOS-only.
+brew:
+  macos: [openai/tools/tart]

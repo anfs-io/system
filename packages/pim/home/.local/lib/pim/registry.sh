@@ -26,6 +26,14 @@ build_disk() {
   [[ -n "$key" && -f "$d" ]] && echo "$d"
 }
 
+# True when the build <key> of <name> <arch> exists: a qcow2, or for tart a VM in tart's store
+build_present() {
+  case "$4" in
+    tart) tart_exists "$(tart_vm_build "$1" "$3")" ;;
+    *) [[ -f "$(meta_dir "$1" "$2")/$3.qcow2" ]] ;;
+  esac
+}
+
 # Record a finished build
 # Usage: meta_write_build <id> <arch> <key> <parent id|"">
 meta_write_build() {
@@ -93,7 +101,11 @@ cmd_show() {
     echo "  build $arch"
     echo "    key       $key$( [[ "$(meta_get "$name" "$arch" .id)" == "$id" ]] || echo " (built from $(meta_get "$name" "$arch" .id))")"
     echo "    built     $(meta_get "$name" "$arch" .built_at)"
-    echo "    disk      $(tilde "$(meta_dir "$name" "$arch")/$key.qcow2") ($(file_size "$(meta_dir "$name" "$arch")/$key.qcow2"))"
+    if [[ "$(meta_get "$name" "$arch" .backend)" == tart ]]; then
+      echo "    vm        $(meta_get "$name" "$arch" .disk) (tart)"
+    else
+      echo "    disk      $(tilde "$(meta_dir "$name" "$arch")/$key.qcow2") ($(file_size "$(meta_dir "$name" "$arch")/$key.qcow2"))"
+    fi
     [[ "$(meta_get "$name" "$arch" .verified_key)" == "$key" ]] && echo "    verified  yes" || echo "    verified  no"
     [[ -n "$(meta_get "$name" "$arch" .parent.id)" ]] && echo "    parent    $(meta_get "$name" "$arch" .parent.id) ($(meta_get "$name" "$arch" .parent.cache_key))"
     if current=$(build_key "$id" "$arch" 2>/dev/null) && [[ "$current" != "$key" ]]; then

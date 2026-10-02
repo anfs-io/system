@@ -42,7 +42,7 @@ cli_cmd verify     "verify [--arch A] <image>"       "Boot a throwaway copy and 
 cli_cmd up         "up, run [--fresh|--snapshot] [--console] [--share P[:tag][:ro]] [-p H:G] <image>" \
                                                      "Start the image's VM (a persistent overlay on the build;
 --fresh recreates it, --snapshot discards writes)"
-cli_cmd shell      "shell, ssh <image> [-- cmd...]"  "Log in to a running VM, or run a command in it"
+cli_cmd shell      "shell, ssh <image> [-u user] [-- cmd...]" "Log in to a running VM (as the image's user, or -u), or run a command"
 cli_cmd down       "down, stop <image>..."           "Shut a VM down (guest poweroff, then QMP, then kill)"
 cli_cmd ps         "ps"                              "Running VMs: NAME ARCH PID SSH"
 cli_cmd snapshot   "snapshot <image> [name]"         "Save the stopped VM's disk; no name lists snapshots"
@@ -76,6 +76,8 @@ Definition: images/<name>/ in a source
                  vars: {HOSTNAME: x, ...}     ${VAR}s for the answer file
                  scripts: {defaults: true}    false skips the distro's default scripts
                  timeouts: {install: 3600, ssh: 600}
+                 anfs: {sources: pushed|host, repo: <url>, packages: [...]}   install the
+                                   toolkit in the image (host: copy this machine's sources)
   preseed.cfg | kickstart.ks   the answer file (default: pim's own for the distro); ${VAR}
                  is substituted, $${VAR} is a literal ${VAR}, an unknown name is an error
   scripts/*.sh   run in order as root over ssh after the install (a name shared with a

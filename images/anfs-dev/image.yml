@@ -1,0 +1,7 @@
+# Debian with the anfs toolkit installed from this machine's sources: a disposable box to try
+# anfs changes in a real VM (systemd, login shells), alongside the podman boxes
+description: Debian 13 with anfs from the host's sources
+from: debian-13
+memory: 4096
+anfs:
+  sources: host

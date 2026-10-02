@@ -5,4 +5,4 @@ author: rjayroach
 # `ppm install anfs/anfs` brings the rest in as dependencies, tracked like any other, so
 # `anfs implode` takes them out again. The tools don't declare a dependency back on anfs: like
 # stow and yq it is base software, always present.
-depends: [ppm, podman, varlock, node, pcm, psm, wsm]
+depends: [ppm, podman, varlock, node, qemu, pcm, pim, psm, wsm]
