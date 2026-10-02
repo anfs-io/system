@@ -1,2 +1,4 @@
 version: 0.1.4
 author: rjayroach
+brew:
+  macos: [openai/tools/tart]   # ppm vm; tart is in OpenAI's tap, which ppm trusts because it is declared

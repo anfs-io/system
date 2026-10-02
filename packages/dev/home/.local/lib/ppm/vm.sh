@@ -74,7 +74,7 @@ _vm_supported() {
     return 1
   fi
   if ! command -v tart >/dev/null 2>&1; then
-    echo "ppm vm needs tart: brew trust --formula openai/tools/softnet && brew install openai/tools/tart"
+    echo "ppm vm needs tart: ppm install -r anfs/dev (or brew trust openai/tools && brew install openai/tools/tart)"
     return 1
   fi
 }

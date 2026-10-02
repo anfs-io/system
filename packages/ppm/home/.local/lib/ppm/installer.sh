@@ -350,6 +350,7 @@ _install_declared_deps() {
   if [[ -n "$missing" ]]; then
     brew_require_owner "brew install $(echo $missing)" || return 1
     echo "Brew formulas to install: $(echo $missing)"
+    brew_trust_taps $missing
     brew install --yes $missing </dev/null || { ppm_fail "brew install failed: $(echo $missing)"; return 1; }
     PPM_NEW_BREW="$missing"
   fi
@@ -358,6 +359,7 @@ _install_declared_deps() {
   if [[ -n "$missing" ]]; then
     brew_require_owner "brew install --cask $(echo $missing)" || return 1
     echo "Casks to install: $(echo $missing)"
+    brew_trust_taps $missing
     brew install --yes --cask $missing </dev/null || { ppm_fail "brew install --cask failed: $(echo $missing)"; return 1; }
     PPM_NEW_CASK="$missing"
   fi

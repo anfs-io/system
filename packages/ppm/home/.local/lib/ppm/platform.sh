@@ -168,6 +168,21 @@ brew_missing() {
   done
 }
 
+# Trust the taps of tap-qualified names (user/repo/name): declaring one in package.yml is the
+# decision to trust that tap, and Homebrew refuses its other formulas (the declared one's
+# dependencies) until it is trusted. No-op on a Homebrew without `brew trust`.
+brew_trust_taps() {
+  local name tap done=" "
+  for name in "$@"; do
+    [[ "$name" == */*/* ]] || continue
+    tap="${name%/*}"
+    [[ "$done" == *" $tap "* ]] && continue
+    done+="$tap "
+    brew trust "$tap" >/dev/null 2>&1 || debug "brew trust $tap failed (Homebrew without trust?)"
+  done
+  return 0
+}
+
 # Casks from the arguments that are not installed
 # Homebrew installs casks on Linux too; a cask that is macOS-only (a GUI app) belongs
 # under a platform map in package.yml rather than being skipped here

@@ -123,6 +123,9 @@ cask:
   macos: [ghostty]          # GUI apps: macOS only
 ```
 
+- A tap-qualified name (`brew: {macos: [openai/tools/tart]}`) is installed from that tap, and
+  ppm runs `brew trust <tap>` first: declaring it is the decision to trust the tap, and Homebrew
+  otherwise refuses the formula's dependencies from the same tap.
 - `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` skips them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
 - A `system` map with entries for other distros but not this one (and no `linux` key) is an error.
 - Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside stow and yq, and `anfs/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
