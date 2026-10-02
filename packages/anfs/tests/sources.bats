@@ -170,7 +170,7 @@ remote() {
 @test "provides: the GITSRC_DIRS a source has, shown by list" {
   mkdir -p "$T/repos/a/packages" "$T/repos/a/spaces" "$T/repos/b"
   printf 'file:///x/a.git  a\nfile:///x/b.git  b\n' > "$GITSRC_USER_LIST"
-  GITSRC_DIRS="packages containers skills spaces"
+  GITSRC_DIRS="packages containers images skills spaces"
   gitsrc_collect
   [ "$(gitsrc_provides a)" = "packages spaces" ]
   [ -z "$(gitsrc_provides b)" ]

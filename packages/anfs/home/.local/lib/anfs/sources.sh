@@ -505,6 +505,9 @@ anfs_gitsrc_env() {
   GITSRC_REPOS_DIR="$ANFS_SOURCES_HOME"
   GITSRC_CACHE_DIR="$ANFS_CACHE_HOME"
   GITSRC_LINK_LOCAL=false
-  GITSRC_DIRS="packages containers skills spaces"
+  local t
+  GITSRC_DIRS=""
+  for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dir "$t")"; done
+  GITSRC_DIRS="${GITSRC_DIRS# }"
   GITSRC_SYSTEM_LIST_HINT="run 'ppm file protect ~/.config/anfs/system.list' to edit it here"
 }

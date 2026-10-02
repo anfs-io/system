@@ -1,0 +1,9 @@
+version: 0.1.0
+author: rjayroach
+# What pim runs on: qemu and its firmware, socat (QMP), bsdtar (reads ISOs, writes the initrd
+# cpio; macOS ships it as /usr/bin/bsdtar), ssh. ppm never removes system packages.
+brew:
+  macos: [qemu, socat]
+system:
+  debian: [qemu-system-arm, qemu-system-x86, qemu-utils, qemu-efi-aarch64, ovmf, libarchive-tools, socat, openssh-client]
+  fedora: [qemu-system-aarch64, qemu-system-x86, qemu-img, edk2-aarch64, edk2-ovmf, bsdtar, socat, openssh-clients]

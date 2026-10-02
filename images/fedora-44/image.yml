@@ -1,0 +1,16 @@
+# Fedora 44 Server from the netinst ISO, with pim's default kickstart and scripts
+description: Fedora 44 base image
+distro: fedora
+arch: [arm64, amd64]
+iso:
+  arm64:
+    url: https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/aarch64/iso/Fedora-Server-netinst-aarch64-44-1.7.iso
+    sha256: a93ebd0322cda5a439039710b727ac1899a06e1c11876cfdf7f27c25b8262cc3
+  amd64:
+    url: https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/iso/Fedora-Server-netinst-x86_64-44-1.7.iso
+    sha256: ae20c06bea746913cadea7d80463e13f4bf55bee4df2918111c921c674b70283
+memory: 4096
+timeouts:
+  install: 3600
+vars:
+  HOSTNAME: fedora

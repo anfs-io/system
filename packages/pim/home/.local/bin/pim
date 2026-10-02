@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
+# cloned once under ~/.local/share/anfs/sources; pim reads the images/ directory of each
+ANFS_LIB="$HOME/.local/lib/anfs"
+if [[ ! -f "$ANFS_LIB/sources.sh" ]]; then
+  echo "pim: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  exit 1
+fi
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+anfs_tool_paths pim
+anfs_gitsrc_env
+: "${PIM_IMAGES_HOME:=$PIM_CONFIG_HOME/images}"
+: "${PIM_SSH_PORT_BASE:=2222}"
+: "${PIM_INSTALL_TIMEOUT:=3600}"
+: "${PIM_SSH_TIMEOUT:=600}"
+: "${PIM_INSTALL:=build}"
+export PIM_CONFIG_HOME PIM_DATA_HOME PIM_STATE_HOME PIM_CACHE_HOME PIM_IMAGES_HOME
+
+# The implicit, highest-priority source: hand-made definitions in $PIM_IMAGES_HOME
+PIM_LOCAL_SOURCE=local
+
+# The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pim/; the
+# registry below is the help, in this order, and the completion's command list
+# shellcheck source=/dev/null
+source "$ANFS_LIB/cli.sh"
+CLI_TOOL=pim
+cli_cmd list       "list, ls"                        "List images: NAME SOURCE STATUS (built arches, running, shadowed)"
+cli_cmd show       "show <image>"                    "Definition, its from: chain, builds and instance"
+cli_cmd path       "path [--disk] <image>"           "Output the definition directory (--disk: the built disk)"
+cli_cmd cd         "cd [image]"                      "Change to an image definition (requires pim.zsh)"
+cli_cmd validate   "validate [image...]"             "Check definitions (all if none given); build runs it first"
+cli_cmd install    "install <image|source/>..."      "Build images; source/ is every image that source defines
+(\`anfs install\` uses this). PIM_INSTALL=validate only validates"
+cli_cmd build      "build [-f] [-v] [--arch A] [--console] [--verify] <image>..." "Build an image (and its from: parents) unless the build is
+current; -f rebuilds, -v shows script output, --console the installer"
+cli_cmd verify     "verify [--arch A] <image>"       "Boot a throwaway copy and run the image's verify.sh"
+cli_cmd up         "up, run [--fresh|--snapshot] [--console] [--share P[:tag][:ro]] [-p H:G] <image>" \
+                                                     "Start the image's VM (a persistent overlay on the build;
+--fresh recreates it, --snapshot discards writes)"
+cli_cmd shell      "shell, ssh <image> [-- cmd...]"  "Log in to a running VM, or run a command in it"
+cli_cmd down       "down, stop <image>..."           "Shut a VM down (guest poweroff, then QMP, then kill)"
+cli_cmd ps         "ps"                              "Running VMs: NAME ARCH PID SSH"
+cli_cmd snapshot   "snapshot <image> [name]"         "Save the stopped VM's disk; no name lists snapshots"
+cli_cmd reset      "reset [-y] <image> [snapshot]"   "Recreate the VM from a snapshot, or from its build"
+cli_cmd publish    "publish [-c] [-o path] [--arch A] <image>" "Write the build as one standalone qcow2 (-c compresses)"
+cli_cmd rm         "rm [-y] [-f] <image>..."         "Stop and delete the VM and every build of the image; the
+definition is kept. -f even if other builds are based on it"
+cli_cmd clean      "clean [--isos]"                  "Delete superseded builds nothing is based on (--isos: the ISO cache too)"
+cli_cmd implode    "implode [-y]"                    "Stop every VM and delete everything pim created"
+cli_cmd completion "completion <shell>"              "Output shell completion code (zsh)"
+cli_cmd help       "help"                            "Show this help"
+cli_alias ls list
+cli_alias run up
+cli_alias ssh shell
+cli_alias stop down
+
+cli_help_epilogue() {
+  cat <<'EOF'
+An <image> is `name` or `source/name`. A plain name resolves to the highest-priority
+source that defines it: local ($PIM_IMAGES_HOME), then the anfs sources in order.
+
+Definition: images/<name>/ in a source
+  image.yml      backend: qemu (default) | tart
+                 distro: debian | fedora | macos     arch: [arm64, amd64]
+                 iso: {<arch>: {url: <url or list>, sha256: <hex>}}     (qemu, from an ISO)
+                 from: <image>     a qcow2 overlay on another image's build; resolves to the
+                                   same or a lower-priority source, like a dependency
+                 base: <oci image>                                        (tart)
+                 disk: 20G  memory: 2048  cpus: 2
+                 user: {name: pim, password_hash: <crypt>, authorized_keys: [...]}
+                 vars: {HOSTNAME: x, ...}     ${VAR}s for the answer file
+                 scripts: {defaults: true}    false skips the distro's default scripts
+                 timeouts: {install: 3600, ssh: 600}
+  preseed.cfg | kickstart.ks   the answer file (default: pim's own for the distro); ${VAR}
+                 is substituted, $${VAR} is a literal ${VAR}, an unknown name is an error
+  scripts/*.sh   run in order as root over ssh after the install (a name shared with a
+                 default script replaces it); env: PIM_IMAGE PIM_ARCH PIM_USER PIM_FILES
+  files/         copied to the guest for the scripts ($PIM_FILES)
+  verify.sh      what `pim verify` runs (default: the distro's)
+
+Every build ends with pim's finalize step (package caches, logs, ssh host keys regenerated on
+first boot, machine-id). Builds are cached by a hash of the definition, its scripts, the ISO
+and the parent's build; `build` is a no-op while that hash is unchanged.
+
+Access: each root image gets its own ssh key ($PIM_DATA_HOME/keys/<image>); the user's
+password is locked unless user.password_hash is set. VMs forward ssh on 127.0.0.1 only.
+
+Files: ISOs in $PIM_CACHE_HOME/isos, builds in $PIM_DATA_HOME/images/<name>/<arch>/,
+VM disks in $PIM_DATA_HOME/vms/<name>/, runtime state in $PIM_STATE_HOME/run/<name>/.
+EOF
+}
+
+cmd_cd() {
+  echo "pim cd requires the pim shell function (source pim.zsh)" >&2
+  return 1
+}
+
+# pim's own libraries: every *.sh in PIM_LIB_DIR (defaults/ below it is data, not sourced). The
+# stowed dir is preferred; next to this script's real path is the fallback (unstowed, or tests).
+pim_lib_dir() {
+  local self="${BASH_SOURCE[0]}" dir link
+  if [[ -n "${PIM_LIB_DIR:-}" ]]; then echo "$PIM_LIB_DIR"; return; fi
+  if [[ -f "$HOME/.local/lib/pim/core.sh" ]]; then echo "$HOME/.local/lib/pim"; return; fi
+  dir="$(cd "$(dirname "$self")" && pwd)"
+  while [[ -L "$self" ]]; do
+    link="$(readlink "$self")"
+    [[ "$link" == /* ]] || link="$dir/$link"
+    self="$link"
+    dir="$(cd "$(dirname "$self")" && pwd)"
+  done
+  echo "$dir/../lib/pim"
+}
+PIM_LIB_DIR="$(pim_lib_dir)"
+if [[ ! -f "$PIM_LIB_DIR/core.sh" ]]; then
+  echo "pim: libraries not found in $PIM_LIB_DIR; run: ppm install -f anfs/pim" >&2
+  exit 1
+fi
+for lib_file in "$PIM_LIB_DIR"/*.sh; do
+  # shellcheck source=/dev/null
+  [[ -f "$lib_file" ]] && source "$lib_file"
+done
+
+cmd=$(cli_resolve "${1:-help}")
+shift 2>/dev/null || true
+
+# build and install pull stale sources first, like ppm install
+[[ "$cmd" == "build" || "$cmd" == "install" ]] && { gitsrc_update_stale >&2 || true; }
+case "$cmd" in
+  completion|help|-h|--help) ;;
+  *) load_sources ;;
+esac
+
+cli_dispatch "$cmd" "$@"

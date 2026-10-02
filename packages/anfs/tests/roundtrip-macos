@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# The anfs round trip on macOS, in a tart VM (anfs/dev's `ppm vm`; Apple silicon only):
+#
+#   install.sh                       on a vanilla macOS: Xcode CLT, Homebrew, then the toolkit
+#   ppm install ai/pi                an agent, so psm has somewhere to put skills
+#   anfs install acme                the fixture org source, tool by tool (acme/acme-mac adds a cask)
+#   checks                           what Linux can't show: CLT, /opt/homebrew, casks, bash 3.2
+#   anfs implode [--all]             and $HOME compared with what it was before install.sh
+#
+# Usage: packages/anfs/tests/roundtrip-macos [--all]
+#   --all  implode with --all; before that, pde/bash makes Homebrew's bash the login shell, and
+#          implode --all must refuse until it is changed back (the login-shell guard)
+#
+# pcm cannot run here: a macOS guest has no nested virtualization, so the podman machine pcm would
+# create cannot start. Its containers are installed by `anfs install acme` and fail; the checks
+# only require that the failure is reported and that implode leaves nothing behind.
+#
+# The VM is recreated from `ppm vm build macos`'s base for every run, with a frozen copy of the
+# source repos from $ROUNDTRIP_SRC_ROOT (default ~/anfs-dev) mounted read-only at /src/<alias>.
+set -euo pipefail
+
+all=false
+[[ "${1:-}" == "--all" ]] && all=true
+command -v tart >/dev/null || { echo "needs tart (ppm install anfs/dev)" >&2; exit 1; }
+command -v ppm >/dev/null || { echo "needs ppm (anfs/dev's ppm vm)" >&2; exit 1; }
+
+VM=ppm-macos
+KEY="${PPM_CACHE_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/ppm}/vm/id_ed25519"
+SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10)
+tart list --format json | grep -q '"ppm-macos-base"' || ppm vm build macos
+
+# $HOME paths a round trip may leave behind or change: macOS's own per-user state, and what
+# implode keeps on purpose (as on Linux: Homebrew's caches, mise and its tools, host keys, spaces)
+IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config/ruby|\.config/ruby/default-gems)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/(Homebrew|mise|aube|sigstore-rust)|\.npm|\.rustup|\.cargo|\.local/share/mise|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
+$all && IGNORE_RE='^\./(\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config|\.local|\.local/share)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/Homebrew|spaces)(/|$)'
+
+src_root="${ROUNDTRIP_SRC_ROOT:-$HOME/anfs-dev}"
+copy=$(mktemp -d "${TMPDIR:-/tmp}/anfs-roundtrip-macos.XXXXXX")
+trap 'rm -rf "$copy"' EXIT
+dirs=()
+for dir in "$src_root"/*/; do
+  [[ -e "$dir/.git" ]] || continue
+  cp -R "${dir%/}" "$copy/"
+  dirs+=("--dir=$(basename "$dir"):$copy/$(basename "$dir"):ro")
+done
+
+echo "== fresh $VM from ppm-macos-base, sources: $(ls "$copy" | paste -sd' ' -)"
+ppm vm stop macos >/dev/null 2>&1 || true
+tart delete "$VM" >/dev/null 2>&1 || true
+ppm vm start macos --sources none -- "${dirs[@]}" >/dev/null
+IP=$(tart ip "$VM" --wait 120)
+for i in $(seq 60); do ssh "${SSH_OPTS[@]}" -i "$KEY" "owner@$IP" true 2>/dev/null && break; sleep 3; done
+
+# In the VM as owner: sudo primed (its password is 'owner'; the base relaxes the timestamp),
+# Homebrew and ~/.local/bin on PATH the way a login shell has them
+box() {
+  ssh "${SSH_OPTS[@]}" -i "$KEY" "owner@$IP" 'bash -s' <<GUEST
+echo owner | sudo -S -p '' -v 2>/dev/null
+[ -x /opt/homebrew/bin/brew ] && eval "\$(/opt/homebrew/bin/brew shellenv)"
+export PATH="\$HOME/.local/bin:\$PATH"
+$1
+GUEST
+}
+snapshot_home() { box 'cd ~ && find . -mindepth 1 2>/dev/null | LC_ALL=C sort'; }
+before=$(snapshot_home)
+
+echo "== install.sh (every /src mounted as a local source, acme from the anfs tree)"
+box '
+  set -e
+  mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
+  : > ~/.config/anfs/user.list
+  ln -sfn /src/anfs/packages/anfs/tests/fixtures/acme ~/.local/share/anfs/sources/acme
+  echo "/src/anfs/packages/anfs/tests/fixtures/acme  acme" >> ~/.config/anfs/user.list
+  for src in $(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
+    ln -sfn "$src" ~/.local/share/anfs/sources/"$(basename "$src")"
+    printf "%s  %s\n" "$src" "$(basename "$src")" >> ~/.config/anfs/user.list
+  done
+  bash /src/anfs/install.sh
+' | tail -n 5
+
+echo "== ppm install ai/pi, then anfs install acme"
+box 'ppm install ai/pi' >/dev/null || echo "!! ppm install ai/pi failed"
+acme_out=$(box 'anfs install -y acme' 2>&1) || true
+
+status=0
+check() {
+  local what="$1" cmd="$2"
+  if box "$cmd" >/dev/null 2>&1; then echo "  ok    $what"
+  else echo "  FAIL  $what"; status=1
+  fi
+}
+echo "== checks"
+check "macOS: Xcode Command Line Tools installed"    'xcode-select -p'
+check "macOS: Homebrew at /opt/homebrew, owned by owner" '[ "$(brew --prefix)" = /opt/homebrew ] && [ -O /opt/homebrew/bin ]'
+check "macOS: lib/anfs loads under /bin/bash 3.2"    '/bin/bash -c "set -euo pipefail; source ~/.local/lib/anfs/paths.sh; source ~/.local/lib/anfs/sources.sh; source ~/.local/lib/anfs/resolve.sh; anfs_gitsrc_env; anfs_sources packages; [ \${#ANFS_SRC_NAMES[@]} -gt 0 ]"'
+check "ppm: acme/hello stowed and runs"               'acme-hello | grep -q "hello from acme"'
+check "ppm: acme/acme-infra pulled in pdt/opentofu"   'ppm list --installed | grep -q "pdt/opentofu"'
+check "ppm: acme/acme-mac installed its cask"         'ppm list --installed | grep -q acme/acme-mac && [ -d /Applications/Rectangle.app ]'
+check "cli: help and completion from the registry"    'anfs help | grep -q "implode \[-y\]" && ppm completion zsh | grep -q "implode:"'
+check "psm: acme-hello installed for pi"              'psm skills ls | grep -E "^ok +acme +acme-hello"'
+check "wsm: org installed before tech"                'wsm ls | grep -q "^org" && wsm ls | grep -q "^tech"'
+if grep -q "pcm install" <<< "$acme_out" && box 'pcm list' >/dev/null 2>&1; then
+  echo "  ok    pcm: runs, and its containers are reported failing (no nested virtualization)"
+else
+  echo "  FAIL  pcm: runs, and its containers are reported failing (no nested virtualization)"; status=1
+fi
+
+if $all; then
+  echo "== login-shell guard: Homebrew's bash as the login shell"
+  box 'ppm install pde/bash' >/dev/null 2>&1 || true
+  if box 'dscl . -read ~ UserShell | grep -q /opt/homebrew/bin/bash'; then
+    if box 'anfs implode -y --all' >/dev/null 2>&1; then
+      echo "  FAIL  implode --all ran with Homebrew's bash as the login shell"; status=1
+    else
+      echo "  ok    implode --all refuses while the login shell is Homebrew's bash"
+    fi
+    box 'sudo -n chsh -s /bin/zsh owner' >/dev/null 2>&1
+  else
+    echo "  FAIL  pde/bash did not make Homebrew's bash the login shell"; status=1
+  fi
+  echo "== anfs implode --all"
+  box 'anfs implode -y --all' | tail -n 5 || { echo "!! anfs implode --all failed"; status=1; }
+  check "implode --all: Homebrew is gone"            '! [ -e /opt/homebrew/bin/brew ]'
+  check "implode --all: the cask's app is gone"      '! [ -d /Applications/Rectangle.app ]'
+else
+  echo "== anfs implode"
+  box 'anfs implode -y' | tail -n 8 || { echo "!! anfs implode failed"; status=1; }
+  check "implode: the cask's app is gone"            '! [ -d /Applications/Rectangle.app ]'
+fi
+
+after=$(snapshot_home)
+added=$(comm -13 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
+removed=$(comm -23 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
+if [[ -n "$added" ]]; then echo "== left behind in \$HOME:"; echo "$added" | sed 's/^/  /'; status=1; fi
+if [[ -n "$removed" ]]; then echo "== deleted from \$HOME (was there before install):"; echo "$removed" | sed 's/^/  /'; status=1; fi
+[[ $status -eq 0 ]] && echo "== PASS: macOS install, checks and implode, and \$HOME is back to its pre-install state"
+exit $status

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Reading an ISO: create the requested members. Anything else goes to the real bsdtar.
+echo "bsdtar $*" >> "$PIM_CALLS"
+if [[ "$1" == -xf ]]; then
+  dir=.; shift 2
+  [[ "$1" == -C ]] && { dir="$2"; shift 2; }
+  for m; do mkdir -p "$dir/$(dirname "$m")"; echo "$m" > "$dir/$m"; done
+  exit 0
+fi
+real=$(type -ap bsdtar | grep -v /stubs/ | head -n1)
+exec "$real" "$@"

@@ -36,14 +36,16 @@ ANFS_BOOTSTRAP_RECORD="$ANFS_STATE_HOME/bootstrap"
 ANFS_CONF="$ANFS_CONFIG_HOME/anfs.conf"
 ANFS_LOCAL_CONF="$ANFS_CONFIG_HOME/anfs.local.conf"
 
-# The tools, in install order: ppm brings the software the others run on, wsm's spaces come last
-ANFS_TOOLS="ppm pcm psm wsm"
+# The tools, in install order: ppm brings the software the others run on, pim's images build after
+# the quick container installs, and wsm's spaces come last. Implode runs them in reverse.
+ANFS_TOOLS="ppm pcm pim psm wsm"
 
 # The top-level directory of a source each tool reads
 anfs_tool_dir() {
   case "$1" in
     ppm) echo packages ;;
     pcm) echo containers ;;
+    pim) echo images ;;
     psm) echo skills ;;
     wsm) echo spaces ;;
     *) return 1 ;;

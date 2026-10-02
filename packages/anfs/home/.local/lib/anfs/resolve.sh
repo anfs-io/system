@@ -19,6 +19,7 @@ anfs_kind() {
   case "$1" in
     packages) echo package ;;
     containers) echo container ;;
+    images) echo image ;;
     skills) echo skill ;;
     spaces) echo space ;;
     *) echo "$1" ;;

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Logs the remote command; scripts arrive on stdin (discarded). A poweroff ends the qemu stub.
+cmd="${*: -1}"
+echo "ssh $cmd" >> "$PIM_CALLS"
+[[ -t 0 ]] || cat > /dev/null
+if [[ "$cmd" == *poweroff* ]]; then
+  [[ -f "$BATS_TEST_TMPDIR/qemu.pid" ]] && kill "$(cat "$BATS_TEST_TMPDIR/qemu.pid")" 2>/dev/null
+  exit 255
+fi
+[[ -n "${PIM_STUB_FAIL_SCRIPT:-}" && "$cmd" == *"bash -s"* && -f "$BATS_TEST_TMPDIR/fail-next" ]] && exit 7
+exit 0

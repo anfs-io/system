@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# The installer (-kernel) "powers off" at once; a disk boot runs until killed, as a VM would
+echo "qemu-system-x86_64 $*" >> "$PIM_CALLS"
+for a; do [[ "$a" == -kernel ]] && exit "${PIM_STUB_INSTALL_RC:-0}"; done
+for a; do
+  if [[ "$a" == -daemonize ]]; then
+    pidfile=""; prev=""
+    for b; do [[ "$prev" == -pidfile ]] && pidfile="$b"; prev="$b"; done
+    sleep 300 >/dev/null 2>&1 &
+    echo $! > "$pidfile"
+    exit 0
+  fi
+done
+echo $$ > "$BATS_TEST_TMPDIR/qemu.pid"
+exec sleep 300

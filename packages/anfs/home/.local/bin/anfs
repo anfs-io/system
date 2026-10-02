@@ -4,6 +4,7 @@
 # anfs owns what the tools share: the sources. Each source is a repo that may hold
 #   packages/    ppm   software and dotfiles
 #   containers/  pcm   podman compose services
+#   images/      pim   VM images (qemu, tart)
 #   skills/      psm   agent skills
 #   spaces/      wsm   workspaces
 # and the tools each read their own directory of every source. anfs adds the commands that span
@@ -32,10 +33,11 @@ source "$ANFS_LIB/cli.sh"
 CLI_TOOL=anfs
 cli_cmd src        "src <add|remove|list|ssh|update>" "Manage the sources every tool reads"
 cli_cmd install    "install [-y] <source>..."  "Install everything a source holds: its packages (ppm),
-containers (pcm), skills (psm) and spaces (wsm), in that
-order. To pick single resources use the tool itself."
+containers (pcm), images (pim), skills (psm) and spaces
+(wsm), in that order. To pick single resources use the
+tool itself."
 cli_cmd implode    "implode [-y] [--all]"      "Remove everything the toolkit put on this machine:
-wsm, psm, pcm, then ppm (which removes the tools and the
+wsm, psm, pim, pcm, then ppm (which removes the tools and the
 software they run on), then the sources. Space contents
 are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,
@@ -79,7 +81,7 @@ cmd_install() {
     case "$arg" in
       -y|--yes) yes=true ;;
       -*) die "install: unknown option '$arg'" ;;
-      */*) die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ppm|pcm|psm|wsm install $arg" ;;
+      */*) die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ${ANFS_TOOLS// /|} install $arg" ;;
       *) srcs+=("$arg") ;;
     esac
   done
@@ -97,7 +99,7 @@ cmd_install() {
       [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
     done
   done
-  [[ -n "$plan" ]] || die "nothing to install: ${srcs[*]} hold no packages, containers, skills or spaces"
+  [[ -n "$plan" ]] || die "nothing to install: ${srcs[*]} hold none of: $GITSRC_DIRS"
 
   printf 'anfs install:\n%s' "$plan"
   $yes || confirm "install changes this machine" "Install?"
@@ -134,7 +136,9 @@ cmd_implode() {
   # Read before anything is deleted: the record lives in anfs's state dir
   _record_load
 
-  echo "anfs implode runs, in order: wsm psm pcm ppm implode (each lists what it removes),"
+  local reversed="" t
+  for t in $ANFS_TOOLS; do reversed="$t $reversed"; done
+  echo "anfs implode runs, in order: ${reversed% } implode (each lists what it removes),"
   echo "then deletes the sources ($(_tilde "$ANFS_DATA_HOME")), $(_tilde "$ANFS_CONFIG_HOME") and $(_tilde "$ANFS_CACHE_HOME")."
   echo "Space contents are kept."
   if $all; then
@@ -145,8 +149,8 @@ cmd_implode() {
 
   # Reverse install order: spaces and skills and containers before the software under them; ppm
   # last, since removing its packages removes the other tools' commands
-  local t rc=0
-  for t in wsm psm pcm ppm; do
+  local rc=0
+  for t in $reversed; do
     [[ -x "$ANFS_BIN_DIR/$t" ]] || continue
     echo "== $t implode"
     "$ANFS_BIN_DIR/$t" implode -y || { echo "anfs: $t implode failed; continuing" >&2; rc=1; }

@@ -1,0 +1,6 @@
+version: 0.1.0
+author: acme
+# A cask, so the macOS round trip installs (and implode removes) a GUI app; Linux skips the package
+platforms: [macos]
+cask:
+  macos: [rectangle]

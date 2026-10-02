@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+echo "qemu-img $*" >> "$PIM_CALLS"
+case "$1" in
+  create) for a; do last="$a"; done; f=""; for a; do [[ "$a" == *.qcow2* ]] && f="$a"; done; : > "$f" ;;
+  convert) for a; do last="$a"; done; : > "$last" ;;
+esac

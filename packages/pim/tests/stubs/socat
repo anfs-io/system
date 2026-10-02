@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "socat $*" >> "$PIM_CALLS"
+cat > /dev/null

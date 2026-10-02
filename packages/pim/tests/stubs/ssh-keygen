@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+f=""; prev=""; for a; do [[ "$prev" == -f ]] && f="$a"; prev="$a"; done
+echo key > "$f"; echo "ssh-ed25519 AAAAstub pim" > "$f.pub"
