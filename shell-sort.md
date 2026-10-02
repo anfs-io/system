@@ -3,6 +3,9 @@ objective: Shell snippet load order is declared and enforced, and provenance is 
 status: proposed
 ---
 
+> **Historical design note** (pre-anfs, ppm era): names such as `ppm/system`, `.installed` and
+> `ppm_resource_wsm` are from before the anfs refactor. The current spec is `CLAUDE.md`.
+
 # Shell Snippet Load Order & Namespacing
 
 A protocol for how packages contribute files to `~/.config/{sh,zsh,bash}/`, what

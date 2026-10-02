@@ -1,3 +1,6 @@
+> **Historical design note** (pre-anfs, ppm era): names such as `ppm/system`, `.installed` and
+> `ppm_resource_wsm` are from before the anfs refactor. The current spec is `CLAUDE.md`.
+
 # Package development and debug mode — ideas
 
 A scratchpad for ppm's developer experience: what goes wrong while writing a package, and what ppm

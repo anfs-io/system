@@ -209,7 +209,7 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - Not called with `-c`, and `-r`'s internal remove is not a removal.
 - For a removal, the package directory normally still exists, so the callback can read the
   removed packages' `package.yml`. It is gone only if its repo was removed first.
-- `ai/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
+- `anfs/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
   unlink them (`psm agents rm`) when one is removed.
 
 ## Key Files
@@ -230,7 +230,7 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - `~/.local/bin/<tool>` — each stowed from its package (`anfs/anfs`, `anfs/ppm`, `anfs/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `anfs/ppm`, `anfs.sh` from `anfs/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
-- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `anfs/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `pde/ruby`'s `install_gem`) or commands: a function named `foo` becomes `ppm foo` (e.g. `anfs/dev`'s `ppm user`)
+- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `anfs/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `pde/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `anfs/dev`'s `ppm user`)
 - `~/.cache/ppm/brew_last_update`
 - Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
 
@@ -348,7 +348,7 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 
 - `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and stows them from there. The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
 - `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Stow's `--no-folding` keeps the directory real with a link per file, so files a tool creates there later stay local until added too.
-- **Stowing a wsm marker (`<space>/.wsm/`)**: only for a space that is *not* itself a git repo, declared with `wsm:` *without* `repo_url`. Stow runs before declared resources, so a stowed `.wsm/` makes `ppm_resource_wsm` refuse the clone ("in the way and is not a git repo"). A space that is a git repo commits its own `.wsm/id`.
+- **Never stow a wsm marker (`<space>/.wsm/`)**: a space is `spaces/<name>/space.yml` in a source, and wsm writes the marker itself when it installs the space (and implode removes it). A stowed `.wsm/` would be a file no tool owns.
 - Protected files are refused by `claim`/`add` (unprotect first): claim's stow does not use the protected ignore list.
 - `ppm file reset <file...>` deletes the claimed copy, restores the owner's link, and removes the claimant package if it becomes empty.
 - `ppm file protect <file...>` turns a package-managed symlink into a plain local copy (preserving its content) and records it in `protected.yml`. ppm then never re-links or force-removes it — including under `-f` — so you can customize it without a repo. The file is also dropped from its package's tracker.
