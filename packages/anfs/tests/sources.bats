@@ -120,6 +120,25 @@ remote() {
   [[ "$output" != *"Updating: a"* ]]
 }
 
+@test "update_stale: an unreachable source is retried once per TTL, not by every run" {
+  local a
+  a=$(remote a)
+  printf '%s  a\nfile://%s/missing.git  gone\n' "$a" "$T" > "$GITSRC_USER_LIST"
+  GITSRC_UPDATE_TTL=3600
+  run gitsrc_update_stale
+  [[ "$output" == *"Not updated (unreachable): gone"* ]]
+  [ -f "$T/cache/updated/gone.failed" ]
+  ! gitsrc_stale gone
+  run gitsrc_update_stale
+  [[ "$output" != *"gone"* ]]
+  # an explicit update still tries, and the failure stays recorded
+  run gitsrc_update gone
+  [ "$status" -ne 0 ]
+  # once the attempt is older than the TTL it is due again
+  echo 1 > "$T/cache/updated/gone.failed"
+  gitsrc_stale gone
+}
+
 @test "local paths: linked into the repos dir, never cloned; LINK_LOCAL resolves them in place" {
   mkdir -p "$T/mine"
   echo "$T/mine  mine" > "$GITSRC_USER_LIST"

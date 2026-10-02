@@ -324,16 +324,30 @@ gitsrc_updated_file() {
 gitsrc_mark_updated() {
   mkdir -p "$GITSRC_CACHE_DIR/updated"
   date +%s > "$(gitsrc_updated_file "$1")"
+  rm -f "$(gitsrc_updated_file "$1").failed"
 }
 
-# True when a repo was never updated, or not within GITSRC_UPDATE_TTL seconds
-gitsrc_stale() {
-  local file last ttl="${GITSRC_UPDATE_TTL:-86400}"
-  file=$(gitsrc_updated_file "$1")
-  [[ -f "$file" ]] || return 0
-  last=$(cat "$file" 2>/dev/null)
+# A failed clone or pull is recorded too, so an unreachable source is retried once per
+# GITSRC_UPDATE_TTL by the automatic updates instead of by every command. `src update` always tries.
+gitsrc_mark_failed() {
+  mkdir -p "$GITSRC_CACHE_DIR/updated"
+  date +%s > "$(gitsrc_updated_file "$1").failed"
+}
+
+# True when <file> holds a timestamp older than GITSRC_UPDATE_TTL seconds, or is missing
+_gitsrc_older_than_ttl() {
+  local last
+  [[ -f "$1" ]] || return 0
+  last=$(cat "$1" 2>/dev/null)
   [[ "$last" =~ ^[0-9]+$ ]] || return 0
-  (( $(date +%s) - last > ttl ))
+  (( $(date +%s) - last > ${GITSRC_UPDATE_TTL:-86400} ))
+}
+
+# True when a repo was neither updated nor attempted-and-failed within GITSRC_UPDATE_TTL seconds
+gitsrc_stale() {
+  local file
+  file=$(gitsrc_updated_file "$1")
+  _gitsrc_older_than_ttl "$file" && _gitsrc_older_than_ttl "$file.failed"
 }
 
 # `src update [--auto] [alias...]`: clone missing and pull existing git sources, all of them or the
@@ -343,7 +357,7 @@ gitsrc_stale() {
 gitsrc_update() {
   local auto=false
   [[ "${1:-}" == "--auto" ]] && { auto=true; shift; }
-  local wanted=" $* " all_updated=true i repo_url repo_name dir skipped=()
+  local wanted=" $* " all_updated=true i repo_url repo_name dir skipped=() failed=()
 
   gitsrc_collect
 
@@ -364,6 +378,8 @@ gitsrc_update() {
       if git clone "$repo_url" "$dir"; then
         gitsrc_mark_updated "$repo_name"
       else
+        gitsrc_mark_failed "$repo_name"
+        failed+=("$repo_name")
         all_updated=false
       fi
       continue
@@ -384,9 +400,17 @@ gitsrc_update() {
     if git -C "$dir" pull; then
       gitsrc_mark_updated "$repo_name"
     else
+      gitsrc_mark_failed "$repo_name"
+      failed+=("$repo_name")
       all_updated=false
     fi
   done
+
+  if $auto && [[ ${#failed[@]} -gt 0 ]]; then
+    local flist
+    printf -v flist '%s, ' "${failed[@]}"
+    echo "Not updated (unreachable): ${flist%, } — retried automatically after ${GITSRC_UPDATE_TTL:-86400}s, or now with: $GITSRC_TOOL src update"
+  fi
 
   if [[ ${#skipped[@]} -gt 0 ]]; then
     local list
