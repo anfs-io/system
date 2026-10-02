@@ -32,7 +32,7 @@ each clone clean or dirty. `pcm install <source>/` starts every definition a sou
   `io.pcm.id` (`source/name`), `io.pcm.name` and `io.pcm.source`. Don't set a top-level `name:`
   (it is ignored, and `validate` warns when it differs); don't set `container_name:`.
 - Local overrides: `~/.config/pcm/env/<name>.env`
-- Shared settings: `~/.config/pcm/registry.yml` (`shared_network`, `network_attached_services`)
+- Shared settings: `PCM_SHARED_NETWORK` and `PCM_ATTACHED_SERVICES` in `~/.config/anfs/anfs.conf`
 
 Before writing a new one, read an existing definition as a model:
 `postgres` and `valkey` (shared dependencies with provision hooks), `twenty` (depends on
@@ -164,8 +164,8 @@ done. `pcm remove` and `pcm implode` delete a service's snapshots with it.
   3. runs its `provision` hook with the map settings as `key=value` args
   4. exports each `KEY=VALUE` the hook prints as `PCM_<DEP>_<KEY>` (dep upper-cased, `-`→`_`)
 - **Existing values:** a value already in the environment wins over one the hook prints.
-- **Shared network:** definitions with dependencies, or listed in `registry.yml`
-  `network_attached_services`, join the shared network (`dev-net`). They also keep their project's
+- **Shared network:** definitions with dependencies, or listed in
+  `PCM_ATTACHED_SERVICES`, join the shared network (`PCM_SHARED_NETWORK`, default `dev-net`). They also keep their project's
   default network. Reach a dependency by the container name it provisions (e.g. `HOST`).
 - **Stopping:** `pcm down` refuses while running definitions depend on the target, unless `--force`
   is passed.

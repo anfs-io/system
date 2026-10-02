@@ -20,15 +20,13 @@ cmd_implode() {
     esac
   done
 
-  local have_podman=false projects="" network="dev-net" machine=false
+  local have_podman=false projects="" network="${PCM_SHARED_NETWORK:-dev-net}" machine=false
   [[ "$OSTYPE" == darwin* && -f "$PCM_STATE_HOME/machine-created" ]] && command -v podman >/dev/null 2>&1 && machine=true
   if command -v podman >/dev/null 2>&1 && podman info >/dev/null 2>&1; then
     have_podman=true
     projects=$(podman ps -a --filter "label=$PCM_LABEL_NAME" \
       --format "{{index .Labels \"$PCM_LABEL_NAME\"}}" 2>/dev/null | sort -u | paste -sd ' ' -) || true
   fi
-  [[ -f "$PCM_CONFIG_HOME/registry.yml" ]] \
-    && network=$(yq eval '.shared_network // "dev-net"' "$PCM_CONFIG_HOME/registry.yml" 2>/dev/null || echo dev-net)
 
   {
     echo "pcm implode removes:"

@@ -53,22 +53,21 @@ override_file() {
 # that labels every compose service and, when attached, joins the shared network
 compose_flags() {
   local service="$1" name
-  local file manifest="$PCM_CONFIG_HOME/registry.yml"
+  local file
   file=$(compose_file "$service")
   name=$(svc_name "$service")
 
   FLAGS=(-f "$file")
 
-  # Attach to the shared network if listed in the registry (by name or source/name) or it has
-  # pcm dependencies
-  local attached=false network=""
-  if [[ -f "$manifest" && -n "$(yq eval ".network_attached_services[] | select(. == \"$name\" or . == \"$service\")" "$manifest" 2>/dev/null)" ]]; then
-    attached=true
-  fi
+  # Attach to the shared network if listed in PCM_ATTACHED_SERVICES (by name or source/name) or
+  # it has pcm dependencies
+  local attached=false network="" s
+  for s in ${PCM_ATTACHED_SERVICES-postgres valkey}; do
+    [[ "$s" == "$name" || "$s" == "$service" ]] && attached=true
+  done
   [[ -n "$(service_deps "$service")" ]] && attached=true
   if [[ "$attached" == true ]]; then
-    network="dev-net"
-    [[ -f "$manifest" ]] && network=$(yq eval '.shared_network // "dev-net"' "$manifest")
+    network="${PCM_SHARED_NETWORK:-dev-net}"
     podman network exists "$network" 2>/dev/null || podman network create "$network" >/dev/null || return 1
   fi
 
