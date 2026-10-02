@@ -145,6 +145,7 @@ cmd_implode() {
     echo "--all: then everything anfs's installer added to this machine:"
     _bootstrap_summary "  "
   fi
+  $all && { _login_shell_guard || return 1; }
   $yes || confirm "implode removes the whole toolkit" "Implode anfs?"
 
   # Reverse install order: spaces and skills and containers before the software under them; ppm
@@ -224,6 +225,22 @@ _bootstrap_summary() {
   return 0
 }
 
+# A login shell that runs from Homebrew would stop working once --all removes it: refuse, rather
+# than lock the user out. cmd_implode checks this before anything is removed.
+# Usage: _login_shell_guard [brew_bin]
+_login_shell_guard() {
+  local brew_bin="${1:-}" login_shell
+  [[ -n "$brew_bin" ]] || { [[ -n "$REC_PREFIX" && -x "$REC_PREFIX/bin/brew" ]] && brew_bin="$REC_PREFIX/bin/brew"; }
+  [[ -n "$brew_bin" ]] || brew_bin=$(command -v brew 2>/dev/null) || return 0
+  login_shell=$(_login_shell)
+  if [[ "$login_shell" == "$(dirname "$(dirname "$brew_bin")")"/* ]] &&
+     { [[ "$REC_HOMEBREW" == installed ]] || [[ " $REC_FORMULAS " == *" $(basename "$login_shell") "* ]]; }; then
+    echo "anfs: your login shell is $login_shell, from Homebrew; change it first (chsh -s /bin/zsh)," >&2
+    echo "anfs: then re-run: anfs implode --all" >&2
+    return 1
+  fi
+}
+
 # `--all`: remove what the record says install.sh added, and nothing that was already there
 _implode_bootstrap() {
   [[ -f "$ANFS_BOOTSTRAP_RECORD" ]] || { echo "No bootstrap record ($(_tilde "$ANFS_BOOTSTRAP_RECORD")): nothing more to remove"; return 0; }
@@ -231,15 +248,7 @@ _implode_bootstrap() {
   [[ -n "$REC_PREFIX" && -x "$REC_PREFIX/bin/brew" ]] && brew_bin="$REC_PREFIX/bin/brew"
   [[ -z "$brew_bin" ]] && command -v brew >/dev/null 2>&1 && brew_bin=$(command -v brew)
 
-  # A login shell that runs from Homebrew would stop working: refuse, rather than lock the user out
-  local login_shell
-  login_shell=$(_login_shell)
-  if [[ -n "$brew_bin" && "$login_shell" == "$(dirname "$(dirname "$brew_bin")")"/* ]] &&
-     { [[ "$REC_HOMEBREW" == installed ]] || [[ " $REC_FORMULAS " == *" $(basename "$login_shell") "* ]]; }; then
-    echo "anfs: your login shell is $login_shell, from Homebrew; change it first (chsh -s /bin/zsh)," >&2
-    echo "anfs: then re-run: anfs implode --all" >&2
-    return 1
-  fi
+  _login_shell_guard "$brew_bin" || return 1
 
   # Tool homes the toolkit's software created. podman's rootless storage holds files owned by
   # subordinate ids, which only podman can remove; resetting it first also recreates podman's own
