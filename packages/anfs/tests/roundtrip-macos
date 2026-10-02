@@ -28,8 +28,8 @@ IMG=anfs-test-macos
 
 # $HOME paths a round trip may leave behind or change: macOS's own per-user state, and what
 # implode keeps on purpose (as on Linux: Homebrew's caches, mise and its tools, host keys, spaces)
-IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config/ruby|\.config/ruby/default-gems)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/(Homebrew|mise|aube|sigstore-rust)|\.npm|\.rustup|\.cargo|\.local/share/mise|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
-$all && IGNORE_RE='^\./(\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config|\.local|\.local/share)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/Homebrew|spaces)(/|$)'
+IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config/ruby|\.config/ruby/default-gems)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/(Homebrew|mise|aube|sigstore-rust)|\.homebrew|\.npm|\.rustup|\.cargo|\.local/share/mise|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
+$all && IGNORE_RE='^\./(\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config|\.local|\.local/share)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/Homebrew|\.homebrew|spaces)(/|$)'
 
 src_root="${ROUNDTRIP_SRC_ROOT:-$HOME/anfs-dev}"
 copy=$(mktemp -d "${TMPDIR:-/tmp}/anfs-roundtrip-macos.XXXXXX")

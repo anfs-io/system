@@ -230,9 +230,17 @@ pcm_podman_ready() {
   podman info >/dev/null 2>&1 && return 0
   if [[ -z "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
     echo "pcm: creating the podman machine (once)" >&2
+    # Ours to remove on implode (a machine that was already there is not), recorded before init so
+    # a machine that fails to init or start is still removed. "clean": podman had no machine state
+    # before this, so implode may delete what podman wrote for it too.
+    mkdir -p "$PCM_STATE_HOME"
+    if [[ -e "${XDG_CONFIG_HOME:-$HOME/.config}/containers/podman/machine" || \
+          -e "${XDG_DATA_HOME:-$HOME/.local/share}/containers/podman/machine" ]]; then
+      echo existing > "$PCM_STATE_HOME/machine-created"
+    else
+      echo clean > "$PCM_STATE_HOME/machine-created"
+    fi
     podman machine init >&2 || { echo "pcm: podman machine init failed" >&2; return 1; }
-    # Ours to remove on implode; a machine that was already there is not
-    mkdir -p "$PCM_STATE_HOME" && touch "$PCM_STATE_HOME/machine-created"
   fi
   echo "pcm: starting the podman machine" >&2
   podman machine start >&2 || { echo "pcm: podman machine start failed" >&2; return 1; }

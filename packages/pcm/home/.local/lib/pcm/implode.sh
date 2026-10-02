@@ -71,7 +71,17 @@ cmd_implode() {
   remove_data_dir "$PCM_VOLUMES_HOME" || rc=1
   if $machine; then
     echo "pcm: removing the podman machine" >&2
-    podman machine rm -f >/dev/null 2>&1 || { echo "pcm: podman machine rm failed" >&2; rc=1; }
+    podman machine rm -f >/dev/null 2>&1 || true
+    if [[ -n "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
+      echo "pcm: podman machine rm failed" >&2; rc=1
+    elif [[ "$(cat "$PCM_STATE_HOME/machine-created" 2>/dev/null)" == clean ]]; then
+      # podman keeps the machine image cache and connection files after rm; they were not there
+      # before pcm created the machine
+      local c="${XDG_CONFIG_HOME:-$HOME/.config}/containers" d="${XDG_DATA_HOME:-$HOME/.local/share}/containers"
+      rm -rf "$c/podman/machine" "$c/podman-connections.json" "$c/podman-connections.json.lock" \
+        "$d/podman/machine" "$d/cache"
+      rmdir "$c/podman" "$c" "$d/podman" "$d" 2>/dev/null || true
+    fi
   fi
   for dir in "$PCM_DATA_HOME" "$PCM_STATE_HOME" "$PCM_CACHE_HOME" "$PCM_CONFIG_HOME"; do
     [[ -e "$dir" ]] || continue
