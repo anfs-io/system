@@ -1,4 +1,4 @@
-# ppm.sh — ppm's portable shell integration (anfs/ppm).
+# ppm.sh — ppm's portable shell integration (core/ppm).
 # Sourced by both the bash and the zsh rc. Shell-specific bits live in
 # .config/zsh/ppm.zsh and .config/bash/ppm.bash.
 

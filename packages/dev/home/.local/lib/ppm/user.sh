@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anfs/dev — adds `ppm user`: throwaway users for testing ppm installs from scratch
+# core/dev — adds `ppm user`: throwaway users for testing ppm installs from scratch
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_user() is the command `ppm user`
 
 cli_cmd user "user <command> ..." "Throwaway users on this machine, to test installs as someone else"

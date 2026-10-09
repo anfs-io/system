@@ -9,7 +9,7 @@
 # no remote branch) has had zero pushes, so it gets zero bumps: a new package settles at 0.1.0
 # and stays there until its first push.
 #
-# Wired up by `ppm hooks install` (anfs/dev), which points a repo's core.hooksPath at this
+# Wired up by `ppm hooks install` (core/dev), which points a repo's core.hooksPath at this
 # directory. Note that core.hooksPath replaces a repo's .git/hooks entirely.
 set -euo pipefail
 

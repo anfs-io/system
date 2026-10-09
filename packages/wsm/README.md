@@ -34,7 +34,7 @@ The tree you work in mirrors the source. `wsm new` and `wsm add` carry what you 
 into the source, and `wsm status` shows what differs. The source then holds everything but the
 clones.
 
-wsm comes with anfs (`anfs/wsm`, part of the base install), and `anfs install <source>` runs
+wsm comes with anfs (`core/wsm`, part of the base install), and `anfs install <source>` runs
 `wsm install <source>/` after the other tools.
 
 ## Commands

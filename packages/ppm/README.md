@@ -6,7 +6,7 @@ package's files. It is one of the anfs toolkit's two base packages, with
 [`anfs`](../anfs/README.md), which holds the source list and `anfs.conf` ppm reads.
 
 That is deliberate. ppm has no separate update mechanism, no self-updater and no special case in
-the installer beyond the first bootstrap: `ppm install anfs/anfs` is how ppm (and the whole toolkit) updates itself, and a
+the installer beyond the first bootstrap: `ppm install core/anfs` is how ppm (and the whole toolkit) updates itself, and a
 higher-priority repo can override any single file it ships — its default configuration, its shell
 snippets — the same way it would override a file from any other package.
 

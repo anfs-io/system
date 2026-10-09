@@ -2,7 +2,7 @@
 # The implode command: remove everything ppm has put on this machine
 #
 # Removes every installed package the way `ppm remove` would (hooks, unstow, the brew formulas and
-# casks ppm installed, declared resources), dependents before their dependencies. anfs/anfs
+# casks ppm installed, declared resources), dependents before their dependencies. core/anfs
 # depends on the whole toolkit, so it goes first; ppm keeps running from what it already loaded.
 # Then deletes ppm's own directories. Left alone:
 #   - the bootstrap software install.sh brews untracked (Homebrew, stow, yq, mise, bash)

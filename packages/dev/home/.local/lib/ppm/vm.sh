@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anfs/dev — adds `ppm vm`: disposable macOS VMs for testing anfs installs on Apple silicon
+# core/dev — adds `ppm vm`: disposable macOS VMs for testing anfs installs on Apple silicon
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_vm() is the command `ppm vm`
 #
 # The sibling of `ppm container`, with the same subcommands and the same contract: two test users
@@ -23,7 +23,7 @@ cmd_vm() {
   shift 2>/dev/null || true
 
   if [[ -n "$subcommand" && "$subcommand" != "help" ]] && ! command -v pim >/dev/null 2>&1; then
-    echo "ppm vm needs pim (ppm install anfs/anfs)"
+    echo "ppm vm needs pim (ppm install core/anfs)"
     return 1
   fi
 
@@ -105,7 +105,7 @@ _vm_install() {
 
   if $pushed; then
     pim shell "$box" -u "$user" -- bash -s <<GUEST
-if [[ -L ~/.local/share/anfs/sources/anfs ]]; then
+if [[ -L ~/.local/share/anfs/sources/core ]]; then
   echo "the anfs sources are linked to /src; ppm vm reset $target first"
   exit 1
 fi
@@ -122,7 +122,7 @@ GUEST
 set -euo pipefail
 mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
 : > ~/.config/anfs/user.list.new
-for src in \$(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
+for src in \$(ls -d /src/* | grep -vx /src/core) /src/core; do
   [[ -d "\$src" ]] || continue
   alias=\$(basename "\$src")
   dest=~/.local/share/anfs/sources/\$alias
@@ -135,6 +135,6 @@ for src in \$(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
 done
 mv ~/.config/anfs/user.list.new ~/.config/anfs/user.list
 $prime
-bash /src/anfs/install.sh ${args[*]-}
+bash /src/core/install.sh ${args[*]-}
 GUEST
 }

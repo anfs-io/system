@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anfs/dev — adds `ppm hooks`: wire ppm's git hooks into the package repos
+# core/dev — adds `ppm hooks`: wire ppm's git hooks into the package repos
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_hooks() is the command `ppm hooks`
 #
 # Each repo gets core.hooksPath pointed at the stowed hook directory, set per repo. It is never
@@ -79,7 +79,7 @@ _hooks_apply() {
   local alias dir current changed=0
 
   if [[ "$action" == set && ! -d "$PPM_HOOKS_DIR" ]]; then
-    echo "Error: $PPM_HOOKS_DIR does not exist (is anfs/dev installed?)"
+    echo "Error: $PPM_HOOKS_DIR does not exist (is core/dev installed?)"
     return 1
   fi
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The anfs round trip, on a fresh Linux box:
 #
-#   install.sh                       the toolkit: anfs/anfs and everything it depends on
+#   install.sh                       the toolkit: core/anfs and everything it depends on
 #   ppm install ai/pi                an agent, so psm has somewhere to put skills
 #   anfs install acme                the fixture org source (packages/anfs/tests/fixtures/acme): its packages,
 #                                    containers, skills and spaces, tool by tool
@@ -111,11 +111,11 @@ box '
   # Linked ahead of install.sh, which would otherwise clone anfs from GitHub. anfs goes last, as
   # in system.list: a dependency resolves to the same or a lower-priority source, so everything
   # that needs what anfs ships (node, podman) must rank above it.
-  for src in $(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
+  for src in $(ls -d /src/* | grep -vx /src/core) /src/core; do
     ln -sfn "$src" ~/.local/share/anfs/sources/"$(basename "$src")"
     printf "%s  %s\n" "$src" "$(basename "$src")" >> ~/.config/anfs/user.list
   done
-  bash /src/anfs/install.sh
+  bash /src/core/install.sh
 '
 
 echo "== anfs src list"
@@ -148,7 +148,7 @@ if [[ " ${installs[*]} " == *" acme "* ]]; then
   check "pcm: the test boxes are valid pcm services"  'pcm validate anfs-test-debian anfs-test-fedora'
   check "cli: help and completion come from the registry" 'anfs help | grep -q "implode \[-y\]" && pcm completion zsh | grep -q "snapshot:" && ppm completion zsh | grep -q "implode:"'
   check "pim: acme/hello is listed, and validates with its from: parent" 'pim list | grep -q "^hello" && pim validate acme/hello debian-13'
-  check "pim: from: resolves to anfs/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        anfs/debian-13"'
+  check "pim: from: resolves to core/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        core/debian-13"'
   check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
   check "psm: acme-hello installed for pi"           'psm skills ls | grep -E "^ok +acme +acme-hello"'
   check "wsm: org installed before tech"             'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'

@@ -59,7 +59,7 @@ die() { echo "anfs: $*" >&2; exit 1; }
 tool() {
   local bin="$ANFS_BIN_DIR/$1"
   shift
-  [[ -x "$bin" ]] || die "$(basename "$bin") is not installed (ppm install anfs/anfs)"
+  [[ -x "$bin" ]] || die "$(basename "$bin") is not installed (ppm install core/anfs)"
   "$bin" "$@"
 }
 

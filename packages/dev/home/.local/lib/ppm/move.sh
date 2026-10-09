@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anfs/dev — adds `ppm move`: relocate a package to another source repo
+# core/dev — adds `ppm move`: relocate a package to another source repo
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_move() is the command `ppm move`
 #
 # Moving a package is four things, not one: unstow it from the old location, move the directory,
@@ -77,7 +77,7 @@ cmd_move() {
     echo "Error: $target/$pkg already exists; remove or rename it first"
     return 1
   fi
-  if [[ "$src_repo/$pkg" == anfs/anfs || "$src_repo/$pkg" == anfs/ppm ]] && ! ${force:-false}; then
+  if [[ "$src_repo/$pkg" == core/anfs || "$src_repo/$pkg" == core/ppm ]] && ! ${force:-false}; then
     echo "Error: $src_repo/$pkg is a base package — install.sh stows it from $PPM_REPO_DIR (use -f to override)"
     return 1
   fi

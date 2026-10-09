@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# anfs/dev — adds `ppm container`: disposable Linux boxes for testing anfs installs
+# core/dev — adds `ppm container`: disposable Linux boxes for testing anfs installs
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_container() is the command `ppm container`
 #
 # The boxes are pcm services, the anfs repo's containers/anfs-test-<distro> definitions: pcm runs
@@ -22,7 +22,7 @@ cmd_container() {
   shift 2>/dev/null || true
 
   if [[ -n "$subcommand" && "$subcommand" != "help" ]] && ! command -v pcm >/dev/null 2>&1; then
-    echo "ppm container needs pcm (ppm install anfs/anfs)"
+    echo "ppm container needs pcm (ppm install core/anfs)"
     return 1
   fi
 
@@ -95,7 +95,7 @@ _container_install() {
 
   if $pushed; then
     pcm exec "$box" -u "$user" -- bash -c '
-      if [[ -L ~/.local/share/anfs/sources/anfs ]]; then
+      if [[ -L ~/.local/share/anfs/sources/core ]]; then
         echo "the anfs sources are linked to the working tree; ppm container reset '"$distro"' first"
         exit 1
       fi
@@ -111,7 +111,7 @@ _container_install() {
   pcm exec "$box" -u "$user" -- bash -c '
     mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
     : > ~/.config/anfs/user.list.new
-    for src in $(ls -d /src/* | grep -vx /src/anfs) /src/anfs; do
+    for src in $(ls -d /src/* | grep -vx /src/core) /src/core; do
       [[ -d "$src" ]] || continue
       alias=$(basename "$src")
       target=~/.local/share/anfs/sources/$alias
@@ -125,7 +125,7 @@ _container_install() {
     mv ~/.config/anfs/user.list.new ~/.config/anfs/user.list
   ' || return 1
 
-  pcm exec "$box" -u "$user" -- bash /src/anfs/install.sh ${args[@]+"${args[@]}"}
+  pcm exec "$box" -u "$user" -- bash /src/core/install.sh ${args[@]+"${args[@]}"}
 }
 
 _container_list() {

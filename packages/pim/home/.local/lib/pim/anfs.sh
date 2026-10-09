@@ -58,7 +58,7 @@ build_anfs_step() {
         echo 'set -euo pipefail'
         echo 'mkdir -p ~/.config/anfs'
         printf 'cat > ~/.config/anfs/user.list <<LIST\n%sLIST\n' "$list"
-        echo "bash ~/.local/share/anfs/sources/anfs/install.sh ${repo:+--repo $(shq "$repo")} $pkgs"
+        echo "bash ~/.local/share/anfs/sources/core/install.sh ${repo:+--repo $(shq "$repo")} $pkgs"
       } > "$script"
       ;;
     pushed)

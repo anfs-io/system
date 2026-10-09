@@ -44,7 +44,7 @@ images/<name>/
   dependency on the host. The installer powers the VM off (`-no-reboot`), then pim boots the disk.
 - **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
   dependency: to the same or a lower-priority source, so `lgat/images/app` may build on
-  `anfs/images/debian-13` but not the reverse. Naming its own name is the next layer down.
+  `core/images/debian-13` but not the reverse. Naming its own name is the next layer down.
 - **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
   sha256, the answer file, the scripts, `files/`, pim's finalize step and the parent's key.
   `pim build` is a no-op while the key is unchanged; `meta.yml` beside each build records it.
@@ -113,16 +113,16 @@ Every source is cloned once under `~/.local/share/anfs/sources/`:
 
 ```
 ~/.local/share/anfs/sources/   (each directory is named by its source alias)
-  anfs/             ← this repo (the toolkit itself)
-  ai/ pdt/ pde/     ← default sources (system.list)
+  core/             ← this repo (the toolkit itself; anfs-io/system)
+  stack/            ← the other default source (system.list): packages in categories
   user/             ← your customization repo: the "user" source, highest priority
 ```
 
-This repo (`anfs/`) contains:
+This repo (`core/`) contains:
 - `packages/anfs/` — the toolkit's own package: the `anfs` command, the libraries every tool
   sources (`~/.local/lib/anfs`: paths, sources, resolve), the source list and the toolkit's
   settings (`~/.config/anfs/{system.list,anfs.conf}`). It depends on every tool and what they run
-  on, so `ppm install anfs/anfs` is the whole toolkit. Its `tests/` hold the shared-lib bats
+  on, so `ppm install core/anfs` is the whole toolkit. Its `tests/` hold the shared-lib bats
   suites and the end-to-end round trip (Testing).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
@@ -133,8 +133,8 @@ This repo (`anfs/`) contains:
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
 - `images/` — base VM images (`debian-13`, `fedora-44`) for pim; other sources build on them with `from:`
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
-  Homebrew, stow, yq, mise — clones this repo, stows the base packages `anfs/anfs` and `anfs/ppm`,
-  then `ppm install anfs/anfs`)
+  Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
+  then `ppm install core/anfs`)
 - `chorus/units/` — development plans (Chorus methodology)
 
 The tools don't declare `depends: [anfs]` although they source `lib/anfs`: anfs depends on them,
@@ -146,7 +146,7 @@ anfs except anfs's own (the sources, the lists, `anfs.conf`).
 
 ## Configuration: anfs.conf
 
-One file configures the whole toolkit: `~/.config/anfs/anfs.conf` (shipped by `anfs/anfs`, so a
+One file configures the whole toolkit: `~/.config/anfs/anfs.conf` (shipped by `core/anfs`, so a
 higher layer — your `user/anfs` — can replace it) and `~/.config/anfs/anfs.local.conf` (this
 machine only, seeded by install.sh with `PPM_GROUP_ID`). Every tool loads them through
 `lib/anfs/paths.sh` (`anfs_load_conf`):
@@ -214,7 +214,7 @@ cask:
   otherwise refuses the formula's dependencies from the same tap.
 - `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` skips them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
 - A `system` map with entries for other distros but not this one (and no `linux` key) is an error.
-- Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside stow and yq, and `anfs/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
+- Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside stow and yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
 - Trackers record the formulas/casks ppm installed (`installed_deps`). `ppm remove` uninstalls them when no other installed package recorded or declares them. System packages are never removed.
 - `-c` skips all of this, like hooks.
 
@@ -295,12 +295,12 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - Not called with `-c`, and `-r`'s internal remove is not a removal.
 - For a removal, the package directory normally still exists, so the callback can read the
   removed packages' `package.yml`. It is gone only if its repo was removed first.
-- `anfs/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
+- `core/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
   unlink them (`psm agents rm`) when one is removed.
 
 ## Key Files
 
-- `~/.config/anfs/system.list` — default sources, shipped/stowed by `anfs/anfs` (don't edit)
+- `~/.config/anfs/system.list` — default sources, shipped/stowed by `core/anfs` (don't edit)
 - `~/.config/anfs/user.list` — your sources (edited by `anfs src`); higher priority than system.list
 - `~/.local/share/anfs/sources/<alias>/` — one clone per source; a local-path source is a link here
 - `~/.cache/anfs/updated/<alias>` — each source's last successful clone/pull. `ppm install`,
@@ -313,10 +313,10 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, stowed files, `installed_deps`, `resources`)
 - `~/.local/state/ppm/installed/callbacks.yml` — packages registered for post-run callbacks (`ppm_register_callback`)
 - `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into stow's ignore list so they are never re-linked
-- `~/.local/bin/<tool>` — each stowed from its package (`anfs/anfs`, `anfs/ppm`, `anfs/pcm`, ...)
-- `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `anfs/ppm`, `anfs.sh` from `anfs/anfs`
+- `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
+- `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
-- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `anfs/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `pde/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `anfs/dev`'s `ppm user`)
+- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `pde/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `core/dev`'s `ppm user`)
 - `~/.cache/ppm/brew_last_update`
 - Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
 
@@ -342,7 +342,7 @@ Rules:
   `<shell>/` file at *source* time; calling one at *runtime* is fine. `sh/ppm.sh` does exactly
   that: it defines the `ppm()` wrapper and calls `_ppm_shell_reload` (defined per shell) only
   after a successful `install`/`remove`/`src update`.
-- **The rc file belongs to a shell package, never to `anfs/anfs`.** `pde/zsh` owns
+- **The rc file belongs to a shell package, never to `core/anfs`.** `pde/zsh` owns
   `.zshrc`/`.zshenv` and its sourcing loop; `pde/bash` owns `.bashrc`/`.bash_profile`. With no
   shell package installed nothing sources anything — `ppm` still works, but `ppm cd` and mise
   activation are absent. A rc that adds the `sh/` tier must also add it to any reload helper it
@@ -391,10 +391,10 @@ Rules:
 - **Glob two levels** (`*.sh` and `*/*.sh`), which is what packages actually use
   (`~/.config/zsh/op/`, `ssh/`, `ruby/`). Don't reach for bash's `globstar`: macOS ships bash
   3.2, which doesn't have it.
-- **Guard every helper borrowed from another package.** `anfs/anfs`'s files use `pde/zsh`'s
+- **Guard every helper borrowed from another package.** `core/anfs`'s files use `pde/zsh`'s
   `zcomp`, `zsrc` and `load_conf` when present and degrade silently when not, because ppm must
   not depend on a package repo. The dependency is one-way: `pde/zsh` knows nothing of ppm.
-- **Don't declare software the bootstrap owns.** `anfs/anfs` ships mise's activation but no
+- **Don't declare software the bootstrap owns.** `core/anfs` ships mise's activation but no
   `brew: [mise]`, and `pde/bash` declares no `brew: macos: [bash]` — both are untracked
   `install.sh` bootstrap formulas, and declaring them would let `ppm remove` uninstall what ppm
   itself runs on.
@@ -408,17 +408,17 @@ source provides. The order is global — one order for every tool — and within
 only the sources holding its directory. When a package exists in multiple repos, each copy is a
 layer:
 
-- `ppm install git` installs every `git` package in source order (e.g. `user/git`, then `pde/git`). The layers share one stow ignore list (`PPM_IGNORE_ARGS`), so files stowed by a higher-priority layer are skipped by lower ones. This lets personal repos override individual files.
-- `ppm install pde/git` installs only that layer. It hits a stow conflict on files owned by a higher layer; this is intended.
-- `anfs` is last in `system.list`, so every other source may layer over its packages and depend
-  on what it ships (`depends: [node]` resolves to `anfs/node`).
+- `ppm install git` installs every `git` package in source order (e.g. `user/git`, then `stack/git`). The layers share one stow ignore list (`PPM_IGNORE_ARGS`), so files stowed by a higher-priority layer are skipped by lower ones. This lets personal repos override individual files.
+- `ppm install stack/git` installs only that layer. It hits a stow conflict on files owned by a higher layer; this is intended.
+- `core` is last in `system.list`, so every other source may layer over its packages and depend
+  on what it ships (`depends: [node]` resolves to `core/node`).
 
 ## Your Customization Repo
 
 The alias `user` (`PPM_USER_REPO_ALIAS` in `core.sh`) is always your own repo:
 
 - `ppm customize` creates it locally: `git init` at `~/.local/share/anfs/sources/user`, an `anfs` package holding `user.list` (listing the repo itself, as a local path), registered at the top of `user.list`, then `ppm install -f user/anfs` swaps the plain `user.list` for a link into the repo. It is dispatched through `main()` because it calls `install`.
-- Its `anfs` package is a layer of `anfs/anfs`, so files it ships win over the toolkit's defaults: its `user.list`, and its own `anfs.conf` for every tool's settings. One package is all a customization repo needs to configure the toolkit.
+- Its `anfs` package is a layer of `core/anfs`, so files it ships win over the toolkit's defaults: its `user.list`, and its own `anfs.conf` for every tool's settings. One package is all a customization repo needs to configure the toolkit.
 - `install.sh --repo <url>` registers that URL as `user` and installs `user/anfs` with `-f`.
 - `ppm file claim` defaults to it.
 - Local-path sources are never pulled: after pushing it, set the `user` line in `user.list` to the git URL.
@@ -458,7 +458,7 @@ Plans are in `chorus/units/`. Follow the Chorus methodology:
 
 ### Git Hooks
 
-`anfs/dev` ships a `pre-commit` hook that bumps a package's patch version when a commit touches
+`core/dev` ships a `pre-commit` hook that bumps a package's patch version when a commit touches
 it, and creates `package.yml` for a package that has none. The files live in the package at
 `packages/dev/home/.config/git/ppm-hooks/` and are stowed to `~/.config/git/ppm-hooks/`.
 
@@ -472,7 +472,7 @@ ppm hooks uninstall [--all] [repo...]
 ```
 
 With no repo names it acts on the `system.list` repos; `--all` adds your `user.list` ones.
-`anfs/dev`'s `post_install` runs `ppm hooks install`, and its `post_remove` runs
+`core/dev`'s `post_install` runs `ppm hooks install`, and its `post_remove` runs
 `ppm hooks uninstall --all`. Re-run `ppm hooks install` after `anfs src add`, since `post_install`
 can't know about a repo added later.
 
@@ -504,7 +504,7 @@ because its `meta_*` names would share a namespace with `packages.sh`'s.
 
 ### Moving a Package Between Repos
 
-`anfs/dev` ships `ppm move`, which relocates a package from one source repo to another. The files
+`core/dev` ships `ppm move`, which relocates a package from one source repo to another. The files
 live in the package at `packages/dev/home/.local/lib/ppm/move.sh`, stowed to
 `~/.local/lib/ppm/move.sh` — a function named `move` there becomes `ppm move`, like `ppm hooks`
 and `ppm user`.
@@ -541,10 +541,10 @@ source spec must be fully qualified: a bare name matches a layer in every repo.
 
 ### Lib Structure
 
-ppm is the `anfs/ppm` package: the `ppm` script and its libraries live under
+ppm is the `core/ppm` package: the `ppm` script and its libraries live under
 `packages/ppm/home/` and are stowed to `~/.local/bin/ppm` and `~/.local/lib/ppm/`
 (its shell snippets go to `~/.config/{sh,zsh,bash}/` — see Shell Integration). What every tool
-shares is the `anfs/anfs` package's `~/.local/lib/anfs/`.
+shares is the `core/anfs` package's `~/.local/lib/anfs/`.
 The `ppm` script holds only bootstrap: paths, library sourcing, flag parsing and dispatch. Each
 command lives in the lib file for its area, next to its helpers:
 
@@ -585,16 +585,16 @@ them, and `cli_dispatch` runs it. Help and the zsh completion's command list are
 that registry, so neither can drift from what exists. A `cmd_` function left unregistered still
 runs (plumbing such as `psm path`), and *only* `cmd_` functions run, so a tool's internals are
 never reachable from its command line — and a command can never shadow a system binary in package
-hooks (`install`, `file`). An extension registers its command where it defines it: `anfs/dev`'s
+hooks (`install`, `file`). An extension registers its command where it defines it: `core/dev`'s
 `container.sh` calls `cli_cmd container ...` next to `cmd_container`. What stays each tool's own
 is how it parses its flags.
 
 Flags (`force`, `config`, `reinstall`, `skip_deps`, `yes`) are locals of `main()` that commands read through dynamic scoping.
 
 Library sourcing in `ppm`: every `*.sh` in `$PPM_LIB_DIR` (`~/.local/lib/ppm/`) is
-sourced. That directory holds both ppm's own core libraries (stowed from `anfs/ppm`)
-and package-contributed extensions (e.g. `anfs/dev`'s `container.sh`, `vm.sh` and `hooks.sh`). During a fresh
-install `install.sh` sources the core libs directly from the clone and stows `anfs/anfs` and `anfs/ppm`
+sourced. That directory holds both ppm's own core libraries (stowed from `core/ppm`)
+and package-contributed extensions (e.g. `core/dev`'s `container.sh`, `vm.sh` and `hooks.sh`). During a fresh
+install `install.sh` sources the core libs directly from the clone and stows `core/anfs` and `core/ppm`
 so they are present before `ppm` first runs.
 
 ### Testing
@@ -653,7 +653,7 @@ packages/pim/tests/e2e [debian|fedora|all]
   it. What implode keeps on purpose (Homebrew and its caches, mise's tools, podman's storage,
   GitHub's host keys, space contents) is listed in the script's `IGNORE_RE`.
 
-`anfs/dev` provides the throwaway machines to validate them on. `ppm container` (Debian, Fedora; the
+`core/dev` provides the throwaway machines to validate them on. `ppm container` (Debian, Fedora; the
 boxes are pcm services, `containers/anfs-test-<distro>`) and
 `ppm vm` (macOS on Apple silicon; the boxes are pim images, `images/anfs-test-<target>`, on the
 tart backend) share one contract: two test users, `owner` (sudo with

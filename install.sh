@@ -13,7 +13,7 @@
 #   4. Installs the base tools from Homebrew: stow, yq, mise (and bash on macOS) — ppm cannot
 #      parse a package.yml (yq) or stow anything until these exist, so they stay an imperative
 #      bootstrap and never become tracked dependencies
-#   5. Clones anfs to ~/.local/share/anfs/sources/anfs (git is available now) and stows its two
+#   5. Clones anfs to ~/.local/share/anfs/sources/core (git is available now) and stows its two
 #      base packages into $HOME: anfs (the anfs command, the libraries every tool shares, the
 #      default config — anfs.conf and system.list) and ppm (the ppm command, its libraries and
 #      shell integration). That is what puts ~/.local/bin/{anfs,ppm} on PATH. Files protected with
@@ -23,7 +23,7 @@
 #      (machine-local settings)
 #   8. With --repo: adds your customization repo as the "user" source (highest priority) and
 #      installs its anfs package, which replaces the seeded user.list with a link into it
-#   9. Runs 'anfs src update', installs any requested packages, then 'ppm install anfs/anfs':
+#   9. Runs 'anfs src update', installs any requested packages, then 'ppm install core/anfs':
 #      the whole toolkit — pcm, psm, wsm and the software they run on (podman, varlock, node) —
 #      tracked like any package, so `anfs implode` can take it all out again
 #
@@ -31,9 +31,9 @@
 #   ~/.local/share/anfs/sources/<alias>/  one clone per source; anfs/ is the toolkit's own repo
 #   ~/.local/bin/{anfs,ppm,pcm,psm,wsm}   the commands (stowed)
 #   ~/.local/lib/{anfs,ppm,pcm}/          their libraries; lib/anfs is what every tool shares
-#   ~/.config/anfs/system.list            default sources (stowed from anfs/anfs)
+#   ~/.config/anfs/system.list            default sources (stowed from core/anfs)
 #   ~/.config/anfs/user.list              your sources (a link into your repo with --repo)
-#   ~/.config/anfs/anfs.conf              default settings for every tool (stowed from anfs/anfs)
+#   ~/.config/anfs/anfs.conf              default settings for every tool (stowed from core/anfs)
 #   ~/.config/anfs/anfs.local.conf        machine-local settings
 #   ~/.local/state/ppm/installed/         what ppm installed
 #
@@ -79,7 +79,7 @@ ANFS_SOURCES_HOME=$XDG_DATA_HOME/anfs/sources
 
 ANFS_REPO_URL=https://github.com/anfs-io/system.git
 ANFS_RAW_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main
-ANFS_REPO_DIR=$ANFS_SOURCES_HOME/anfs
+ANFS_REPO_DIR=$ANFS_SOURCES_HOME/core
 # The packages stowed by hand before ppm can run: anfs (what every tool sources) and ppm itself
 ANFS_BASE_PACKAGES="anfs ppm"
 PPM_LIB_SUBDIR=packages/ppm/home/.local/lib/ppm
@@ -341,7 +341,7 @@ stow_base() {
 }
 
 
-# Seed the machine's own config. anfs.conf and system.list come from stowing anfs/anfs; here we
+# Seed the machine's own config. anfs.conf and system.list come from stowing core/anfs; here we
 # seed an empty user.list the user can add repos to, and machine-local settings. A repo's
 # package can later replace user.list with a link into that repo (install_repo).
 install_configs() {
@@ -358,7 +358,7 @@ install_configs() {
 
 
 # --repo: your customization repo (see `ppm customize`), always registered as the "user" source
-# (highest priority). Its anfs package is a layer of anfs/anfs; installing it with -f swaps the
+# (highest priority). Its anfs package is a layer of core/anfs; installing it with -f swaps the
 # seeded user.list for the repo's copy, which lists the repo itself, and puts its anfs.conf (if it
 # ships one) over the default.
 install_repo() {
@@ -386,9 +386,9 @@ install_packages() {
   for pkg in "$@"; do
     ppm install "$pkg"
   done
-  # The toolkit: anfs/anfs depends on ppm, pcm, psm, wsm and the software they run on, so this
+  # The toolkit: core/anfs depends on ppm, pcm, psm, wsm and the software they run on, so this
   # installs them all and records them in the tracker (re-stowing the base packages)
-  ppm install anfs/anfs
+  ppm install core/anfs
 }
 
 

@@ -1,4 +1,4 @@
-# mise activation for zsh (anfs/ppm; ppm installs mise as a core component).
+# mise activation for zsh (core/ppm; ppm installs mise as a core component).
 # Aliases are in .config/sh/mise.sh. zcomp and load_conf come from pde/zsh;
 # ppm doesn't depend on that package.
 

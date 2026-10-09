@@ -42,7 +42,7 @@ _repo_index() {
 }
 
 # `ppm customize`: start customizing this machine. Creates a local git repo as the "user"
-# source with an anfs package (a layer of anfs/anfs) that holds user.list, and stows it — so from
+# source with an anfs package (a layer of core/anfs) that holds user.list, and stows it — so from
 # here your source list, and any anfs.conf you add next to it, live in your own repo.
 # Dispatched through main(): it calls install.
 cmd_customize() {
@@ -83,7 +83,7 @@ cmd_customize() {
   cp "$user_file" "$config_dir/user.list"
 
   # -f swaps the plain user.list for a link into the repo (same content). Only the user layer:
-  # it is the top layer so it can't conflict, and -f stays away from anfs/anfs.
+  # it is the top layer so it can't conflict, and -f stays away from core/anfs.
   force=true cmd_install "$alias/anfs"
 
   echo ""

@@ -42,7 +42,7 @@ qemu_firmware() {
 # Usage: efivars_new <arch> <dest>
 efivars_new() {
   [[ "$1" == arm64 ]] || return 0
-  qemu_firmware || die "no aarch64 UEFI firmware found (ppm install anfs/qemu)"
+  qemu_firmware || die "no aarch64 UEFI firmware found (ppm install core/qemu)"
   cp "$FW_VARS" "$2"
   chmod u+w "$2"
 }
@@ -67,7 +67,7 @@ qemu_argv() {
   fi
   QEMU_ARGV+=(-cpu "$cpu" -smp "$cpus" -m "$mem")
   if [[ "$arch" == arm64 ]]; then
-    qemu_firmware || die "no aarch64 UEFI firmware found (ppm install anfs/qemu)"
+    qemu_firmware || die "no aarch64 UEFI firmware found (ppm install core/qemu)"
     QEMU_ARGV+=(-drive "if=pflash,format=raw,readonly=on,file=$FW_CODE"
                 -drive "if=pflash,format=raw,file=$vars")
   fi

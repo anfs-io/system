@@ -32,7 +32,7 @@ WSM_VERSION=0.4.0
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
 if [[ ! -f "$ANFS_LIB/cli.sh" ]]; then
-  echo "wsm: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  echo "wsm: $ANFS_LIB not found; run: ppm install -f core/anfs" >&2
   exit 69
 fi
 # shellcheck source=/dev/null

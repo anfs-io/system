@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The anfs round trip on macOS, in a tart VM (anfs/dev's `ppm vm`; Apple silicon only):
+# The anfs round trip on macOS, in a tart VM (core/dev's `ppm vm`; Apple silicon only):
 #
 #   install.sh                       on a vanilla macOS: Xcode CLT, Homebrew, then the toolkit
 #   ppm install ai/pi                an agent, so psm has somewhere to put skills
@@ -23,7 +23,7 @@ set -euo pipefail
 
 all=false
 [[ "${1:-}" == "--all" ]] && all=true
-command -v pim >/dev/null || { echo "needs pim (ppm install anfs/anfs)" >&2; exit 1; }
+command -v pim >/dev/null || { echo "needs pim (ppm install core/anfs)" >&2; exit 1; }
 IMG=anfs-test-macos
 
 # $HOME paths a round trip may leave behind or change: macOS's own per-user state, and what
@@ -68,14 +68,14 @@ box '
   set -e
   mkdir -p ~/.local/share/anfs/sources ~/.config/anfs
   : > ~/.config/anfs/user.list
-  ln -sfn /src/anfs/packages/anfs/tests/fixtures/acme ~/.local/share/anfs/sources/acme
-  echo "/src/anfs/packages/anfs/tests/fixtures/acme  acme" >> ~/.config/anfs/user.list
-  for a in $(printf "%s\n" '"$aliases"' | tr " " "\n" | grep -v "^anfs\$") anfs; do
+  ln -sfn /src/core/packages/anfs/tests/fixtures/acme ~/.local/share/anfs/sources/acme
+  echo "/src/core/packages/anfs/tests/fixtures/acme  acme" >> ~/.config/anfs/user.list
+  for a in $(printf "%s\n" '"$aliases"' | tr " " "\n" | grep -v "^core\$") core; do
     [ -n "$a" ] || continue
     ln -sfn "/src/$a" ~/.local/share/anfs/sources/"$a"
     printf "%s  %s\n" "/src/$a" "$a" >> ~/.config/anfs/user.list
   done
-  bash /src/anfs/install.sh
+  bash /src/core/install.sh
 ' | tail -n 5
 
 echo "== ppm install ai/pi, then anfs install acme"

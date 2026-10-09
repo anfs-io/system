@@ -5,7 +5,7 @@ set -euo pipefail
 # cloned once under ~/.local/share/anfs/sources; pcm reads the containers/ directory of each
 ANFS_LIB="$HOME/.local/lib/anfs"
 if [[ ! -f "$ANFS_LIB/sources.sh" ]]; then
-  echo "pcm: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  echo "pcm: $ANFS_LIB not found; run: ppm install -f core/anfs" >&2
   exit 1
 fi
 # shellcheck source=/dev/null
@@ -172,7 +172,7 @@ pcm_lib_dir() {
 }
 PCM_LIB_DIR="$(pcm_lib_dir)"
 if [[ ! -f "$PCM_LIB_DIR/sources.sh" ]]; then
-  echo "pcm: libraries not found in $PCM_LIB_DIR; run: ppm install -f anfs/pcm" >&2
+  echo "pcm: libraries not found in $PCM_LIB_DIR; run: ppm install -f core/pcm" >&2
   exit 1
 fi
 for lib_file in "$PCM_LIB_DIR"/*.sh; do

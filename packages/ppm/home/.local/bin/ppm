@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ppm — personal package manager
 #
-# ppm is one tool of the anfs toolkit, and like the others a package of the anfs repo (anfs/ppm):
+# ppm is one tool of the anfs toolkit, and like the others a package of the anfs repo (core/ppm):
 # this script and its libraries are stowed from packages/ppm/home/ into ~/.local/bin and
 # ~/.local/lib/ppm. Sources are anfs's (`anfs src`); ppm reads the packages/ directory of each.
 # Settings come from ~/.config/anfs/anfs.conf (loaded by lib/anfs/paths.sh).
@@ -24,8 +24,8 @@ anfs_tool_paths ppm
 # Installed state: per-package trackers, claims, protections, callbacks
 PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
 BIN_DIR="$ANFS_BIN_DIR"
-# The anfs repo's clone; ppm itself is its anfs/ppm package
-PPM_REPO_DIR="$ANFS_SOURCES_HOME/anfs"
+# The anfs repo's clone; ppm itself is its core/ppm package
+PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
 
 # The command line: commands are cmd_<name> functions, registered here (and by extensions as they
 # are sourced) so help and completion are generated from what exists
@@ -64,7 +64,7 @@ _resolve_path() {
 }
 
 # Source ppm's own libraries and any package-contributed extensions. Both live in
-# PPM_LIB_DIR: ppm's core libs are stowed there by the anfs/ppm package, alongside
+# PPM_LIB_DIR: ppm's core libs are stowed there by the core/ppm package, alongside
 # extensions from other packages (e.g. dev's container.sh, user.sh).
 for lib_file in "$PPM_LIB_DIR"/*.sh; do
   [[ -f "$lib_file" ]] && source "$lib_file"

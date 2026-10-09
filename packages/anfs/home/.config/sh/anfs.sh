@@ -1,4 +1,4 @@
-# anfs.sh — anfs's portable shell integration (anfs/anfs).
+# anfs.sh — anfs's portable shell integration (core/anfs).
 # Sourced by both the bash and the zsh rc.
 
 command -v anfs >/dev/null 2>&1 || return 0

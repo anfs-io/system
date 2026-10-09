@@ -118,7 +118,7 @@ installs the irreducible prerequisites and then hands over to ppm itself:
 - anfs itself, by stowing its two base packages, [`anfs`](packages/anfs/README.md) and
   [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
   `~/.config/anfs/` (your source list, `anfs.local.conf`)
-- `anfs src update`, then any packages you named, then `ppm install anfs/anfs`: the rest of the
+- `anfs src update`, then any packages you named, then `ppm install core/anfs`: the rest of the
   toolkit — `pcm`, `psm`, `wsm` — and the software they run on (podman, varlock, node). On macOS
   the podman machine is created the first time `pcm up` needs it, not at install.
 
@@ -206,14 +206,10 @@ end-to-end round trip (see CLAUDE.md, Testing).
 
 anfs ships a default source list and reads yours first. In priority order:
 
-| Repo | Contents |
-| --- | --- |
-| [utils](https://github.com/anfs-io/utils) | utilities: networking, storage, OS images |
-| [ai](https://github.com/anfs-io/ai) | AI tooling: agent packages, and `skills/` |
-| [pdt](https://github.com/anfs-io/pdt) | Product Development Toolkit, and `containers/` (dnsmasq, netboot) |
-| [pde](https://github.com/anfs-io/pde) | Personal Development Environment |
-| core-pcm | container definitions (postgres, valkey, ...) |
-| [system](https://github.com/anfs-io/system) | this repository, alias `anfs` — last, so everything may layer over it |
+| Repo | Alias | Contents |
+| --- | --- | --- |
+| [stack](https://github.com/anfs-io/stack) | `stack` | packages in categories (`ai/`, `pde/`, `pdt/`, `utils/`: `ppm install ai/`), `containers/` and `skills/` |
+| [system](https://github.com/anfs-io/system) | `core` | this repository — last, so everything may layer over it |
 
 `anfs src list` shows what each source provides. See each repo's README for what it holds, and
 [the `ppm` package](packages/ppm/README.md#sources-and-precedence) for how the lists are

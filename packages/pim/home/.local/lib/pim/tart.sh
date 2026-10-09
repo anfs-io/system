@@ -144,7 +144,7 @@ tart_build() {
   local id="$1" arch="$2" key="$3"
   local name base vm built sshkey user ip pid start log s cpus mem disk
   [[ "$(host_os)" == darwin && "$(host_arch)" == arm64 ]] || die "tart images build only on Apple silicon macOS"
-  command -v tart >/dev/null || die "tart is not installed (ppm install anfs/pim)"
+  command -v tart >/dev/null || die "tart is not installed (ppm install core/pim)"
   name=$(img_name "$id")
   _tart_boot "$id"
   base=$(img_get "$(img_root "$id")" .base)

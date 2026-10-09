@@ -5,7 +5,7 @@ set -euo pipefail
 # psm syncs, named by its alias (anfs src list). ~/.config/psm/*.yml add third-party repos.
 ANFS_LIB="$HOME/.local/lib/anfs"
 if [[ ! -f "$ANFS_LIB/sources.sh" ]]; then
-  echo "psm: $ANFS_LIB not found; run: ppm install -f anfs/anfs" >&2
+  echo "psm: $ANFS_LIB not found; run: ppm install -f core/anfs" >&2
   exit 1
 fi
 # shellcheck source=/dev/null

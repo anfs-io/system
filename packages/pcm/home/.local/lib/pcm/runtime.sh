@@ -244,7 +244,7 @@ wait_healthy() {
 # is stopped, after sizing it to PCM_MACHINE_MEMORY. On Linux podman runs natively and there is
 # nothing to do.
 pcm_podman_ready() {
-  command -v podman >/dev/null 2>&1 || { echo "pcm: podman is not installed (it ships with anfs: ppm install anfs/podman)" >&2; return 1; }
+  command -v podman >/dev/null 2>&1 || { echo "pcm: podman is not installed (it ships with anfs: ppm install core/podman)" >&2; return 1; }
   [[ "$OSTYPE" == darwin* ]] || return 0
   if [[ -n "${PCM_MACHINE_MEMORY:-}" && ! "$PCM_MACHINE_MEMORY" =~ ^[0-9]+$ ]]; then
     echo "pcm: PCM_MACHINE_MEMORY is the podman machine's memory in MiB (e.g. 4096), not '$PCM_MACHINE_MEMORY'" >&2
