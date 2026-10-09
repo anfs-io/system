@@ -1,20 +1,21 @@
 # Shared setup for wsm's tests.
 #
 # Every test runs the script straight out of the package, with HOME and XDG_STATE_HOME inside
-# the per-test temp directory, so nothing reaches the real registry or the real home.
+# the per-test temp directory, so nothing reaches the real trackers or the real home.
 
 wsm_setup() {
   WSM="$BATS_TEST_DIRNAME/../home/.local/bin/wsm"
   mkdir -p "$BATS_TEST_TMPDIR/home" "$BATS_TEST_TMPDIR/state"
   # BATS_TEST_TMPDIR sits under /var on macOS, which is a symlink to /private/var. wsm
-  # canonicalizes every path it stores, so HOME has to be canonical too or nothing compares equal.
+  # canonicalizes the targets it stores, so HOME has to be canonical too or nothing compares equal.
   HOME=$(cd "$BATS_TEST_TMPDIR/home" && pwd -P)
   XDG_STATE_HOME=$(cd "$BATS_TEST_TMPDIR/state" && pwd -P)
   # The rest of XDG under the test HOME, so anfs's paths never reach the real ones
   XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache"
-  unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME
+  unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME
+  unset WSM_CONFIG_HOME WSM_DATA_HOME WSM_STATE_HOME WSM_CACHE_HOME WSM_SPACES_HOME
   export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
-  REGISTRY="$XDG_STATE_HOME/wsm/workspaces"
+  TRACKERS="$XDG_STATE_HOME/wsm/installed"
   # anfs's libraries, where wsm looks for them
   mkdir -p "$HOME/.local/lib"
   ln -s "$(cd "$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs" && pwd)" "$HOME/.local/lib/anfs"
@@ -22,20 +23,6 @@ wsm_setup() {
 }
 
 wsm() { "$WSM" "$@"; }
-
-# A directory with a marker but no registry entry — what a freshly cloned workspace looks like
-mkmarker() {
-  mkdir -p "$HOME/$1/.wsm"
-  printf '%s\n' "${2:-$(uuidgen | tr '[:upper:]' '[:lower:]')}" > "$HOME/$1/.wsm/id"
-}
-
-entries() {
-  [[ -f "$REGISTRY" ]] || { echo 0; return 0; }
-  grep -c . "$REGISTRY" || true
-}
-
-# field <match> <n> — column n of the registry line containing <match>
-field() { grep -F "$1" "$REGISTRY" | cut -f"$2"; }
 
 # A bare repo under $BATS_TEST_TMPDIR/bare, cloneable over file://. Prints its path.
 # Usage: mkbare <name> [extra-branch]
@@ -70,9 +57,18 @@ mksource() {
   printf '%s\n' "$dir"
 }
 
-# Write a space definition, <source>/spaces/<name>/space.yml, from stdin
-# Usage: space_def <source> <name>  < body
+# Write a space definition, <source>/spaces/<ws>/<space>/space.yml, from stdin
+# Usage: space_def <source> <ws>/<space>  < body
 space_def() {
   mkdir -p "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2"
   cat > "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2/space.yml"
 }
+
+# Any other file in a space: <source> <ws>/<space>/<path> [content]
+space_file() {
+  mkdir -p "$(dirname "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2")"
+  printf '%s\n' "${3:-$2}" > "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2"
+}
+
+# Number of installed spaces (space trackers: <src>/<ws>/<space>.yml)
+installed() { find "$TRACKERS" -mindepth 3 -name '*.yml' 2>/dev/null | grep -c . || true; }

@@ -17,7 +17,7 @@
 #                                      install.sh added (Homebrew when it installed it)
 #
 # Cherry-picking within a source is each tool's business: ppm install lgat/rails,
-# pcm install lgat/postgres, wsm install lgat/tech.
+# pcm install lgat/postgres, wsm install lgat/main/tech.
 set -euo pipefail
 
 ANFS_LIB="$HOME/.local/lib/anfs"

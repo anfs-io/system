@@ -18,6 +18,7 @@ anfs_gitsrc_env
 : "${PCM_VOLUMES_HOME:=$PCM_DATA_HOME/volumes}"
 : "${PCM_ENV_HOME:=$PCM_CONFIG_HOME/env}"
 : "${PCM_HEALTH_TIMEOUT:=120}"
+: "${PCM_INGRESS_DOMAIN:=localhost}"
 export PCM_CONFIG_HOME PCM_CONTAINERS_HOME PCM_DATA_HOME PCM_VOLUMES_HOME
 
 # The implicit, highest-priority source: hand-made definitions in $PCM_CONTAINERS_HOME
@@ -89,6 +90,22 @@ prints is exported to the service's compose as PCM_<DEP>_<KEY>, e.g.
 PCM_POSTGRES_URL. A value already set in the environment wins. `pcm remove`
 runs the dependency's `deprovision` hook (if present) with the same settings.
 
+Ingress: a service may declare a hostname route instead of (or as well as) a
+host port
+
+  x-pcm:
+    ingress:
+      service: server        # compose service (default: the only one)
+      port: 3000             # its container port
+      healthcheck: /healthz  # default /up
+      hosts: ${APP_HOSTS}    # default <name>.$PCM_INGRESS_DOMAIN (localhost)
+
+It is routed by the active proxy: the definition with `x-pcm.provides: proxy`,
+or the one PCM_PROXY names when several do. The service implicitly depends on
+it, so `pcm up` starts the proxy first. The proxy's `labels` hook gets the
+ingress as key=value args and prints the labels pcm sets on the container;
+its `provision` hook prints the URL, exported as PCM_INGRESS_URL.
+
 Runtime: every service runs as compose project <name> (a definition's top-level
 name: is ignored) and its containers carry the labels io.pcm.id (source/name),
 io.pcm.name and io.pcm.source; ps, list, show and remove find them by those.
@@ -108,9 +125,12 @@ Validation:
             compose.yml uses variables)
             volumes that aren't bind mounts under ${PCM_VOLUMES_HOME}/<service>/
             (read-only :ro mounts from the service directory are allowed);
-            unknown or cyclic x-pcm.depends_on
+            unknown or cyclic x-pcm.depends_on; an unknown x-pcm.provides role;
+            x-pcm.ingress with a bad service, port, healthcheck or host, or
+            with no single proxy (or one without a labels hook)
   warnings  image-declared VOLUMEs with nothing mounted there (pulled images
-            only); host ports also published by another pcm service; a
+            only); host ports also published by another pcm service; an
+            ingress host also routed to another service; a
             top-level name: other than the service name
 
   Other host paths must be listed in the service's compose.yml, and must exist:

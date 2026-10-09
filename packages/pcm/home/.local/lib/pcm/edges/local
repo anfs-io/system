@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# local — pcm edge provider for hosts nothing publishes (the proxy routes them on this machine:
+# *.localhost, or names in /etc/hosts or a LAN resolver). Every verb succeeds and does nothing.
+#   edges.yml:  lan.example.com: { provider: local }
+case "${1:-}" in
+  scheme) echo http ;;
+  deps|check|add|remove) ;;
+  *) echo "local: unknown verb '${1:-}' (deps scheme check add remove)" >&2; exit 1 ;;
+esac

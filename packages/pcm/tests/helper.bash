@@ -10,6 +10,7 @@ pcm_setup() {
   export PCM_DATA_HOME="$T/data" PCM_VOLUMES_HOME="$T/data/volumes"
   export ANFS_CONFIG_HOME="$T/anfs/config" ANFS_DATA_HOME="$T/anfs/data" ANFS_CACHE_HOME="$T/anfs/cache"
   export PCM_CACHE_HOME="$T/cache" PCM_ENV_HOME="$T/config/env" PCM_STATE_HOME="$T/state"
+  export PCM_LIB_DIR="$PCM_PKG/home/.local/lib/pcm"
   mkdir -p "$PCM_CONTAINERS_HOME"
 
   # shellcheck source=/dev/null

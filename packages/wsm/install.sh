@@ -1,15 +1,15 @@
 # wsm
 #
-# Installs wsm (~/.local/bin/wsm), a registry of the workspaces under your home directory.
-# Nothing to build and nothing to configure: the registry is created on first use.
+# Installs wsm (~/.local/bin/wsm), which puts the workspaces anfs sources define (spaces/<ws>/<space>)
+# in place. Nothing to configure: the default target is WSM_SPACES_HOME in anfs.conf.
 
 post_install() {
-  user_message "Seed the registry from the markers already on this machine: wsm scan\n" \
-               "Then jump around with: wsm cd <name>"
+  user_message "List the workspaces your sources define: wsm ls\n" \
+               "Install one: wsm install <source>/<ws>, then jump around with: wsm cd <space>"
 }
 
-# The registry is a cache, but the markers are not: removing them is the user's call, not ours.
+# What install put in the spaces besides its links (clones, your files) is never removed
 post_remove() {
-  user_message "Left in place: the registry under \$XDG_STATE_HOME/wsm and every .wsm/ marker.\n" \
-               "Remove the registry with: rm -r \"\${XDG_STATE_HOME:-\$HOME/.local/state}/wsm\""
+  user_message "Left in place: the spaces and their trackers under \$XDG_STATE_HOME/wsm.\n" \
+               "Run 'wsm implode' before removing wsm to unlink them."
 }

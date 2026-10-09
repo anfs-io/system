@@ -151,9 +151,9 @@ if [[ " ${installs[*]} " == *" acme "* ]]; then
   check "pim: from: resolves to anfs/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        anfs/debian-13"'
   check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
   check "psm: acme-hello installed for pi"           'psm skills ls | grep -E "^ok +acme +acme-hello"'
-  check "wsm: org installed before tech"             'wsm ls | grep -q "^org" && wsm ls | grep -q "^tech"'
-  check "wsm: org cloned its repo"                   'test -d ~/spaces/acme/org/hello-world/.git'
-  check "wsm: tech records its source"               'grep -qx acme/tech ~/spaces/acme/tech/.wsm/source'
+  check "wsm: org installed before tech"             'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'
+  check "wsm: org cloned its repo"                   'test -d ~/spaces/acme/main/org/hello-world/.git'
+  check "wsm: tech links its files from the source"  'test -L ~/spaces/acme/main/tech/README.md && test "$(wsm path tech)" = ~/spaces/acme/main/tech'
 fi
 
 if [[ " ${installs[*]} " == *" lgat "* ]]; then
@@ -163,8 +163,7 @@ if [[ " ${installs[*]} " == *" lgat "* ]]; then
   check "ppm: solana pulled in pdt/rust"             'mise which cargo'
   check "pcm: postgres is running"                   'pcm ps | grep -q postgres'
   check "pcm: postgres accepts connections"          'c=$(podman ps --filter label=io.pcm.name=postgres --format "{{.Names}}" | head -n1); for i in $(seq 30); do podman exec "$c" pg_isready -U postgres && exit 0; sleep 2; done; exit 1'
-  check "wsm: org at ~/spaces/lgat"                  'test -f ~/spaces/lgat/.wsm/id'
-  check "wsm: tech and marketing installed"          'wsm ls | grep -q "^tech" && wsm ls | grep -q "^marketing"'
+  check "wsm: lgat's spaces installed"              'wsm path lgat/ >/dev/null'
 fi
 
 if $all; then
@@ -192,7 +191,8 @@ fi
 after=$(snapshot_home)
 added=$(comm -13 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
 removed=$(comm -23 <(echo "$before") <(echo "$after") | grep -Ev "$IGNORE_RE" || true)
-markers=$(echo "$after" | grep -E '^\./spaces/.*/\.wsm(/|$)' || true)
+# Space contents are kept (IGNORE_RE), but the links wsm made into them must be gone
+links=$(box 'find ~/spaces -type l 2>/dev/null' || true)
 
 if [[ -n "$added" ]]; then
   echo "== left behind in \$HOME:"
@@ -204,9 +204,9 @@ if [[ -n "$removed" ]]; then
   echo "$removed" | sed 's/^/  /'
   status=1
 fi
-if [[ -n "$markers" ]]; then
-  echo "== wsm markers left in spaces (wsm wrote them; implode should have):"
-  echo "$markers" | sed 's/^/  /'
+if [[ -n "$links" ]]; then
+  echo "== wsm links left in spaces (wsm made them; implode should have removed them):"
+  echo "$links" | sed 's/^/  /'
   status=1
 fi
 [[ $status -eq 0 ]] && echo "== PASS: everything installed and checked, and \$HOME is back to its pre-install state"

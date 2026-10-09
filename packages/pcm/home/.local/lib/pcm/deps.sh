@@ -2,9 +2,21 @@
 # pcm library: x-pcm.depends_on: resolution, provisioning, start and shutdown order
 # Sourced by ~/.local/bin/pcm; defines functions only.
 
-# Services listed in x-pcm.depends_on (list or map form), as written
+# Services listed in x-pcm.depends_on (list or map form), as written, then the implicit ones of a
+# service with x-pcm.ingress that it doesn't name already: the active proxy (ingress.sh) and what
+# its hosts' edges run (edges.sh)
 service_deps() {
-  yq eval '.["x-pcm"].depends_on | select(. != null) | ((select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "$(compose_file "$1")"
+  local deps implicit
+  deps=$(yq eval '.["x-pcm"].depends_on | select(. != null) | ((select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "$(compose_file "$1")")
+  [[ -z "$deps" ]] || echo "$deps"
+  has_ingress "$1" || return 0
+  while IFS= read -r implicit; do
+    [[ -n "$implicit" && "$(svc_name "$implicit")" != "$(svc_name "$1")" ]] || continue
+    [[ $'\n'"$deps"$'\n' == *$'\n'"$(svc_name "$implicit")"$'\n'* || $'\n'"$deps"$'\n' == *$'\n'"$implicit"$'\n'* ]] && continue
+    echo "$implicit"
+    deps+=$'\n'"$implicit"
+  done < <(ingress_dep "$1"; edge_deps "$1")
+  return 0
 }
 
 # Ids of service $1's dependencies. Unknown ones are skipped.
@@ -16,8 +28,13 @@ dep_ids() {
   return 0
 }
 
-# key=value settings service $1 declares for dependency $2 (as written; map form only)
+# key=value settings service $1 declares for dependency $2 (as written; map form only). For its
+# implicit proxy dependency, the ingress (ingress_args).
 dep_settings() {
+  if is_ingress_dep "$1" "$2"; then
+    ingress_args "$1"
+    return 0
+  fi
   yq eval ".[\"x-pcm\"].depends_on | select(tag == \"!!map\") | .[\"$2\"] | select(tag == \"!!map\") | to_entries | .[] | .key + \"=\" + (.value | tostring)" "$(compose_file "$1")"
 }
 
@@ -27,6 +44,7 @@ dep_settings() {
 #   deprovision  on `remove` of a dependent, after it is down; undoes what provision created
 # Both get the dependent's settings for it (x-pcm.depends_on map form) as key=value args, and
 # PCM_SERVICE, PCM_PROJECT (the dependency) and PCM_DEPENDENT (the service) in the environment.
+# A proxy's hooks get the service's ingress as their settings instead (ingress.sh).
 
 has_hook() {
   [[ -x "$(svc_dir "$2")/$1" ]]
@@ -51,7 +69,8 @@ run_hook() {
 }
 
 # Run dependency $2's provision hook for service $1 ($3: the spec as written).
-# Hook output lines KEY=VALUE are appended to PROVISIONED as PCM_<DEP>_<KEY>=VALUE.
+# Hook output lines KEY=VALUE are appended to PROVISIONED as PCM_<DEP>_<KEY>=VALUE, or under the
+# role's prefix when the dependency provides one (PCM_INGRESS_URL from the proxy).
 provision() {
   local service="$1" dep="$2" spec="$3" output line
   has_hook provision "$dep" || return 0
@@ -60,10 +79,15 @@ provision() {
     return 1
   }
 
-  local prefix var
-  prefix="PCM_$(tr '[:lower:]-' '[:upper:]_' <<< "$(svc_name "$dep")")_"
+  local prefix var role public=""
+  role=$(service_role "$dep")
+  prefix=$(role_prefix "$role")
+  [[ -n "$prefix" ]] || prefix="PCM_$(tr '[:lower:]-' '[:upper:]_' <<< "$(svc_name "$dep")")_"
+  # An edge publishing the first host knows its public URL; the proxy only knows the local one
+  [[ "$role" == proxy ]] && public=$(ingress_public_url "$service")
   while IFS= read -r line; do
     [[ "$line" =~ ^[A-Z][A-Z0-9_]*= ]] || continue
+    [[ -n "$public" && "$line" == URL=* ]] && line="URL=$public"
     var="$prefix${line%%=*}"
     [[ -n "${!var+x}" ]] && continue  # a value already in the environment wins
     PROVISIONED+=("$var=${line#*=}")
@@ -95,6 +119,7 @@ start_deps() {
     if [[ -n "$(project_containers "$dep")" ]]; then
       check_not_running_elsewhere "$dep" || return 1
     else
+      edges_publish "$dep" || return 1
       start_deps "$dep" "$chain $service" || return 1
       echo "pcm: starting $dep (required by $service)" >&2
       compose_flags "$dep" || return 1

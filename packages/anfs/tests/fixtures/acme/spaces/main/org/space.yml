@@ -1,0 +1,4 @@
+# The org-wide space: every other acme space depends on it
+repositories:
+  - url: https://github.com/octocat/Hello-World.git
+    path: hello-world

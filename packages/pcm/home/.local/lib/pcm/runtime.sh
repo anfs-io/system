@@ -66,9 +66,22 @@ compose_flags() {
     [[ "$s" == "$name" || "$s" == "$service" ]] && attached=true
   done
   [[ -n "$(service_deps "$service")" ]] && attached=true
+  # A role provider (the proxy) reaches the services that use it over the shared network
+  [[ -n "$(service_role "$service")" ]] && attached=true
   if [[ "$attached" == true ]]; then
     network="${PCM_SHARED_NETWORK:-dev-net}"
     podman network exists "$network" 2>/dev/null || podman network create "$network" >/dev/null || return 1
+  fi
+
+  # The ingress hosts may come from the service's env
+  has_ingress "$service" && { load_env "$service" 2>/dev/null || true; }
+
+  # A role provider is reachable on the shared network by its name (http://traefik:80 for an
+  # edge), whatever the compose provider names its container. One compose service only, so the
+  # alias is unambiguous.
+  local alias=""
+  if [[ -n "$network" && -n "$(service_role "$service")" && "$(yq eval '.services // {} | length' "$file")" == 1 ]]; then
+    alias="$name"
   fi
 
   # Compose providers run as separate processes, so the override must be a real file.
@@ -83,7 +96,12 @@ compose_flags() {
       [[ -n "$key" ]] || continue
       printf '  %s:\n    labels:\n      %s: "%s"\n      %s: "%s"\n      %s: "%s"\n' "$key" \
         "$PCM_LABEL_ID" "$service" "$PCM_LABEL_NAME" "$name" "$PCM_LABEL_SOURCE" "$(svc_src "$service")"
-      [[ -n "$network" ]] && printf '    networks:\n      - default\n      - %s\n' "$network"
+      ingress_labels "$service" "$key"
+      if [[ -n "$network" && -n "$alias" ]]; then
+        printf '    networks:\n      default: {}\n      %s:\n        aliases:\n          - %s\n' "$network" "$alias"
+      elif [[ -n "$network" ]]; then
+        printf '    networks:\n      - default\n      - %s\n' "$network"
+      fi
       _override_mount_sets "$service" "$key"
       _override_snapshot_image "$service" "$key"
     done < <(yq eval '.services | keys | .[]' "$file")
@@ -223,12 +241,19 @@ wait_healthy() {
 
 # Make sure podman can run containers. On macOS that needs the podman machine VM, which nothing
 # creates at install time: the first `pcm up` initializes it and every later one starts it if it
-# is stopped. On Linux podman runs natively and there is nothing to do.
+# is stopped, after sizing it to PCM_MACHINE_MEMORY. On Linux podman runs natively and there is
+# nothing to do.
 pcm_podman_ready() {
   command -v podman >/dev/null 2>&1 || { echo "pcm: podman is not installed (it ships with anfs: ppm install anfs/podman)" >&2; return 1; }
   [[ "$OSTYPE" == darwin* ]] || return 0
-  podman info >/dev/null 2>&1 && return 0
-  if [[ -z "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
+  if [[ -n "${PCM_MACHINE_MEMORY:-}" && ! "$PCM_MACHINE_MEMORY" =~ ^[0-9]+$ ]]; then
+    echo "pcm: PCM_MACHINE_MEMORY is the podman machine's memory in MiB (e.g. 4096), not '$PCM_MACHINE_MEMORY'" >&2
+    return 1
+  fi
+  if [[ -n "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
+    pcm_machine_memory || return 1
+    podman info >/dev/null 2>&1 && return 0
+  else
     echo "pcm: creating the podman machine (once)" >&2
     # Ours to remove on implode (a machine that was already there is not), recorded before init so
     # a machine that fails to init or start is still removed. "clean": podman had no machine state
@@ -240,10 +265,29 @@ pcm_podman_ready() {
     else
       echo clean > "$PCM_STATE_HOME/machine-created"
     fi
-    podman machine init >&2 || { echo "pcm: podman machine init failed" >&2; return 1; }
+    podman machine init ${PCM_MACHINE_MEMORY:+--memory "$PCM_MACHINE_MEMORY"} >&2 ||
+      { echo "pcm: podman machine init failed" >&2; return 1; }
   fi
   echo "pcm: starting the podman machine" >&2
   podman machine start >&2 || { echo "pcm: podman machine start failed" >&2; return 1; }
+}
+
+# Give the podman machine PCM_MACHINE_MEMORY MiB when it has another amount. Memory can only be
+# set on a stopped machine, so a running one is stopped first, which stops every container in it;
+# pcm_podman_ready starts it again. Unset means leave the machine as it is.
+pcm_machine_memory() {
+  local want="${PCM_MACHINE_MEMORY:-}" have running
+  [[ -n "$want" ]] || return 0
+  have=$(podman machine inspect --format '{{.Resources.Memory}}' 2>/dev/null) || return 0
+  [[ "$have" == "$want" ]] && return 0
+
+  echo "pcm: the podman machine has $have MiB; PCM_MACHINE_MEMORY is $want: resizing it" >&2
+  if [[ "$(podman machine inspect --format '{{.State}}' 2>/dev/null)" == running ]]; then
+    running=$(podman ps --format '{{.Names}}' 2>/dev/null | paste -sd ' ' -)
+    [[ -z "$running" ]] || echo "pcm: restarting the machine stops these containers: $running" >&2
+    podman machine stop >&2 || { echo "pcm: podman machine stop failed" >&2; return 1; }
+  fi
+  podman machine set --memory "$want" >&2 || { echo "pcm: podman machine set --memory $want failed" >&2; return 1; }
 }
 
 # Export PCM_PODMAN_SOCKET if any of the given services use it: the podman API

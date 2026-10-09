@@ -134,6 +134,7 @@ cmd_remove() {
       [[ -n "$(project_containers "$dep")" ]] || continue
       run_hook deprovision "$id" "$dep" "$spec" >&2 || { echo "pcm: deprovisioning $dep for $id failed" >&2; rc=1; }
     done < <(service_deps "$id")
+    edges_unpublish "$id" || rc=1
 
     remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { echo "pcm: could not delete $id's data" >&2; rc=1; }
     rm -f "$(override_file "$id")"

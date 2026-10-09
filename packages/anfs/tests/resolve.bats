@@ -113,3 +113,14 @@ deps_of() { cat "$1/deps" 2>/dev/null || true; }
   ANFS_RESOLVE_FIRST=true anfs_resolve things deps_of org
   [ "${ANFS_ORDER[*]}" = "hi/org" ]
 }
+
+@test "resolve: ANFS_NAME_PARTS=2 takes ws/name as a name, and source/ws/name as qualified" {
+  res hi main/tech main/org
+  res lo main/org
+  anfs_sources things
+  ANFS_NAME_PARTS=2 run anfs_find things main/org
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == 1$'\t'lo$'\t'* ]]
+  ANFS_NAME_PARTS=2 ANFS_RESOLVE_FIRST=true anfs_resolve things deps_of hi/main/tech
+  [ "${ANFS_ORDER[*]}" = "lo/main/org hi/main/tech" ]
+}

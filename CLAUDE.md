@@ -11,13 +11,13 @@ A source is a git repo (or a local directory) that may hold any of:
 | `containers/` | `pcm` | podman compose services (`containers/<name>/compose.yml`) |
 | `images/` | `pim` | VM images: built, verified, run (`images/<name>/image.yml`; see pim) |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
-| `spaces/` | `wsm` | workspaces (`spaces/<name>/space.yml`) |
+| `spaces/` | `wsm` | workspaces of spaces (`spaces/<ws>/<space>/space.yml`; see wsm) |
 
 `anfs` owns the sources (`anfs src`) and the commands that span the tools: `anfs install
 <source>` installs everything a source holds, tool by tool (ppm, pcm, pim, psm, wsm), and `anfs
 implode` runs every tool's `implode` in reverse, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
-`psm install lgat/skill`, `wsm install lgat/tech`; `source/` means all of that kind).
+`psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
 
 What the tools share lives in `lib/anfs/` and nothing else does: paths (`paths.sh`), the
 source lists and clones (`sources.sh`), and finding resources plus ordering them by dependency
@@ -61,6 +61,51 @@ images/<name>/
   verified build or a published qcow2; deployment targets are a later kind of their own.
 - `pim install` (what `anfs install` runs) builds; `PIM_INSTALL=validate` only validates, which
   is what the Linux round trip uses (no KVM in a podman box).
+
+## wsm: workspaces
+
+A source's `spaces/` holds workspaces, each a directory of spaces: `spaces/<ws>/<space>/`. `wsm
+help` documents the commands.
+
+- **Levels are fixed by depth**: `spaces/` is the source level, every directory below it a
+  workspace, every directory below a workspace a space. A `space.yml` is optional at each level;
+  hidden directories are content, never a level. A space's files are everything below it; a
+  workspace's and the source level's are what is not inside a directory below them. The workspace
+  and source levels are installed with the first space under them and removed with the last,
+  unless the spec named them (`wsm install rws/` with no spaces at all): then the tracker is
+  `named: true` and only a `remove` of that level (or above) takes it.
+- **`space.yml`**: `repositories: [{url, path?, ref?}]`, cloned into that level's directory (a
+  path left out is the one `git clone` would use), and for a space, `depends:`. Install clones the
+  repositories of every `space.yml` under the spec, plus those of the spaces it depends on. A
+  narrower spec still stows the levels above but does not clone their repositories. It never pulls.
+- **`wsm install [SPEC [DIR]]` stows, as ppm does.** It runs `stow --no-folding` per level into
+  `<target>/<src>/<ws>/<space>/`, ignoring the directories below (the levels of their own).
+  `--no-folding` keeps directories real, so a clone never lands in the source.
+  - stow runs with `HOME=$WSM_STATE_HOME/stow`, whose `.stow-global-ignore` is wsm's list
+    (`.DS_Store`). stow's built-in list would drop `README.*`, `LICENSE.*` and `.gitignore`. ppm
+    still uses the built-in list, so a `README.md` under a package's `home/` is not stowed.
+  - With no SPEC, install takes the level at `.`, which must hold a `space.yml`.
+- **Targets.** The target is DIR, else `WSM_SPACES_HOME` (`anfs.conf`, default `~/spaces`). A source
+  lives in one target. A target inside a source checkout, or inside another source's installed
+  tree, is refused.
+- **The trackers are the state**: `$WSM_STATE_HOME/installed/<id>.yml`, where id is `src`,
+  `src/ws` or `src/ws/space`. Each holds the target, the directory and the stowed files.
+- **The tree mirrors the source, both ways.**
+  - `wsm new` creates a space in the source. A part left out comes from the current directory,
+    either a checkout or an installed tree. If the workspace is installed, the new space is
+    installed too.
+  - `wsm add` moves files from the tree into the source and links them back. The links are
+    relative, as stow's are, because stow treats an absolute link as foreign. It never takes
+    clones, repository paths or what the source's `.gitignore` ignores.
+  - `wsm status` lists the differences.
+  - `wsm ls [SPEC] [-r]` lists the defined levels with where each is installed, or their
+    repositories' git state. `wsm cd -s` goes to the source directory instead of the installed one.
+  - wsm never commits.
+- **Names nest**: `ANFS_NAME_PARTS=2`, so `main/tech` is a name and `lgat/main/tech` a qualified
+  one. A bare `depends:` entry is a sibling in the same workspace. Spaces don't layer
+  (`ANFS_RESOLVE_FIRST`); layering may come later, which is one reason wsm uses stow.
+- `remove`/`implode` unstow, then take any recorded link still pointing at the source's file, then
+  the empty directories; clones and the user's files stay.
 
 ## Repository Layout
 
@@ -389,7 +434,7 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 
 - `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and stows them from there. The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
 - `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Stow's `--no-folding` keeps the directory real with a link per file, so files a tool creates there later stay local until added too.
-- **Never stow a wsm marker (`<space>/.wsm/`)**: a space is `spaces/<name>/space.yml` in a source, and wsm writes the marker itself when it installs the space (and implode removes it). A stowed `.wsm/` would be a file no tool owns.
+- **Never put a space in a package**: a space is `spaces/<ws>/<space>/` in a source, and wsm links it into its target and records it (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
 - Protected files are refused by `claim`/`add` (unprotect first): claim's stow does not use the protected ignore list.
 - `ppm file reset <file...>` deletes the claimed copy, restores the owner's link, and removes the claimant package if it becomes empty.
 - `ppm file protect <file...>` turns a package-managed symlink into a plain local copy (preserving its content) and records it in `protected.yml`. ppm then never re-links or force-removes it — including under `-f` — so you can customize it without a repo. The file is also dropped from its package's tracker.
@@ -513,7 +558,7 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # completion are generated from it), cli_alias, cli_dispatch
   resolve.sh   # anfs_sources <dir>, anfs_find, anfs_list, anfs_resolve <dir> <deps_fn> (layered
                # topo sort with the same-or-lower-priority dependency rule; ANFS_RESOLVE_FIRST for
-               # kinds that don't layer)
+               # kinds that don't layer, ANFS_NAME_PARTS=2 for names that nest: wsm's <ws>/<space>)
 packages/ppm/home/.local/lib/ppm/
   core.sh        # API for package hooks: os(), arch(), add_to_file(), remove_from_file(),
                  # debug(), user_message(), ppm_fail()
@@ -561,7 +606,7 @@ bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh
 bats packages/ppm/tests      # ppm: callbacks, meta
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
-bats packages/wsm/tests      # wsm: registry, scan, install (space.yml, dependencies)
+bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode
 bats packages/pim/tests      # pim: sources, templates, validate, qemu argv, build (qemu/ssh stubbed)
 ```
 

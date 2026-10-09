@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+# cloudflare-tunnel — pcm edge provider: publishes hosts through a Cloudflare Tunnel
+#
+#   edges.yml:  roteoh.com: { provider: cloudflare-tunnel }      # optional: tunnel: <name>
+#
+# One tunnel per machine (named pcm-<hostname> unless tunnel= or PCM_TUNNEL_NAME says otherwise),
+# run by the pcm service `cloudflared`. Its single ingress rule sends every hostname to the proxy
+# (origin=, e.g. http://traefik:80), which routes by Host; so publishing a host is one proxied
+# CNAME, <host> -> <tunnel id>.cfargotunnel.com, and the tunnel's config never changes per host.
+# Cloudflare terminates TLS, so the public scheme is https while the proxy serves plain HTTP.
+#
+# Verbs (see pcm's edges.sh):
+#   deps                 cloudflared
+#   scheme               https
+#   check                CLOUDFLARE_API_TOKEN must be set
+#   add <host> [k=v...]  find the zone; create the tunnel if missing; point its ingress at origin=;
+#                        write its token to $PCM_ENV_HOME/cloudflared.env (TUNNEL_TOKEN, which
+#                        cloudflared runs with); create the CNAME. Refuses to replace a record that
+#                        isn't this tunnel's.
+#   remove <host>        delete the CNAME if it points at this tunnel; the tunnel is kept
+#
+# CLOUDFLARE_API_TOKEN needs Zone:Read and DNS:Edit on the zones, and Account: Cloudflare Tunnel:
+# Edit. pcm runs this under fnox when $PCM_CONFIG_HOME has a fnox config, so it can come from
+# 1Password. The account is the zone's, so no account id is needed.
+set -euo pipefail
+
+API="${CLOUDFLARE_API_BASE:-https://api.cloudflare.com/client/v4}"
+SERVICE=cloudflared
+
+die() { echo "cloudflare-tunnel: $*" >&2; exit 1; }
+
+need_token() {
+  [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]] ||
+    die "CLOUDFLARE_API_TOKEN is not set: a token with Zone:Read, DNS:Edit and Cloudflare Tunnel:Edit (from fnox in \$PCM_CONFIG_HOME, or the environment)"
+}
+
+# api METHOD PATH [JSON]: the response body when Cloudflare reports success
+api() {
+  local method="$1" path="$2" body="${3:-}" out
+  local -a data=()
+  [[ -z "$body" ]] || data=(--data "$body")
+  out=$(curl -sS -X "$method" "$API$path" \
+    -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+    ${data[@]+"${data[@]}"}) || die "$method $path: request failed"
+  [[ "$(yq -p json '.success' <<< "$out")" == true ]] ||
+    die "$method $path: $(yq -p json -o json -I0 '.errors // .' <<< "$out")"
+  echo "$out"
+}
+
+json() { yq -p json "$1" <<< "$2"; }
+
+# zone_of HOST: "zone id|account id" of the longest zone HOST is in
+zone_of() {
+  local name="$1" out id
+  while [[ "$name" == *.* ]]; do
+    out=$(api GET "/zones?name=$name") || exit 1
+    id=$(json '.result[0].id // ""' "$out")
+    if [[ -n "$id" ]]; then
+      echo "$id|$(json '.result[0].account.id' "$out")"
+      return 0
+    fi
+    name="${name#*.}"
+  done
+  die "no zone for $1 in the token's Cloudflare account"
+}
+
+tunnel_name() {
+  local name="${opt_tunnel:-${PCM_TUNNEL_NAME:-}}"
+  [[ -n "$name" ]] || name="pcm-$(hostname -s | tr '[:upper:]' '[:lower:]')"
+  echo "$name"
+}
+
+# tunnel_id ACCOUNT: this machine's tunnel, or nothing
+tunnel_id() {
+  local out
+  out=$(api GET "/accounts/$1/cfd_tunnel?name=$(tunnel_name)&is_deleted=false") || exit 1
+  json '.result[0].id // ""' "$out"
+}
+
+# ensure_tunnel ACCOUNT ORIGIN: the tunnel's id, created and pointed at ORIGIN
+ensure_tunnel() {
+  local acct="$1" origin="$2" id out
+  id=$(tunnel_id "$acct") || exit 1
+  if [[ -z "$id" ]]; then
+    echo "cloudflare-tunnel: creating tunnel $(tunnel_name)" >&2
+    out=$(api POST "/accounts/$acct/cfd_tunnel" "{\"name\":\"$(tunnel_name)\",\"config_src\":\"cloudflare\"}") || exit 1
+    id=$(json '.result.id' "$out")
+  fi
+  # One catch-all rule: the proxy routes by Host
+  api PUT "/accounts/$acct/cfd_tunnel/$id/configurations" \
+    "{\"config\":{\"ingress\":[{\"service\":\"$origin\"}]}}" >/dev/null
+  echo "$id"
+}
+
+# write_token ACCOUNT ID: TUNNEL_TOKEN in cloudflared's local env file, other lines kept
+write_token() {
+  local token out file="$PCM_ENV_HOME/$SERVICE.env" tmp
+  out=$(api GET "/accounts/$1/cfd_tunnel/$2/token") || exit 1
+  token=$(json '.result' "$out")
+  [[ -n "$token" && "$token" != null ]] || die "no token for tunnel $2"
+  mkdir -p "$PCM_ENV_HOME"
+  tmp=$(mktemp "$file.XXXXXX")
+  chmod 600 "$tmp"
+  { [[ -f "$file" ]] && grep -v '^TUNNEL_TOKEN=' "$file" || true; echo "TUNNEL_TOKEN=$token"; } > "$tmp"
+  mv "$tmp" "$file"
+}
+
+# dns_add ZONE HOST TARGET: the proxied CNAME, unless the name already has another record
+dns_add() {
+  local zone="$1" host="$2" target="$3" out n type content
+  out=$(api GET "/zones/$zone/dns_records?name=$host") || exit 1
+  n=$(json '.result | length' "$out")
+  if [[ "$n" == 0 ]]; then
+    api POST "/zones/$zone/dns_records" \
+      "{\"type\":\"CNAME\",\"name\":\"$host\",\"content\":\"$target\",\"proxied\":true,\"comment\":\"pcm: ${PCM_SERVICE:-service} via tunnel $(tunnel_name)\"}" >/dev/null
+    echo "cloudflare-tunnel: $host -> tunnel $(tunnel_name)" >&2
+    return 0
+  fi
+  type=$(json '.result[0].type' "$out")
+  content=$(json '.result[0].content' "$out")
+  [[ "$n" == 1 && "$type" == CNAME && "$content" == "$target" ]] && return 0
+  die "$host already has a $type record ($content); not replacing it. Remove it in Cloudflare to publish $host here."
+}
+
+# dns_remove ZONE HOST TARGET: delete HOST's CNAME if it is TARGET
+dns_remove() {
+  local zone="$1" host="$2" target="$3" out id
+  out=$(api GET "/zones/$zone/dns_records?type=CNAME&name=$host") || exit 1
+  id=$(json ".result[] | select(.content == \"$target\") | .id" "$out")
+  if [[ -z "$id" ]]; then
+    echo "cloudflare-tunnel: $host does not point at tunnel $(tunnel_name); left alone" >&2
+    return 0
+  fi
+  api DELETE "/zones/$zone/dns_records/$id" >/dev/null
+  echo "cloudflare-tunnel: removed $host" >&2
+}
+
+verb="${1:-}"
+[[ $# -gt 0 ]] && shift
+host=""
+origin=""
+opt_tunnel=""
+for arg in "$@"; do
+  case "$arg" in
+    origin=*) origin="${arg#*=}" ;;
+    tunnel=*) opt_tunnel="${arg#*=}" ;;
+    *=*) ;;
+    *) [[ -z "$host" ]] && host="$arg" || die "unexpected argument '$arg'" ;;
+  esac
+done
+
+case "$verb" in
+  deps) echo "$SERVICE" ;;
+  scheme) echo https ;;
+  check) need_token ;;
+  add)
+    need_token
+    [[ -n "$host" ]] || die "add: no host"
+    [[ -n "$origin" ]] || die "add: no origin= (the proxy's address); is a proxy configured?"
+    za=$(zone_of "$host") || exit 1
+    zone="${za%%|*}" acct="${za#*|}"
+    id=$(ensure_tunnel "$acct" "$origin") || exit 1
+    write_token "$acct" "$id"
+    dns_add "$zone" "$host" "$id.cfargotunnel.com"
+    ;;
+  remove)
+    need_token
+    [[ -n "$host" ]] || die "remove: no host"
+    za=$(zone_of "$host") || exit 1
+    zone="${za%%|*}" acct="${za#*|}"
+    id=$(tunnel_id "$acct") || exit 1
+    [[ -n "$id" ]] || { echo "cloudflare-tunnel: no tunnel $(tunnel_name); nothing to remove" >&2; exit 0; }
+    dns_remove "$zone" "$host" "$id.cfargotunnel.com"
+    ;;
+  *) die "unknown verb '$verb' (deps scheme check add remove)" ;;
+esac

@@ -371,6 +371,7 @@ validate_services() {
     check_mount_sets "$svc"
     check_image_volumes "$svc"
     check_deps "$svc"
+    check_ingress "$svc"
     check_ports "$svc"
   done
   [[ $VALIDATE_ERRORS -eq 0 ]]

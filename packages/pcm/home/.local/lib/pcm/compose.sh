@@ -84,6 +84,8 @@ compose_command() {
     PROVISIONED=()
     if [[ "$subcmd" == "up" ]]; then
       check_not_running_elsewhere "$service" || { rc=1; continue; }
+      # Before its dependencies start: an edge's own service may need what add sets up
+      edges_publish "$service" || { rc=1; continue; }
       start_deps "$service" || { rc=1; continue; }
       ensure_mount_dirs "$service"
     elif [[ "$subcmd" == "down" && "$NAMED" != *" $service "* ]]; then

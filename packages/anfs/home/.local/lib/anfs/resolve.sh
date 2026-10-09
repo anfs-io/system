@@ -68,16 +68,25 @@ anfs_list() {
   return 0
 }
 
+# Split a spec into _ANFS_SRC (empty when unqualified) and _ANFS_NAME. A name is one path segment,
+# or ANFS_NAME_PARTS of them for a kind that nests (spaces: <ws>/<space>), so a spec is
+# source-qualified only when it has a segment more than that.
+_anfs_split() {
+  local spec="$1" slashes="${1//[^\/]/}"
+  if [[ ${#slashes} -ge ${ANFS_NAME_PARTS:-1} ]]; then
+    _ANFS_SRC="${spec%%/*}" _ANFS_NAME="${spec#*/}"
+  else
+    _ANFS_SRC="" _ANFS_NAME="$spec"
+  fi
+}
+
 # Every match for a spec: one "index<TAB>source<TAB>dir" line per layer; false if none.
 # min_index skips higher-priority sources (the dependency rule). Call anfs_sources first.
 # Usage: anfs_find <dir> <spec> [min_index]
 anfs_find() {
-  local tld="$1" spec="$2" min="${3:-0}" src="" name i found=false
-  if [[ "$spec" == */* ]]; then
-    src="${spec%%/*}" name="${spec#*/}"
-  else
-    name="$spec"
-  fi
+  local tld="$1" spec="$2" min="${3:-0}" src name i found=false
+  _anfs_split "$spec"
+  src="$_ANFS_SRC" name="$_ANFS_NAME"
   [[ -n "$name" ]] || return 1
   for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
     [[ $i -lt $min ]] && continue
@@ -104,6 +113,8 @@ anfs_find() {
 # ANFS_RESOLVE_FIRST=true takes only the highest-priority match of each name instead of every
 # layer. Layers are how packages override each other file by file; for a kind that does not
 # merge (spaces), every match would install every source's resource of that name.
+#
+# ANFS_NAME_PARTS=2 makes a name two segments (see _anfs_split): wsm resolves <ws>/<space>.
 
 anfs_resolve() {
   local tld="$1" deps_fn="$2" spec
@@ -116,8 +127,10 @@ anfs_resolve() {
 }
 
 _anfs_resolve_one() {
-  local tld="$1" deps_fn="$2" spec="$3" min="$4" name="${3##*/}"
+  local tld="$1" deps_fn="$2" spec="$3" min="$4" name
   local matches idx src dir qualified
+  _anfs_split "$spec"
+  name="$_ANFS_NAME"
   matches=$(anfs_find "$tld" "$spec" "$min") || {
     echo "Error: $(anfs_kind "$tld") '$spec' not found" >&2
     exit 1

@@ -112,6 +112,15 @@ cmd_show() {
   printf '  %-12s %s\n' "used by" "$(ids_with_state "$containers" ${users[@]+"${users[@]}"})"
   printf '  %-12s %s\n' data "$(tilde "$data")${size:+  $size}$([[ -d "$data" ]] || echo '  (none yet)')"
   [[ -f "$PCM_ENV_HOME/$name.env" ]] && printf '  %-12s %s\n' env "$(tilde "$PCM_ENV_HOME/$name.env")"
+  local role icsvc iport proxy
+  role=$(service_role "$id")
+  [[ -n "$role" ]] && printf '  %-12s %s\n' provides "$role"
+  if has_ingress "$id"; then
+    load_env "$id" 2>/dev/null || true
+    IFS='|' read -r icsvc iport _ _ < <(service_ingress "$id") || true
+    proxy=$(active_proxy) || proxy="no proxy"
+    printf '  %-12s %s -> %s:%s (via %s)\n' ingress "$(ingress_hosts "$id" | sed 's/,/, /g')" "$icsvc" "$iport" "$proxy"
+  fi
   local pkey preason pset pcsvc ptarget pro snaps
   while IFS='|' read -r pkey preason; do
     [[ -n "$pkey" ]] && printf '  %-12s %s: %s\n' privilege "$pkey" "$preason"
