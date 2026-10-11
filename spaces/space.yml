@@ -1,3 +1,5 @@
 ---
 repositories:
   - url: git@github.com:anfs-io/docs
+  - url: git@github.com:anfs-io/infra
+  - url: git@github.com:anfs-io/website
