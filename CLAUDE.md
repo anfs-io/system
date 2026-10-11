@@ -135,7 +135,7 @@ This repo (`core/`) contains:
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   then `ppm install core/anfs`)
-- `chorus/units/` — development plans (Chorus methodology)
+- Plans and design docs are not here: they are in [anfs-io/docs](https://github.com/anfs-io/docs)
 
 The tools don't declare `depends: [anfs]` although they source `lib/anfs`: anfs depends on them,
 and like stow and yq it is base software that is always present.
@@ -456,7 +456,8 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 
 ## Development
 
-Plans are in `chorus/units/`. Follow the Chorus methodology:
+Plans are in [anfs-io/docs](https://github.com/anfs-io/docs) (`units/`, cloned in the `anfs`
+wsm space). Follow the Chorus methodology:
 1. Read the unit `.md` for objectives
 2. Read the plan's `plan.md` for implementation spec
 3. Implement and test

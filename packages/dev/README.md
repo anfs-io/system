@@ -71,7 +71,7 @@ failure is most expensive.
 
 The design findings behind the implementation — why `/src` has to come from `synthetic.conf`, why a
 snapshot recreates the box instead of restarting it, why sudo needs a longer timestamp on a
-headless box — are recorded in `chorus/units/testing/01-macos-vm/`.
+headless box — are recorded in [anfs-io/docs](https://github.com/anfs-io/docs).
 
 ## Git Hooks
 
