@@ -6,6 +6,9 @@
 setup() {
   # shellcheck source=/dev/null
   source "$BATS_TEST_DIRNAME/../home/.local/lib/anfs/sources.sh"
+  # src list is a table
+  source "$BATS_TEST_DIRNAME/../home/.local/lib/anfs/table.sh"
+  unset ANFS_JSON ANFS_TABLE
 
   T="$BATS_TEST_TMPDIR"
   GITSRC_TOOL=tool
@@ -81,11 +84,9 @@ remote() {
 
   echo change >> "$T/repos/b/README"
   run gitsrc_list
-  [ "${lines[0]}" = "# user (user.list)" ]
-  [ "${lines[1]}" = "$a  a  clean" ]
-  [ "${lines[2]}" = "$b  b  dirty" ]
-  [ "${lines[3]}" = "# system (system.list)" ]
-  [ "${lines[4]}" = "file:///nowhere/c.git  c  missing" ]
+  [ "${lines[0]}" = "a"$'\t'"$a"$'\t'"user"$'\t'"clean"$'\t'"-" ]
+  [ "${lines[1]}" = "b"$'\t'"$b"$'\t'"user"$'\t'"dirty"$'\t'"-" ]
+  [ "${lines[2]}" = "c"$'\t'"file:///nowhere/c.git"$'\t'"system"$'\t'"missing"$'\t'"-" ]
 
   run gitsrc_update b
   [ "$status" -eq 1 ]
@@ -175,8 +176,13 @@ remote() {
   [ "$(gitsrc_provides a)" = "packages spaces" ]
   [ -z "$(gitsrc_provides b)" ]
   run gitsrc_list
-  [[ "$output" == *"a  missing  [packages spaces]"* || "$output" == *"[packages spaces]"* ]]
-  [[ "$output" == *"[nothing]"* ]]
+  [[ "${lines[0]}" == "a"$'\t'*$'\t'"packages spaces" ]]
+  [[ "${lines[1]}" == "b"$'\t'*$'\t'"-" ]]
+  # A list in JSON is a list
+  ANFS_JSON=true run gitsrc_list
+  run yq -p json -r '.[] | .alias + ":" + (.provides | join("+")) + ":" + (.provides | length | tostring)' <<< "$output"
+  [ "${lines[0]}" = "a:packages+spaces:2" ]
+  [ "${lines[1]}" = "b::0" ]
 }
 
 @test "ssh: rewrites user-list https entries; system-list ones are reported with the hint" {
@@ -197,10 +203,3 @@ remote() {
   [ "$output" = "s: system.list -> git@github.com:me/s.git" ]
 }
 
-@test "command: usage, and an unknown subcommand fails" {
-  run gitsrc_command
-  [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "Usage: tool src <add|remove|list|ssh|update>" ]
-  run gitsrc_command bogus
-  [ "$status" -eq 1 ]
-}

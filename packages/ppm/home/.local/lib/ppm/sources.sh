@@ -53,19 +53,19 @@ cmd_customize() {
 
   collect_repos
   if [[ " ${REPO_NAMES[*]:-} " == *" $alias "* ]]; then
-    echo "Error: a '$alias' source already exists; this machine is already customized"
+    anfs_warn "a '$alias' source already exists; this machine is already customized"
     return 1
   fi
   if [[ -e "$repo_dir" ]]; then
-    echo "Error: $repo_dir already exists"
+    anfs_warn "$repo_dir already exists"
     return 1
   fi
   if [[ -L "$ANFS_USER_LIST" ]]; then
-    echo "Error: $ANFS_USER_LIST is already a link into a package ($(readlink "$ANFS_USER_LIST"))"
+    anfs_warn "$ANFS_USER_LIST is already a link into a package ($(readlink "$ANFS_USER_LIST"))"
     return 1
   fi
   if _protected_has "${ANFS_USER_LIST#$HOME/}"; then
-    echo "Error: $ANFS_USER_LIST is protected; run 'ppm file unprotect' on it first"
+    anfs_warn "$ANFS_USER_LIST is protected; run 'ppm file unprotect' on it first"
     return 1
   fi
 

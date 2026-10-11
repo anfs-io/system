@@ -2,6 +2,10 @@
 #
 # anfs install script — bootstraps the anfs toolkit (ppm, pcm, psm, wsm and the anfs command)
 #
+# BOOTSTRAP SET: this runs under whatever bash started it, which on a vanilla Mac is 3.2, before
+# Homebrew's bash exists. It and the ppm libraries it sources (PPM_BOOTSTRAP_LIBS) must stay
+# parseable and runnable there. Everything else is written for bash 5.2 (lib/anfs/bash.sh)
+#
 # WHAT THIS SCRIPT DOES:
 #   1. Sources ppm's libraries, so this bootstrap reuses ppm's own os()/platform()/brew_*
 #      helpers instead of copies: from the checkout it runs from, an existing clone, or a

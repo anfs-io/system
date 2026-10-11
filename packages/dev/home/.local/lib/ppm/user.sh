@@ -2,29 +2,19 @@
 # core/dev — adds `ppm user`: throwaway users for testing ppm installs from scratch
 # Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_user() is the command `ppm user`
 
-cli_cmd user "user <command> ..." "Throwaway users on this machine, to test installs as someone else"
+cli_group user "Throwaway users on this machine, to test installs as someone else"
+cli_cmd "user add" "Create a user with your authorized_keys" \
+  --opt "--sudo: With passwordless sudo" --arg "user"
+cli_cmd "user remove" "Remove a non-system user and its home directory" --alias rm --arg "user"
+cli_cmd "user login" "Open a login shell as the user" --opt "--ssh: Share your ssh agent" --arg "user"
+cli_cmd "user install" "Run the ppm bootstrap installer as the user" --arg "user"
+cli_cmd "user setup" "add --sudo (if needed), install, then login --ssh" --arg "user"
 
-cmd_user() {
-  local subcommand="${1:-}"
-  shift 2>/dev/null || true
-
-  case "$subcommand" in
-    add)     _user_add "$@" ;;
-    remove)  _user_remove "$@" ;;
-    login)   _user_login "$@" ;;
-    install) _user_install "$@" ;;
-    setup)   _user_setup "$@" ;;
-    *)
-      echo "Usage: ppm user <add|remove|login|install|setup>"
-      echo "  add <user> [--sudo]    Create a user with your authorized_keys (--sudo: passwordless sudo)"
-      echo "  remove <user>          Remove a non-system user and its home directory"
-      echo "  login <user> [--ssh]   Open a login shell as the user (--ssh: share your ssh agent)"
-      echo "  install <user>         Run the ppm bootstrap installer as the user"
-      echo "  setup <user>           add --sudo (if needed), install, then login --ssh"
-      [[ -z "$subcommand" ]] || exit 1
-      ;;
-  esac
-}
+cmd_user_add()     { if ${CLI_OPT[sudo]:-false}; then _user_add "$1" --sudo; else _user_add "$1"; fi; }
+cmd_user_remove()  { _user_remove "$@"; }
+cmd_user_login()   { if ${CLI_OPT[ssh]:-false}; then _user_login "$1" --ssh; else _user_login "$1"; fi; }
+cmd_user_install() { _user_install "$@"; }
+cmd_user_setup()   { _user_setup "$@"; }
 
 # Create a user, then log in as them with a fresh ppm install
 _user_setup() {
@@ -63,7 +53,7 @@ _user_login() {
     return 0
   fi
 
-  [[ -S "${SSH_AUTH_SOCK:-}" ]] || { echo "Error: no ssh agent socket (SSH_AUTH_SOCK)"; return 1; }
+  [[ -S "${SSH_AUTH_SOCK:-}" ]] || { anfs_warn "no ssh agent socket (SSH_AUTH_SOCK)"; return 1; }
   local sock_dir
   sock_dir="$(dirname "$SSH_AUTH_SOCK")"
 
@@ -189,7 +179,7 @@ _user_sudo() {
   sudo chmod 440 "$sudoers_file"
 
   if ! sudo visudo -cf "$sudoers_file" &>/dev/null; then
-    echo "Error: Invalid sudoers file, removing"
+    anfs_warn "Invalid sudoers file, removing"
     sudo rm -f "$sudoers_file"
     return 1
   fi

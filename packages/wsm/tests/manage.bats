@@ -25,7 +25,24 @@ setup() {
   [[ "$output" == *$'acme/spikes/tech\t-'* ]]
   rm -r "$HOME/spaces/acme/main/finance"
   run wsm ls
-  [[ "$output" == *"~/spaces/acme/main/finance (stale)"* ]]
+  [[ "$output" == *$'acme/main/finance\t~/spaces/acme/main/finance\tspace\tstale'* ]]
+}
+
+@test "ls --json is what other tools read: id, dir, level, note, with whole paths and null" {
+  wsm install acme/main >/dev/null
+  run wsm ls --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run yq -p json -r '.[] | select(.id == "acme/main/tech") | .dir + " " + .level + " " + (.note | tag)' <<< "$json"
+  [ "$output" = "$HOME/spaces/acme/main/tech space !!null" ]
+  run yq -p json -r '.[] | select(.id == "acme/") | .level' <<< "$json"
+  [ "$output" = "source" ]
+  run yq -p json -r '.[] | select(.id == "acme/spikes") | (.dir | tag) + " " + .level' <<< "$json"
+  [ "$output" = "!!null workspace" ]
+  # The option is taken before the command too
+  run wsm --json ls acme/spikes
+  run yq -p json -r 'length' <<< "$output"
+  [ "$output" = "2" ]
 }
 
 @test "ls SPEC narrows to that subtree" {

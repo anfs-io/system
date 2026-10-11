@@ -23,6 +23,9 @@
 # Edit. pcm runs this under fnox when $PCM_CONFIG_HOME has a fnox config, so it can come from
 # 1Password. The account is the zone's, so no account id is needed.
 set -euo pipefail
+# The bash floor: providers are their own processes, so each sources it (lib/anfs/bash.sh)
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
 
 API="${CLOUDFLARE_API_BASE:-https://api.cloudflare.com/client/v4}"
 SERVICE=cloudflared

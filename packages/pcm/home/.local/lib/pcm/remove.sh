@@ -55,26 +55,15 @@ remove_summary() {
 # generated override — and run each dependency's deprovision hook. Running dependents are stopped
 # first, which needs --force. The definition, its env override and its source are never touched.
 cmd_remove() {
-  local yes=false force=false arg id
+  local yes=${CLI_OPT[yes]:-false} force=${CLI_OPT[force]:-false} arg id
   local -a services=()
   for arg in "$@"; do
-    case "$arg" in
-      -y|--yes)   yes=true ;;
-      -f|--force) force=true ;;
-      -*)         echo "pcm: remove: unknown option '$arg'" >&2; return 1 ;;
-      *)
-        if ! id=$(canon "$arg"); then
-          echo "pcm: unknown service '$arg' (see: pcm list)" >&2
-          return 1
-        fi
-        services+=("$id")
-        ;;
-    esac
+    if ! id=$(canon "$arg"); then
+      anfs_warn "unknown service '$arg' (see: pcm list)"
+      return 1
+    fi
+    services+=("$id")
   done
-  if [[ ${#services[@]} -eq 0 ]]; then
-    echo "Usage: pcm remove [-y] [-f|--force] <service>..." >&2
-    return 1
-  fi
 
   # Running dependents stop first, as with down
   NAMED=" ${services[*]} "
@@ -87,8 +76,8 @@ cmd_remove() {
     [[ "$NAMED" == *" $id "* ]] || dependents+=("$id")
   done
   if [[ ${#dependents[@]} -gt 0 && "$force" != true ]]; then
-    echo "pcm: not removing ${services[*]}: running services depend on it: ${dependents[*]}" >&2
-    echo "pcm: stop those first, or pass --force to stop them before removing" >&2
+    anfs_warn "not removing ${services[*]}: running services depend on it: ${dependents[*]}"
+    anfs_warn "stop those first, or pass --force to stop them before removing"
     return 1
   fi
 
@@ -97,15 +86,7 @@ cmd_remove() {
     [[ ${#dependents[@]} -eq 0 ]] || echo "stopped first (not removed): ${dependents[*]}"
   } >&2
 
-  if ! $yes; then
-    if [[ ! -t 0 ]]; then
-      echo "pcm: remove deletes data; pass -y to confirm without a terminal" >&2
-      return 1
-    fi
-    local answer
-    read -r -p "Remove? [y/N] " answer
-    [[ "$answer" == [yY]* ]] || { echo "pcm: nothing removed" >&2; return 1; }
-  fi
+  $yes || anfs_confirm "remove deletes data" "Remove?"
 
   export_podman_socket "${ORDER[@]}"
   local spec dep rc=0
@@ -114,14 +95,14 @@ cmd_remove() {
     compose_flags "$id" || return 1
 
     if [[ "$NAMED" != *" $id "* ]]; then
-      echo "pcm: stopping dependent service $id" >&2
-      compose_run "$id" "${FLAGS[@]}" down || { echo "pcm: failed to stop $id; nothing more removed" >&2; return 1; }
+      anfs_warn "stopping dependent service $id"
+      compose_run "$id" "${FLAGS[@]}" down || { anfs_warn "failed to stop $id; nothing more removed"; return 1; }
       continue
     fi
 
-    echo "pcm: removing $id" >&2
+    anfs_warn "removing $id"
     compose_run "$id" "${FLAGS[@]}" down --volumes --remove-orphans --rmi local || {
-      echo "pcm: failed to remove $id's containers; its data is kept" >&2
+      anfs_warn "failed to remove $id's containers; its data is kept"
       rc=1
       continue
     }
@@ -132,11 +113,11 @@ cmd_remove() {
       dep=$(canon "$spec") || continue
       has_hook deprovision "$dep" || continue
       [[ -n "$(project_containers "$dep")" ]] || continue
-      run_hook deprovision "$id" "$dep" "$spec" >&2 || { echo "pcm: deprovisioning $dep for $id failed" >&2; rc=1; }
+      run_hook deprovision "$id" "$dep" "$spec" >&2 || { anfs_warn "deprovisioning $dep for $id failed"; rc=1; }
     done < <(service_deps "$id")
     edges_unpublish "$id" || rc=1
 
-    remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { echo "pcm: could not delete $id's data" >&2; rc=1; }
+    remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { anfs_warn "could not delete $id's data"; rc=1; }
     rm -f "$(override_file "$id")"
     snapshot_forget "$id"
   done

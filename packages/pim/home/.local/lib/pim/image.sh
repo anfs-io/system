@@ -125,7 +125,7 @@ pim_key() {
 }
 
 # --- template variables -------------------------------------------------------------------------
-# Parallel arrays (bash 3.2 has no associative arrays). A later tpl_set of a name wins.
+# Parallel arrays (from before the bash floor was 5.2). A later tpl_set of a name wins.
 
 TPL_NAMES=() TPL_VALUES=()
 

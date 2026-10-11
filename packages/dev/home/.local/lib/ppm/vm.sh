@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # core/dev — adds `ppm vm`: disposable macOS VMs for testing anfs installs on Apple silicon
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_vm() is the command `ppm vm`
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm: the `ppm vm` commands are declared below
 #
 # The sibling of `ppm container`, with the same subcommands and the same contract: two test users
 # (owner, an admin with the password 'owner'; other, no admin), and the host's sources mounted
@@ -16,51 +16,53 @@
 
 PPM_VM_INSTALLER_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh
 
-cli_cmd vm "vm <command> <target> [...]" "Disposable macOS VMs (pim images, tart) for testing anfs installs"
+cli_group vm "Disposable macOS VMs (pim images, tart) for testing anfs installs.
+Users: owner (admin, password 'owner'), other (no admin). Sources are
+mounted read-only. Apple allows two macOS guests running at once."
+cli_cmd "vm list" "Running boxes" --alias ls
+cli_cmd "vm build" "Build the box's image (pim build; a first pull is ~25GB)" \
+  --opt "-f --force: Rebuild" --arg "target"
+cli_cmd "vm up" "Start it: pim up anfs-test-<target>; options go to pim up (--fresh, --share P)" \
+  --alias start --passthrough --arg "target"
+cli_cmd "vm down" "Shut it down" --alias stop --arg "target"
+cli_cmd "vm shell" "Login shell as a test user (owner or other)" --arg "target" --arg "[user]"
+cli_cmd "vm install" "Run install.sh from the mounted sources: [owner|other] [--pushed] [installer args]
+(--pushed: from GitHub)" --passthrough --arg "target" --arg "[word...]"
+cli_cmd "vm snapshot" "Save the box (no name lists its snapshots)" --arg "target" --arg "[snapshot]"
+cli_cmd "vm reset" "Recreate it from a snapshot, or from its build" --arg "target" --arg "[snapshot]"
+cli_cmd "vm remove" "Remove it, its snapshots and builds" --alias rm --arg "target"
+cli_cmd "vm ip" "The box's address" --arg "target"
 
-cmd_vm() {
-  local subcommand="${1:-}"
-  shift 2>/dev/null || true
+_vm_pim() {
+  command -v pim >/dev/null 2>&1 || { echo "ppm vm needs pim (ppm install core/anfs)" >&2; exit 1; }
+}
+cmd_vm_list()     { _vm_pim; pim ps; }
+cmd_vm_build() {
+  _vm_pim
+  _vm_target "$1" || return 1
+  if ${CLI_OPT[force]:-false}; then pim build -f "anfs-test-$1"; else pim build "anfs-test-$1"; fi
+}
+cmd_vm_up()       { _vm_pim; _vm_target "$1" && pim up "${@:2}" "anfs-test-$1"; }
+cmd_vm_down()     { _vm_pim; _vm_target "$1" && pim down "anfs-test-$1"; }
+cmd_vm_shell()    { _vm_pim; _vm_target "$1" && _vm_user "${2:-owner}" && pim shell "anfs-test-$1" -u "${2:-owner}"; }
+cmd_vm_install()  { _vm_pim; _vm_install "$@"; }
+cmd_vm_snapshot() { _vm_pim; _vm_target "$1" && pim snapshot "anfs-test-$1" ${2:+"$2"}; }
+cmd_vm_reset()    { _vm_pim; _vm_target "$1" && pim reset -y "anfs-test-$1" ${2:+"$2"}; }
+cmd_vm_remove()   { _vm_pim; _vm_target "$1" && pim remove -y "anfs-test-$1"; }
+cmd_vm_ip()       { _vm_pim; _vm_target "$1" && tart ip "pim-anfs-test-$1" --wait 5; }
 
-  if [[ -n "$subcommand" && "$subcommand" != "help" ]] && ! command -v pim >/dev/null 2>&1; then
-    echo "ppm vm needs pim (ppm install core/anfs)"
-    return 1
-  fi
-
-  case "$subcommand" in
-    build)    _vm_target "${1:-}" && pim build ${2:+-f} "anfs-test-$1" ;;
-    start)    _vm_target "${1:-}" && pim up "${@:2}" "anfs-test-$1" ;;
-    shell)    _vm_target "${1:-}" && _vm_user "${2:-owner}" && pim shell "anfs-test-$1" -u "${2:-owner}" ;;
-    install)  _vm_install "$@" ;;
-    snapshot) _vm_target "${1:-}" && pim snapshot "anfs-test-$1" ${2:+"$2"} ;;
-    reset)    _vm_target "${1:-}" && pim reset -y "anfs-test-$1" ${2:+"$2"} ;;
-    stop)     _vm_target "${1:-}" && pim down "anfs-test-$1" ;;
-    rm)       _vm_target "${1:-}" && pim rm -y "anfs-test-$1" ;;
-    list)     pim ps ;;
-    ip)       _vm_target "${1:-}" && tart ip "pim-anfs-test-$1" --wait 5 ;;
-    *)
-      echo "Usage: ppm vm <command> <target> [...]"
-      echo "  build <target> [--force]              Build the box's image (pim build; a first pull is ~25GB)"
-      echo "  start <target> [--fresh] [--share P]  Start it: pim up anfs-test-<target>"
-      echo "  shell <target> [owner|other]          Login shell as a test user"
-      echo "  install <target> [owner|other] [--pushed] [installer args]"
-      echo "                                        Run install.sh from the mounted sources (--pushed: from GitHub)"
-      echo "  snapshot <target> [name]              Save the box (no name lists its snapshots)"
-      echo "  reset <target> [snapshot]             Recreate it from a snapshot, or from its build"
-      echo "  stop <target> | rm <target>           Shut it down, or remove it, its snapshots and builds"
-      echo "  list | ip <target>                    Running boxes, or a box's address"
-      echo ""
-      echo "Targets: $(_vm_targets)"
-      echo "Users: owner (admin, password 'owner'), other (no admin)"
-      echo "Sources are mounted read-only, so commands that write into a source (file claim) fail."
-      echo "Apple allows two macOS guests running at once, per host."
-      [[ -z "$subcommand" || "$subcommand" == "help" ]] || return 1
-      ;;
-  esac
+# What cli.sh asks for on a tab press: the boxes, from the definitions' names
+complete_target() {
+  local d
+  for d in "$ANFS_SOURCES_HOME"/*/images/anfs-test-*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/anfs-test-}"
+  done | sort -u
 }
 
 _vm_targets() {
-  pim list --names 2>/dev/null | grep -v / | sed -n 's/^anfs-test-//p' | sort -u | paste -sd ' ' -
+  pim list --json 2>/dev/null | yq -p json -r '.[].name' 2>/dev/null | sed -n 's/^anfs-test-//p' | sort -u | paste -sd ' ' -
 }
 
 _vm_target() {

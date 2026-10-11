@@ -40,7 +40,7 @@ check_not_running_elsewhere() {
   [[ -n "$container" ]] || return 0
   running=$(container_pcm_id "$container") || true
   [[ -z "$running" || "$running" == "$id" ]] && return 0
-  echo "pcm: $(svc_name "$id") is already running from $running; stop it first (pcm down $(svc_name "$id"))" >&2
+  anfs_warn "$(svc_name "$id") is already running from $running; stop it first (pcm down $(svc_name "$id"))"
   return 1
 }
 
@@ -232,7 +232,7 @@ wait_healthy() {
 
     [[ -z "$waiting" ]] && return 0
     if (( SECONDS >= deadline )); then
-      echo "pcm: timed out after ${PCM_HEALTH_TIMEOUT}s waiting for${waiting} to become healthy" >&2
+      anfs_warn "timed out after ${PCM_HEALTH_TIMEOUT}s waiting for${waiting} to become healthy"
       return 1
     fi
     sleep 2
@@ -244,17 +244,17 @@ wait_healthy() {
 # is stopped, after sizing it to PCM_MACHINE_MEMORY. On Linux podman runs natively and there is
 # nothing to do.
 pcm_podman_ready() {
-  command -v podman >/dev/null 2>&1 || { echo "pcm: podman is not installed (it ships with anfs: ppm install core/podman)" >&2; return 1; }
+  command -v podman >/dev/null 2>&1 || { anfs_warn "podman is not installed (it ships with anfs: ppm install core/podman)"; return 1; }
   [[ "$OSTYPE" == darwin* ]] || return 0
   if [[ -n "${PCM_MACHINE_MEMORY:-}" && ! "$PCM_MACHINE_MEMORY" =~ ^[0-9]+$ ]]; then
-    echo "pcm: PCM_MACHINE_MEMORY is the podman machine's memory in MiB (e.g. 4096), not '$PCM_MACHINE_MEMORY'" >&2
+    anfs_warn "PCM_MACHINE_MEMORY is the podman machine's memory in MiB (e.g. 4096), not '$PCM_MACHINE_MEMORY'"
     return 1
   fi
   if [[ -n "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
     pcm_machine_memory || return 1
     podman info >/dev/null 2>&1 && return 0
   else
-    echo "pcm: creating the podman machine (once)" >&2
+    anfs_warn "creating the podman machine (once)"
     # Ours to remove on implode (a machine that was already there is not), recorded before init so
     # a machine that fails to init or start is still removed. "clean": podman had no machine state
     # before this, so implode may delete what podman wrote for it too.
@@ -266,10 +266,10 @@ pcm_podman_ready() {
       echo clean > "$PCM_STATE_HOME/machine-created"
     fi
     podman machine init ${PCM_MACHINE_MEMORY:+--memory "$PCM_MACHINE_MEMORY"} >&2 ||
-      { echo "pcm: podman machine init failed" >&2; return 1; }
+      { anfs_warn "podman machine init failed"; return 1; }
   fi
-  echo "pcm: starting the podman machine" >&2
-  podman machine start >&2 || { echo "pcm: podman machine start failed" >&2; return 1; }
+  anfs_warn "starting the podman machine"
+  podman machine start >&2 || { anfs_warn "podman machine start failed"; return 1; }
 }
 
 # Give the podman machine PCM_MACHINE_MEMORY MiB when it has another amount. Memory can only be
@@ -281,13 +281,13 @@ pcm_machine_memory() {
   have=$(podman machine inspect --format '{{.Resources.Memory}}' 2>/dev/null) || return 0
   [[ "$have" == "$want" ]] && return 0
 
-  echo "pcm: the podman machine has $have MiB; PCM_MACHINE_MEMORY is $want: resizing it" >&2
+  anfs_warn "the podman machine has $have MiB; PCM_MACHINE_MEMORY is $want: resizing it"
   if [[ "$(podman machine inspect --format '{{.State}}' 2>/dev/null)" == running ]]; then
     running=$(podman ps --format '{{.Names}}' 2>/dev/null | paste -sd ' ' -)
-    [[ -z "$running" ]] || echo "pcm: restarting the machine stops these containers: $running" >&2
-    podman machine stop >&2 || { echo "pcm: podman machine stop failed" >&2; return 1; }
+    [[ -z "$running" ]] || anfs_warn "restarting the machine stops these containers: $running"
+    podman machine stop >&2 || { anfs_warn "podman machine stop failed"; return 1; }
   fi
-  podman machine set --memory "$want" >&2 || { echo "pcm: podman machine set --memory $want failed" >&2; return 1; }
+  podman machine set --memory "$want" >&2 || { anfs_warn "podman machine set --memory $want failed"; return 1; }
 }
 
 # Export PCM_PODMAN_SOCKET if any of the given services use it: the podman API

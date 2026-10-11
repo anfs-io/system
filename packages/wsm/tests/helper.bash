@@ -15,6 +15,7 @@ wsm_setup() {
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME
   unset WSM_CONFIG_HOME WSM_DATA_HOME WSM_STATE_HOME WSM_CACHE_HOME WSM_SPACES_HOME
   export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+  export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
   TRACKERS="$XDG_STATE_HOME/wsm/installed"
   # anfs's libraries, where wsm looks for them
   mkdir -p "$HOME/.local/lib"

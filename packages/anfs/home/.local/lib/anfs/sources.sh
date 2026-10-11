@@ -4,7 +4,8 @@
 # anfs_gitsrc_env at the bottom); every anfs tool reads its own top-level directory of each.
 #
 # Like everything in lib/anfs/ (what every tool sources), it only defines functions, depends on no
-# tool, and is safe under bash 3.2 with `set -euo pipefail`. It is configured with variables:
+# tool, and is safe under `set -euo pipefail`. It is written for the bash floor (5.2, see bash.sh).
+# It is configured with variables:
 #
 #   GITSRC_TOOL           name used in messages and usage (ppm, pcm)
 #   GITSRC_USER_LIST      your list, edited by `src add/remove/ssh`; highest priority
@@ -26,8 +27,11 @@
 #
 # Source list format, one per line: <git-url-or-path> [alias]  (alias defaults to the basename)
 
+# anfs_debug (log.sh) when the tool loaded it; else the tool's own debug, if it has one
 gitsrc_debug() {
-  if declare -F debug >/dev/null; then debug "$@"; fi
+  if declare -F anfs_debug >/dev/null; then anfs_debug "$@"
+  elif declare -F debug >/dev/null; then debug "$@"
+  fi
   return 0
 }
 
@@ -90,7 +94,7 @@ gitsrc_collect() {
 # Position of an alias in the collected sources (lower is higher priority); 9999 if absent
 gitsrc_index() {
   local i
-  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
+  for i in "${!GITSRC_NAMES[@]}"; do
     [[ "${GITSRC_NAMES[$i]}" == "$1" ]] && { echo "$i"; return; }
   done
   echo 9999
@@ -148,33 +152,31 @@ gitsrc_provides() {
   echo "${out# }"
 }
 
-# Print each entry of a list file with its status (and what it provides, with GITSRC_DIRS)
+# One row per entry of a list file: alias, url, which list, status, what it provides
 gitsrc_list_file() {
-  local file="$1" line provides
+  local file="$1" list="$2" line
   [[ -n "$file" && -f "$file" ]] || return 0
   while IFS= read -r line || [[ -n "$line" ]]; do
     gitsrc_parse_line "$line" || continue
-    if [[ -n "${GITSRC_DIRS:-}" ]]; then
-      provides=$(gitsrc_provides "$GITSRC_LINE_NAME")
-      printf "%s  %s  [%s]\n" "$line" "$(gitsrc_status "$GITSRC_LINE_NAME")" "${provides:-nothing}"
-    else
-      printf "%s  %s\n" "$line" "$(gitsrc_status "$GITSRC_LINE_NAME")"
-    fi
+    anfs_row "$GITSRC_LINE_NAME" "$GITSRC_LINE_URL" "$list" "$(gitsrc_status "$GITSRC_LINE_NAME")" \
+      "$(gitsrc_provides "$GITSRC_LINE_NAME")"
   done < "$file"
 }
 
+# `src list`: the sources in priority order, yours first (lib/anfs/table.sh; --json has provides
+# as a list)
 gitsrc_list() {
   local user_file
   user_file=$(gitsrc_user_list_read)
   if [[ -z "$user_file" && ! -f "$GITSRC_SYSTEM_LIST" ]]; then
-    echo "No sources configured"
+    if anfs_json_on; then echo '[]'; else echo "No sources configured"; fi
     return 0
   fi
   gitsrc_collect
-  echo "# user ($(basename "${user_file:-$GITSRC_USER_LIST}"))"
-  gitsrc_list_file "$user_file"
-  echo "# system ($(basename "$GITSRC_SYSTEM_LIST"))"
-  gitsrc_list_file "$GITSRC_SYSTEM_LIST"
+  {
+    gitsrc_list_file "$user_file" user
+    gitsrc_list_file "$GITSRC_SYSTEM_LIST" system
+  } | anfs_table "ALIAS URL LIST STATUS PROVIDES" "alias url list status provides[]"
 }
 
 # --- src add / remove --------------------------------------------------------------------------
@@ -275,7 +277,7 @@ gitsrc_ssh() {
   local i name url repo_dir remote changed noted found=false f
   local sys_name hint="${GITSRC_SYSTEM_LIST_HINT:-}"
   sys_name=$(basename "$GITSRC_SYSTEM_LIST")
-  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
+  for i in "${!GITSRC_NAMES[@]}"; do
     name="${GITSRC_NAMES[$i]}"
     [[ -z "$filter" || "$name" == "$filter" ]] || continue
     found=true
@@ -361,7 +363,7 @@ gitsrc_update() {
 
   gitsrc_collect
 
-  for i in ${GITSRC_URLS[@]+"${!GITSRC_URLS[@]}"}; do
+  for i in "${!GITSRC_URLS[@]}"; do
     repo_url="${GITSRC_URLS[$i]}"
     repo_name="${GITSRC_NAMES[$i]}"
     dir="$GITSRC_REPOS_DIR/$repo_name"
@@ -451,7 +453,7 @@ gitsrc_link_local() {
 gitsrc_update_stale() {
   local stale=() i
   gitsrc_collect
-  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
+  for i in "${!GITSRC_NAMES[@]}"; do
     gitsrc_is_git_url "${GITSRC_URLS[$i]}" || continue
     if gitsrc_stale "${GITSRC_NAMES[$i]}"; then
       stale+=("${GITSRC_NAMES[$i]}")
@@ -464,34 +466,6 @@ gitsrc_update_stale() {
 }
 
 # --- the src command ---------------------------------------------------------------------------
-
-gitsrc_usage() {
-  echo "Usage: $GITSRC_TOOL src <add|remove|list|ssh|update>"
-  echo "  add [--top] <git-url|path> [alias]  Add a source repository"
-  echo "  remove <url-or-alias>               Remove a source repository"
-  echo "  list                                List configured sources"
-  echo "  ssh [alias]                         Switch GitHub HTTPS sources and remotes to SSH"
-  echo "  update [alias...]                   Clone missing and pull existing sources (local"
-  echo "                                      paths are linked, never pulled)"
-}
-
-# `<tool> src <subcommand> [args]`
-gitsrc_command() {
-  local subcommand="${1:-}"
-  shift 2>/dev/null || true
-
-  case "$subcommand" in
-    add)    gitsrc_add "$@" ;;
-    remove) gitsrc_remove "$@" ;;
-    list)   gitsrc_list ;;
-    ssh)    gitsrc_ssh "$@" ;;
-    update) gitsrc_update "$@" ;;
-    *)
-      gitsrc_usage
-      [[ -z "$subcommand" ]] || exit 1
-      ;;
-  esac
-}
 
 # --- anfs --------------------------------------------------------------------------------------
 

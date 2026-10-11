@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Installing and removing packages: the install/remove commands, the hook lifecycle, and stow
+#
+# BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
+# 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
 
 # Shared stow ignore list. Layers of the same package name (e.g. user/git, stack/git)
 # accumulate into one list so lower-priority layers skip files stowed by higher ones.
@@ -206,42 +209,40 @@ remover() {
 
 # --- Post-run callbacks (registered with ppm_register_callback, see core.sh) ---
 
-# Call every registered callback once with the packages this run installed or removed.
-# A callback runs in a subshell with its package's install.sh sourced, like the hooks; one that
-# fails is reported and the rest still run. Skipped with -c, like hooks.
+# Call every registered callback once with the packages this run installed or removed. The loop is
+# anfs's (anfs_callbacks_run): one that fails is reported and the rest still run. Skipped with -c,
+# like hooks.
 # Usage: _run_callbacks <install|remove> <repo/pkg>...
 _run_callbacks() {
-  local event="$1" file qualified fn dir
+  local event="$1"
   shift
   ${config:-false} && return 0
   [[ $# -gt 0 ]] || return 0
-  file=$(_callbacks_file)
-  [[ -s "$file" ]] || return 0
+  _callbacks_migrate
+  anfs_callbacks_run ppm "$event" "$@"
+}
 
-  # fd 3 keeps callbacks that read stdin from consuming the registrations
-  while IFS=$'\t' read -r -u 3 qualified fn; do
-    [[ -n "$qualified" && -n "$fn" ]] || continue
-    dir="$ANFS_SOURCES_HOME/${qualified%%/*}/packages/${qualified#*/}"
-    if [[ ! -f "$(_tracker_path "${qualified%%/*}" "${qualified#*/}")" || ! -f "$dir/install.sh" ]]; then
-      debug "Skipping $qualified's callback $fn: not installed, or no install.sh"
-      continue
-    fi
-
-    PPM_CURRENT_PACKAGE="$qualified"
-    debug "Calling $qualified's $fn $event ($# package(s))"
-    (
-      source "$dir/install.sh"
-      if ! declare -f "$fn" >/dev/null; then
-        ppm_fail "registered callback '$fn' is not defined in install.sh"
-        exit 0
-      fi
-      "$fn" "$event" "$@"
-    ) || ppm_fail "callback '$fn' failed" || true
-  done 3< <(yq -r 'to_entries | .[] | .key + "\t" + .value' "$file" 2>/dev/null)
-
-  # Callbacks run last; leaving this set would misattribute any later user_message to whichever
-  # package happened to be registered last
-  PPM_CURRENT_PACKAGE=""
+# How ppm runs a handler (anfs_callbacks_run calls this in a subshell): the handler is a function
+# of the registering package's install.sh, sourced like a hook with PPM_CURRENT_PACKAGE set to
+# that package. A package that is not installed any more is skipped.
+# Usage: ppm_callback_invoke <repo/pkg> <function> <install|remove> <repo/pkg>...
+ppm_callback_invoke() {
+  local qualified="$1" fn="$2" dir
+  shift 2
+  dir="$ANFS_SOURCES_HOME/${qualified%%/*}/packages/${qualified#*/}"
+  if [[ ! -f "$(_tracker_path "${qualified%%/*}" "${qualified#*/}")" || ! -f "$dir/install.sh" ]]; then
+    debug "Skipping $qualified's callback $fn: not installed, or no install.sh"
+    return 0
+  fi
+  PPM_CURRENT_PACKAGE="$qualified"
+  debug "Calling $qualified's $fn $1 ($(( $# - 1 )) package(s))"
+  source "$dir/install.sh"
+  if ! declare -f "$fn" >/dev/null; then
+    ppm_fail "registered callback '$fn' is not defined in install.sh" || true
+    return 0
+  fi
+  ( "$fn" "$@" ) || ppm_fail "callback '$fn' failed" || true
+  return 0
 }
 
 # --- Declared resources (any package.yml key ppm core does not own) ---

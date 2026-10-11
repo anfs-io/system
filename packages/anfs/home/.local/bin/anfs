@@ -21,8 +21,17 @@
 set -euo pipefail
 
 ANFS_LIB="$HOME/.local/lib/anfs"
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2 (lib/anfs/bash.sh).
+# Optional here only: anfs and ppm are what repair an install whose lib/anfs predates it
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/bash.sh" ]]; then source "$ANFS_LIB/bash.sh"; fi
 # shellcheck source=/dev/null
 source "$ANFS_LIB/paths.sh"
+# Messages, the log and callbacks. Optional for the same reason as bash.sh
+for _lib in log.sh callbacks.sh table.sh; do
+  # shellcheck source=/dev/null
+  if [[ -f "$ANFS_LIB/$_lib" ]]; then source "$ANFS_LIB/$_lib"; fi
+done
 # shellcheck source=/dev/null
 source "$ANFS_LIB/sources.sh"
 anfs_gitsrc_env
@@ -31,20 +40,31 @@ anfs_gitsrc_env
 # shellcheck source=/dev/null
 source "$ANFS_LIB/cli.sh"
 CLI_TOOL=anfs
-cli_cmd src        "src <add|remove|list|ssh|update>" "Manage the sources every tool reads"
-cli_cmd install    "install [-y] <source>..."  "Install everything a source holds: its packages (ppm),
+cli_group src "The sources every tool reads"
+cli_cmd "src list" "The sources in priority order: status, and what each provides" --alias ls
+cli_cmd "src add" "Add a source to your list (and clone it)" \
+  --opt "--top: Before your other sources (highest priority)" --arg "url" --arg "[alias]"
+cli_cmd "src remove" "Take a source off your list" --alias rm --arg "source"
+cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "[source]"
+cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
+never pulled)" --arg "[source...]"
+cli_cmd install "Install everything a source holds: its packages (ppm),
 containers (pcm), images (pim), skills (psm) and spaces
 (wsm), in that order. To pick single resources use the
-tool itself."
-cli_cmd implode    "implode [-y] [--all]"      "Remove everything the toolkit put on this machine:
+tool itself." --opt "-y --yes: Do not ask" --arg "source..."
+cli_cmd implode "Remove everything the toolkit put on this machine:
 wsm, psm, pim, pcm, then ppm (which removes the tools and the
 software they run on), then the sources. Space contents
 are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,
-Homebrew if it installed it); --all removes that too, and
-nothing that was on the machine before anfs."
-cli_cmd completion "completion <shell>"        "Output shell completion code (zsh)"
-cli_cmd help       "help"                      "Show this help"
+Homebrew if it installed it)." \
+  --opt "-y --yes: Do not ask" \
+  --opt "--all: That too, and nothing that was on the machine before anfs"
+cli_cmd callbacks "Who listens to which tool's events (ppm and wsm emit
+install and remove): tool, listener, ok or stale, handler" --arg "[tool]"
+cli_cmd log "Print the log every tool writes; of one tool when named" \
+  --opt "-f --follow: Keep printing as it grows" --arg "[tool]"
+cli_standard
 
 cli_help_epilogue() {
   cat <<'EOF'
@@ -53,7 +73,50 @@ highest priority) or system.list (shipped). `anfs src list` shows what each one 
 EOF
 }
 
-die() { echo "anfs: $*" >&2; exit 1; }
+die() {
+  ! declare -F anfs_die >/dev/null || anfs_die "$@"
+  echo "anfs: $*" >&2; exit 1
+}
+
+# --- callbacks, log (lib/anfs/callbacks.sh, log.sh) ----------------------------------------------
+
+_need_lib() {
+  declare -F "$1" >/dev/null || die "$ANFS_LIB is out of date (no ${2}); install core/anfs again"
+}
+
+# ppm's handlers are functions of a package's install.sh, not commands: ok while the package that
+# registered is installed. (anfs_callbacks_ls asks <tool>_callback_state when there is one.)
+ppm_callback_state() {
+  [[ -f "$XDG_STATE_HOME/ppm/installed/${1%%/*}/${1#*/}.yml" ]] && echo ok || echo stale
+}
+
+# Read-only: why did my listener not run? To watch an event happen, run the tool with -d.
+cmd_callbacks() {
+  _need_lib anfs_callbacks_ls callbacks.sh
+  local out
+  out=$(anfs_callbacks_ls "$@")
+  if [[ -z "$out" ]]; then
+    if declare -F anfs_json_on >/dev/null && anfs_json_on; then echo '[]'; else echo "no callbacks registered${1:+ with $1}"; fi
+    return 0
+  fi
+  _need_lib anfs_table table.sh
+  printf '%s\n' "${out//$'\t'/$ANFS_US}" | anfs_table "TOOL LISTENER STATE HANDLER" "tool listener state handler"
+}
+
+cmd_log() {
+  local follow=${CLI_OPT[follow]:-false} tool="${1:-}"
+  _need_lib anfs_log_file log.sh
+  anfs_log_file || die "logging is off (ANFS_LOG=off)"
+  [[ -f "$ANFS_LOG_FILE" ]] || die "nothing logged yet ($ANFS_LOG_FILE)"
+  # A line is "<time> <tool>[<pid>] <level>: <message>"
+  local -a filter=(cat)
+  [[ -z "$tool" ]] || filter=(awk -v t="$tool" 'index($2, t "[") == 1')
+  if $follow; then
+    tail -n 20 -F "$ANFS_LOG_FILE" | "${filter[@]}"
+  else
+    "${filter[@]}" < "$ANFS_LOG_FILE"
+  fi
+}
 
 # The tool commands, from ~/.local/bin even when it is not on PATH
 tool() {
@@ -63,29 +126,26 @@ tool() {
   "$bin" "$@"
 }
 
-confirm() {
-  local answer
-  [[ -t 0 ]] || die "$1; pass -y to confirm without a terminal"
-  read -r -p "$2 [y/N] " answer
-  [[ "$answer" == [yY]* ]] || die "nothing done"
-}
+confirm() { anfs_confirm "$@"; }
 
-cmd_src() {
-  gitsrc_command "$@"
-}
+# `anfs src ...`: the work is lib/anfs/sources.sh's
+cmd_src_list()   { _need_lib anfs_table table.sh; gitsrc_list; }
+cmd_src_add()    { if ${CLI_OPT[top]:-false}; then gitsrc_add --top "$@"; else gitsrc_add "$@"; fi; }
+cmd_src_remove() { gitsrc_remove "$@"; }
+cmd_src_ssh()    { gitsrc_ssh "$@"; }
+cmd_src_update() { gitsrc_update "$@"; }
+
+# What cli.sh asks for on a tab press (complete_<kind>)
+complete_source() { gitsrc_collect 2>/dev/null; printf '%s\n' "${GITSRC_NAMES[@]}"; }
+complete_tool()   { printf '%s\n' $ANFS_TOOLS; }
 
 cmd_install() {
-  local yes=false arg
+  local yes=${CLI_OPT[yes]:-false} arg
   local -a srcs=()
   for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      -*) die "install: unknown option '$arg'" ;;
-      */*) die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ${ANFS_TOOLS// /|} install $arg" ;;
-      *) srcs+=("$arg") ;;
-    esac
+    [[ "$arg" != */* ]] || die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ${ANFS_TOOLS// /|} install $arg"
+    srcs+=("$arg")
   done
-  [[ ${#srcs[@]} -gt 0 ]] || die "Usage: anfs install [-y] <source>..."
 
   gitsrc_update_stale >/dev/null 2>&1 || true
   gitsrc_collect
@@ -124,14 +184,7 @@ cmd_install() {
 }
 
 cmd_implode() {
-  local yes=false all=false arg
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      --all) all=true ;;
-      *) die "Usage: anfs implode [-y] [--all]" ;;
-    esac
-  done
+  local yes=${CLI_OPT[yes]:-false} all=${CLI_OPT[all]:-false}
 
   # Read before anything is deleted: the record lives in anfs's state dir
   _record_load
@@ -323,47 +376,6 @@ _login_shell() {
   fi
 }
 
-_tilde() { echo "${1/#$HOME/~}"; }
-
-cmd_completion() {
-  [[ "${1:-}" == zsh ]] || { echo "Usage: anfs completion <zsh>" >&2; return 1; }
-  cat <<'COMPLETION'
-#compdef anfs
-
-_anfs_sources() {
-  compadd -- ${(f)"$(command anfs src list 2>/dev/null | awk '!/^#/ { print $2 }')"}
-}
-
-_anfs() {
-  local -a subcmds=(
-COMPLETION
-  cli_zsh_commands
-  cat <<'COMPLETION'
-  )
-  if (( CURRENT == 2 )); then
-    _describe 'command' subcmds
-    return
-  fi
-  case "${words[2]}" in
-    src)
-      if (( CURRENT == 3 )); then
-        compadd add remove list ssh update
-      elif [[ "${words[3]}" == (remove|ssh|update) ]]; then
-        _anfs_sources
-      fi
-      ;;
-    install) compadd -- -y; _anfs_sources ;;
-    implode) compadd -- -y --all ;;
-    completion) (( CURRENT == 3 )) && compadd zsh ;;
-  esac
-}
-
-if [[ "${funcstack[1]}" == "_anfs" ]]; then
-  _anfs "$@"
-else
-  compdef _anfs anfs
-fi
-COMPLETION
-}
+_tilde() { anfs_display "$1"; }
 
 cli_dispatch "$@"

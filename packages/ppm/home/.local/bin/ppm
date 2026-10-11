@@ -19,9 +19,17 @@ set -euo pipefail
 
 # Paths and settings: anfs's layout (sources, libraries, anfs.conf) and ppm's own XDG dirs
 PPM_LIB_DIR="$HOME/.local/lib/ppm"
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2 (lib/anfs/bash.sh).
+# Optional here only: ppm is what links the file in when core/anfs is next installed
+if [[ -f "$HOME/.local/lib/anfs/bash.sh" ]]; then source "$HOME/.local/lib/anfs/bash.sh"; fi
 source "$HOME/.local/lib/anfs/paths.sh"
+# Messages, the log and callbacks (debug and ppm_register_callback are over these). Optional for
+# the same reason as bash.sh; core.sh and installer.sh cope without them, as they do in install.sh
+for lib_file in log.sh callbacks.sh table.sh; do
+  if [[ -f "$HOME/.local/lib/anfs/$lib_file" ]]; then source "$HOME/.local/lib/anfs/$lib_file"; fi
+done
 anfs_tool_paths ppm
-# Installed state: per-package trackers, claims, protections, callbacks
+# Installed state: per-package trackers, claims, protections
 PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
 BIN_DIR="$ANFS_BIN_DIR"
 # The anfs repo's clone; ppm itself is its core/ppm package
@@ -31,21 +39,52 @@ PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
 # are sourced) so help and completion are generated from what exists
 source "$HOME/.local/lib/anfs/cli.sh"
 CLI_TOOL=ppm
-cli_cmd list       "list [filter|@category|@] [--installed]" "List available packages (@category: its packages, @: the categories)"
-cli_cmd install    "install [-cfrsy] <package|repo/|@category>..." "Install packages and their dependencies
--c config only (no hooks, no declared software)
--f replace conflicting files   -r reinstall
--s skip dependencies           -y no confirmation for repo/ and @category"
-cli_cmd remove     "remove <package|repo/|@category>..."   "Remove packages (and the software ppm installed for them)"
-cli_cmd show       "show <package>"              "Show a package: layers, dependencies, what is installed"
-cli_cmd deps       "deps <package>"              "Show a package's dependency tree"
-cli_cmd path       "path <package>"              "Print a package's directory"
-cli_cmd file       "file <add|claim|reset|protect|unprotect>" "Own single files: claim into your repo, or detach from ppm"
-cli_cmd customize  "customize"                   "Create your own repo (the user source) to customize the toolkit"
-cli_cmd implode    "implode [-y]"                "Remove every package ppm installed, then ppm's own files"
-cli_cmd completion "completion <zsh|bash>"       "Output shell completion"
-cli_cmd help       "help"                        "Show this help"
-cli_alias ls list
+cli_cmd list "Available packages, and the version installed (a filter narrows it;
+@category: its packages, @: the categories)" --alias ls \
+  --opt "--installed: Only what is installed" --arg "[filter]"
+cli_cmd install "Install packages and their dependencies" \
+  --opt "-c --config: Config only: no hooks, no declared software" \
+  --opt "-f --force: Replace conflicting files" \
+  --opt "-r --reinstall: Re-stow what is installed" \
+  --opt "-s --skip-deps: Skip dependencies" \
+  --opt "-y --yes: No confirmation for repo/ and @category" --arg "package-spec..."
+cli_cmd remove "Remove packages (and the software ppm installed for them)" --alias rm \
+  --opt "-f --force: Even when a package's pre_remove hook objects" \
+  --opt "-y --yes: No confirmation for repo/ and @category" --arg "installed..."
+cli_cmd show "A package: layers, dependencies, what is installed" --arg "package"
+cli_cmd deps "A package's dependency tree" --arg "package..."
+cli_cmd path "Print a package's directory" --opt "-v --verbose: Every layer" --arg "package"
+cli_cmd cd "Change to a package directory (requires the ppm shell function)" --arg "[package]"
+cli_group file "Own single files: claim them into your repo, or detach them from ppm"
+cli_cmd "file add" "Move files no package owns into <repo/package> and stow them" \
+  --arg "target" --arg "file..."
+cli_cmd "file claim" "Copy stowed files into your repo and stow them from there" \
+  --opt "--repo REPO: Into that repo (default: your user source)" \
+  --opt "--package PACKAGE: Into that package (repo/package names both)" --arg "file..."
+cli_cmd "file reset" "Remove claimed files and restore the original links" --arg "file..."
+cli_cmd "file protect" "Detach files from ppm; keep a local copy stow will not touch" --arg "file..."
+cli_cmd "file unprotect" "Let ppm manage the files again" --arg "file..."
+cli_cmd customize "Create your own repo (the user source) to customize the toolkit"
+cli_cmd implode "Remove every package ppm installed, then ppm's own files" --opt "-y --yes: Do not ask"
+
+cmd_cd() {
+  echo "ppm cd needs the ppm shell function (source ~/.config/sh/ppm.sh)" >&2
+  exit 1
+}
+
+# `ppm file <sub>`: cmd_file (lib/ppm/file.sh) reads [--repo R] [--package P] <sub> <file...>
+_file_sub() {
+  local -a pre=()
+  [[ -z "${CLI_OPT[repo]:-}" ]] || pre+=(--repo "${CLI_OPT[repo]}")
+  [[ -z "${CLI_OPT[package]:-}" ]] || pre+=(--package "${CLI_OPT[package]}")
+  cmd_file "${pre[@]}" "$@"
+}
+cmd_file_add()       { _file_sub add "$@"; }
+cmd_file_claim()     { _file_sub claim "$@"; }
+cmd_file_reset()     { _file_sub reset "$@"; }
+cmd_file_protect()   { _file_sub protect "$@"; }
+cmd_file_unprotect() { _file_sub unprotect "$@"; }
+
 cli_help_epilogue() {
   echo "ppm cd [package] changes to a package directory (needs the ppm shell function)."
   echo "Sources are anfs's: anfs src list."
@@ -70,46 +109,45 @@ for lib_file in "$PPM_LIB_DIR"/*.sh; do
   [[ -f "$lib_file" ]] && source "$lib_file"
 done
 
+# completion and help, after what the extensions declared
+cli_standard
+
+# Callback registrations moved to anfs's place for them (lib/anfs/callbacks.sh); once
+! declare -F anfs_callbacks_file >/dev/null || _callbacks_migrate
+
 # Put Homebrew on PATH even without the user's shell setup (cron, sudo -iu, env -i)
 brew_env
 
 # Entrypoint for commands that need a source list
 main() {
   if [[ ! -f "$ANFS_SYSTEM_LIST" && ! -f "$ANFS_USER_LIST" ]]; then
-    echo "ERROR: No sources configured (expected $ANFS_USER_LIST or $ANFS_SYSTEM_LIST)"
+    echo "ppm: no sources configured (expected $ANFS_USER_LIST or $ANFS_SYSTEM_LIST)" >&2
     exit 1
   fi
 
-  # Flags are locals of main(); the commands it calls (and their helpers) read them
-  # through bash's dynamic scoping
-  local command="$1" config=false force=false reinstall=false skip_deps=false yes=false
-  shift
-
-  local passthrough_args=()
-  while [[ "$#" -gt 0 && "$1" == -* ]]; do
-    case "$1" in
-      -c) config=true ;;
-      -f) force=true ;;
-      -r) reinstall=true ;;
-      -s) skip_deps=true ;;
-      --debug) PPM_DEBUG=true ;;
-      -y|--yes) yes=true ;;
-      --*) passthrough_args+=("$1") ;;
-      *) echo "Unknown flag: $1"; exit 1 ;;
-    esac
-    shift
-  done
-  set -- ${passthrough_args[@]+"${passthrough_args[@]}"} "$@"
+  # The options a command was given, as the variables the commands' helpers read by name
+  # through bash's dynamic scoping (install.sh, which sources the same helpers under bash 3.2,
+  # sets them the same way). cli_before_command fills them in once the line is read.
+  local config=false force=false reinstall=false skip_deps=false yes=false
 
   # cmd_ functions only: a command never shadows a system binary in package hooks (install,
   # file), and ppm's internals are not reachable from its command line
-  cli_dispatch "$command" "$@"
+  cli_dispatch "$@"
 }
 
-# Skip main() setup for commands that don't need it
+cli_before_command() {
+  config=${CLI_OPT[config]:-false} force=${CLI_OPT[force]:-false} reinstall=${CLI_OPT[reinstall]:-false}
+  skip_deps=${CLI_OPT[skip-deps]:-false} yes=${CLI_OPT[yes]:-false}
+}
+
+# The options every tool takes before its command (-d/--debug, --trace: lib/anfs/cli.sh)
+cli_globals "$@"
+set -- "${CLI_ARGS[@]}"
+case "${ANFS_DEBUG:-}" in ""|0|false|no|off) ;; *) PPM_DEBUG=true ;; esac
+
+# No source list is needed for help, a tab press, or the version
 case "${1:-}" in
-  ""|help|-h|--help) cli_help ;;
-  completion) cmd_completion "${@:2}" ;;
+  ""|help|-h|--help|--version|__complete|completion) cli_dispatch "$@" ;;
   src) echo "Sources are managed by anfs: anfs src ${*:2}" >&2; exit 1 ;;
   *) main "$@" ;;
 esac

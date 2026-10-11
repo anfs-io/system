@@ -2,6 +2,9 @@
 # local — pcm edge provider for hosts nothing publishes (the proxy routes them on this machine:
 # *.localhost, or names in /etc/hosts or a LAN resolver). Every verb succeeds and does nothing.
 #   edges.yml:  lan.example.com: { provider: local }
+# The bash floor: providers are their own processes, so each sources it (lib/anfs/bash.sh)
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
 case "${1:-}" in
   scheme) echo http ;;
   deps|check|add|remove) ;;

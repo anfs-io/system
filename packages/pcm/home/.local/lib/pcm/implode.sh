@@ -12,13 +12,7 @@
 #   - on macOS, the podman machine, when pcm created it (a machine that predates pcm is kept)
 # Pulled images and podman itself are left alone (podman goes with ppm's implode).
 cmd_implode() {
-  local yes=false arg
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      *) echo "Usage: pcm implode [-y]" >&2; return 1 ;;
-    esac
-  done
+  local yes=${CLI_OPT[yes]:-false}
 
   local have_podman=false projects="" network="${PCM_SHARED_NETWORK:-dev-net}" machine=false
   [[ "$OSTYPE" == darwin* && -f "$PCM_STATE_HOME/machine-created" ]] && command -v podman >/dev/null 2>&1 && machine=true
@@ -44,17 +38,12 @@ cmd_implode() {
     echo "Kept: pulled images, podman$($machine || echo ' and its machine')"
   } >&2
 
-  if ! $yes; then
-    [[ -t 0 ]] || { echo "pcm: implode deletes all pcm data; pass -y to confirm without a terminal" >&2; return 1; }
-    local answer
-    read -r -p "Implode pcm? [y/N] " answer
-    [[ "$answer" == [yY]* ]] || { echo "pcm: nothing removed" >&2; return 1; }
-  fi
+  $yes || anfs_confirm "implode deletes all pcm data" "Implode pcm?"
 
   local rc=0 project ids
   if $have_podman; then
     for project in $projects; do
-      echo "pcm: removing $project" >&2
+      anfs_warn "removing $project"
       ids=$(podman ps -aq --filter "label=$PCM_LABEL_NAME=$project")
       [[ -z "$ids" ]] || podman rm -f -v $ids >/dev/null || rc=1
       _implode_project_objects "$project" || rc=1
@@ -70,10 +59,10 @@ cmd_implode() {
   # Service data first: rootless podman leaves subuid-owned files only `podman unshare` removes
   remove_data_dir "$PCM_VOLUMES_HOME" || rc=1
   if $machine; then
-    echo "pcm: removing the podman machine" >&2
+    anfs_warn "removing the podman machine"
     podman machine rm -f >/dev/null 2>&1 || true
     if [[ -n "$(podman machine list --format '{{.Name}}' 2>/dev/null)" ]]; then
-      echo "pcm: podman machine rm failed" >&2; rc=1
+      anfs_warn "podman machine rm failed"; rc=1
     elif [[ "$(cat "$PCM_STATE_HOME/machine-created" 2>/dev/null)" == clean ]]; then
       # podman keeps the machine image cache and connection files after rm; they were not there
       # before pcm created the machine
@@ -85,7 +74,7 @@ cmd_implode() {
   fi
   for dir in "$PCM_DATA_HOME" "$PCM_STATE_HOME" "$PCM_CACHE_HOME" "$PCM_CONFIG_HOME"; do
     [[ -e "$dir" ]] || continue
-    echo "pcm: deleting $(tilde "$dir")" >&2
+    anfs_warn "deleting $(tilde "$dir")"
     rm -rf "${dir:?}" || rc=1
   done
   [[ $rc -eq 0 ]] && echo "pcm imploded" >&2

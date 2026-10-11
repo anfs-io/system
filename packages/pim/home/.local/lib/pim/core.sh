@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # pim library: small helpers shared by every pim lib
-# Sourced by ~/.local/bin/pim; defines functions only. bash 3.2-safe.
+# Sourced by ~/.local/bin/pim; defines functions only. Runs on the bash floor (5.2).
 
-die()  { echo "pim: $*" >&2; exit 1; }
-warn() { echo "pim: $*" >&2; }
-info() { echo "$*"; }
+# Messages and the log are anfs's (lib/anfs/log.sh)
+die()  { anfs_die "$@"; }
+warn() { anfs_warn "$@"; }
+info() { anfs_info "$@"; }
 
-tilde() { echo "${1/#$HOME/~}"; }
+tilde() { anfs_display "$1"; }
 
 # sha256 of stdin, hex only
 _sha256() {
@@ -84,9 +85,4 @@ file_size() {
 }
 
 # Ask unless yes; dies without a terminal
-confirm() {
-  local answer
-  [[ -t 0 ]] || die "$1; pass -y to confirm without a terminal"
-  read -r -p "$2 [y/N] " answer
-  [[ "$answer" == [yY]* ]] || die "nothing done"
-}
+confirm() { anfs_confirm "$@"; }

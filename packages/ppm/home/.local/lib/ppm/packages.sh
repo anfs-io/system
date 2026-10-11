@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Packages: discovery, dependency resolution, package.yml metadata, install trackers,
 # and the list/show/path/deps commands
-# Compatible with bash 3.2 (no associative arrays)
+# Predates the bash floor (5.2), hence no associative arrays; new code need not avoid them
 
 # --- Discovery ---
 
@@ -103,7 +103,7 @@ expand_packages() {
       EXPANDED_PACKAGES+=("$arg")
       continue
     fi
-    [[ ${#PACKAGES[@]} -eq 0 ]] && { echo "Error: No packages found in $label"; exit 1; }
+    [[ ${#PACKAGES[@]} -eq 0 ]] && { anfs_warn "No packages found in $label"; exit 1; }
 
     supported=()
     for p in "${PACKAGES[@]}"; do
@@ -119,7 +119,7 @@ expand_packages() {
         echo "Skipping $p: not supported on $(platform)"
       fi
     done
-    [[ ${#supported[@]} -gt 0 ]] || { echo "Error: No packages in $label support $(platform)"; exit 1; }
+    [[ ${#supported[@]} -gt 0 ]] || { anfs_warn "No packages in $label support $(platform)"; exit 1; }
     PACKAGES=("${supported[@]}")
 
     if ! $force && ! ${yes:-false}; then
@@ -428,49 +428,52 @@ _tracker_remove_file() {
 # List the packages found in the cached repositories
 # Optionally filter by a substring pattern; "@category" lists that category, a bare "@" the categories
 cmd_list() {
-  local filter="${1:-}" installed_only=false
+  local filter="${1:-}" installed_only=${CLI_OPT[installed]:-false}
 
   case "$filter" in
     @) collect_repos; categories_list; return ;;
     @*) collect_repos; category_members "${filter#@}"; return ;;
   esac
 
-  if [[ "$filter" == "--installed" ]]; then
-    installed_only=true
-    filter="${2:-}"
-  fi
-
+  # One row per package: its name and the version installed, if it is. The table is anfs's
+  # (lib/anfs/table.sh): aligned on a terminal, --json for a tool that reads it.
+  local pkg line
   if $installed_only; then
-    if [[ ! -d "$PPM_INSTALLED_DIR" ]]; then
-      echo "No packages installed (or tracking not yet enabled)"
-      return
-    fi
-    for tracker in "$PPM_INSTALLED_DIR"/*/*.yml; do
-      [[ -f "$tracker" ]] || continue
-      local pkg_name="${tracker%.yml}"
-      pkg_name="${pkg_name#$PPM_INSTALLED_DIR/}"
-      local version
-      version=$(yq -r '.version // "?"' "$tracker" 2>/dev/null)
-      local line="$pkg_name  $version"
-      if [[ -z "$filter" ]] || [[ "$line" == *"$filter"* ]]; then
-        echo "$line"
-      fi
+    for pkg in "$PPM_INSTALLED_DIR"/*/*.yml; do
+      [[ -f "$pkg" ]] || continue
+      line="${pkg%.yml}"
+      line="${line#"$PPM_INSTALLED_DIR"/}"
+      [[ -z "$filter" || "$line" == *"$filter"* ]] || continue
+      anfs_row "$line" "$(_installed_version "$pkg")"
     done
-    return
-  fi
+  else
+    collect_packages
+    for pkg in ${PACKAGES[@]+"${PACKAGES[@]}"}; do
+      [[ -z "$filter" || "$pkg" == *"$filter"* ]] || continue
+      anfs_row "$pkg" "$(_installed_version "$PPM_INSTALLED_DIR/$pkg.yml")"
+    done
+  fi | anfs_table "PACKAGE INSTALLED" "package installed"
+}
 
-  collect_packages
-  for pkg in ${PACKAGES[@]+"${PACKAGES[@]}"}; do
-    if [[ -z "$filter" ]] || [[ "$pkg" == *"$filter"* ]]; then
-      echo "$pkg"
-    fi
-  done
+# The version a tracker records, or nothing when there is no tracker
+_installed_version() {
+  local line
+  [[ -f "$1" ]] || return 0
+  # Read, not yq: this runs once per package in a list
+  while IFS= read -r line; do
+    [[ "$line" == version:* ]] || continue
+    line="${line#version:}"
+    line="${line//[ \"\']/}"
+    printf '%s\n' "${line:-?}"
+    return 0
+  done < "$1"
+  echo "?"
 }
 
 # Show package information: version, dependencies, install status and home/ tree
 cmd_show() {
   if [[ $# -eq 0 ]]; then
-    echo "Error: show requires a package name"
+    anfs_warn "show requires a package name"
     echo "Usage: ppm show [repo/]package"
     exit 1
   fi
@@ -479,7 +482,7 @@ cmd_show() {
 
   local pkg="$1" matches repo_index repo_name package_dir
   local package_name="${pkg##*/}"
-  matches=$(find_package_dirs "$pkg") || { echo "Error: package '$pkg' not found"; exit 1; }
+  matches=$(find_package_dirs "$pkg") || { anfs_warn "package '$pkg' not found"; exit 1; }
 
   while IFS=$'\t' read -r -u 3 repo_index repo_name package_dir; do
     echo "package: $repo_name/$package_name"
@@ -570,11 +573,10 @@ cmd_show() {
 
 # Output the path to a package directory (the highest-priority layer)
 cmd_path() {
-  local verbose=false
-  [[ "${1:-}" == "-v" ]] && { verbose=true; shift; }
+  local verbose=${CLI_OPT[verbose]:-false}
 
   if [[ $# -eq 0 ]]; then
-    echo "Error: path requires a package name"
+    anfs_warn "path requires a package name"
     echo "Usage: ppm path [-v] [repo/]package"
     exit 1
   fi

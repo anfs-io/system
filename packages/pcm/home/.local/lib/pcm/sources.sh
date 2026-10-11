@@ -6,110 +6,36 @@
 # Inside pcm a service is its id, `source/name`. The name alone is its runtime identity:
 # compose project, ${PCM_VOLUMES_HOME}/<name>/, the PCM_<NAME>_* provisioned env.
 
-SRC_NAMES=()
-SRC_DIRS=()
-
-# Load the sources in priority order into SRC_NAMES and SRC_DIRS (each dir holds <name>/)
-load_sources() {
-  local i name
-  SRC_NAMES=("$PCM_LOCAL_SOURCE")
-  SRC_DIRS=("$PCM_CONTAINERS_HOME")
-  gitsrc_collect
-  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
-    name="${GITSRC_NAMES[$i]}"
-    if [[ "$name" == "$PCM_LOCAL_SOURCE" ]]; then
-      echo "pcm: ignoring source alias '$name': reserved for $PCM_CONTAINERS_HOME" >&2
-      continue
-    fi
-    [[ -d "$(gitsrc_dir "$name")/containers" ]] || continue
-    SRC_NAMES+=("$name")
-    SRC_DIRS+=("$(gitsrc_dir "$name")/containers")
-  done
-}
-
-# Containers dir of source $1
-source_dir() {
-  local i
-  for i in "${!SRC_NAMES[@]}"; do
-    [[ "${SRC_NAMES[$i]}" == "$1" ]] && { echo "${SRC_DIRS[$i]}"; return 0; }
-  done
-  return 1
-}
-
-svc_name() { echo "${1#*/}"; }
-svc_src()  { echo "${1%%/*}"; }
-
-# Definition directory of service id $1
-svc_dir() {
-  local dir
-  dir=$(source_dir "$(svc_src "$1")") || return 1
-  echo "$dir/$(svc_name "$1")"
-}
-
+# Finding definitions across the sources is anfs's (lib/anfs/catalog.sh); these are pcm's names
+# for it. A service is a directory with a compose.yml, in a source's containers/ or in
+# $PCM_CONTAINERS_HOME, which comes first.
+load_sources()  { catalog_load containers compose.yml "$PCM_LOCAL_SOURCE" "$PCM_CONTAINERS_HOME"; }
+source_dir()    { catalog_source_dir "$1"; }
+svc_name()      { echo "${1#*/}"; }
+svc_src()       { echo "${1%%/*}"; }
+svc_dir()       { catalog_dir "$1"; }
 # Resolve a service spec (name or source/name) to its id. A plain name resolves to the
 # highest-priority source that defines it — on the command line and in x-pcm.depends_on alike.
-canon() {
-  local spec="$1" i
-  [[ -n "$spec" && "$spec" != */*/* ]] || return 1
-  if [[ "$spec" == */* ]]; then
-    [[ -f "$(svc_dir "$spec" 2>/dev/null)/compose.yml" ]] || return 1
-    echo "$spec"
-    return 0
-  fi
-  for i in "${!SRC_NAMES[@]}"; do
-    if [[ -f "${SRC_DIRS[$i]}/$spec/compose.yml" ]]; then
-      echo "${SRC_NAMES[$i]}/$spec"
-      return 0
-    fi
-  done
-  return 1
-}
+canon()         { catalog_canon "$1"; }
+all_ids()       { catalog_all_ids; }
+effective_ids() { catalog_effective_ids; }
 
 is_service() {
   canon "$1" >/dev/null
 }
 
-# Every defined service id, in priority order (shadowed ones included)
-all_ids() {
-  local i dir
-  for i in "${!SRC_NAMES[@]}"; do
-    for dir in "${SRC_DIRS[$i]}"/*/; do
-      [[ -f "${dir}compose.yml" ]] && echo "${SRC_NAMES[$i]}/$(basename "$dir")"
-    done
-  done
-  return 0
-}
-
-# The service ids a plain name resolves to (one per name)
-effective_ids() {
-  local id seen=" "
-  while IFS= read -r id; do
-    [[ "$seen" == *" $(svc_name "$id") "* ]] && continue
-    seen+="$(svc_name "$id") "
-    echo "$id"
-  done < <(all_ids)
-}
-
 # `pcm list`: NAME SOURCE STATUS, by name then priority. STATUS: running or stopped when that
 # definition's containers exist (from the io.pcm.id label), shadowed when a higher-priority
 # source defines the name. Blank STATUS if podman is unreachable; list never fails on it.
-# --names: every id and each effective plain name, one per line (for completion).
+# A tool that wants the names reads `pcm list --json` (lib/anfs/table.sh).
 cmd_list() {
-  local id winner names=false
-  [[ "${1:-}" == "--names" ]] && names=true
+  local id winner
 
   local -a ids=()
   while IFS= read -r id; do ids+=("$id"); done < <(all_ids)
   if [[ ${#ids[@]} -eq 0 ]]; then
     echo "No services found; add a source with: anfs src add <git-url> [alias]" >&2
-    return 0
-  fi
-
-  if $names; then
-    for id in "${ids[@]}"; do
-      echo "$id"
-      [[ "$(canon "$(svc_name "$id")")" == "$id" ]] && svc_name "$id"
-    done
+    ! anfs_json_on || echo '[]'
     return 0
   fi
 
@@ -146,19 +72,14 @@ cmd_list() {
     rows+="$(svc_name "$id")|$(printf '%04d' "$i")|$(svc_src "$id")|$status"$'\n'
   done
 
+  # The table is anfs's (lib/anfs/table.sh): aligned on a terminal, --json for a tool that reads it
   local name _prio src
-  printf '%-*s  %-*s  %s\n' "$nw" NAME "$sw" SOURCE STATUS
   while IFS='|' read -r name _prio src status; do
-    [[ -n "$name" ]] && printf '%-*s  %-*s  %s\n' "$nw" "$name" "$sw" "$src" "$status"
-  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2)
+    [[ -z "$name" ]] || anfs_row "$name" "$src" "$status"
+  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) | anfs_table "NAME SOURCE STATUS" "name source status"
 }
 
 cmd_path() {
-  if [[ $# -eq 0 ]]; then
-    echo "Usage: pcm path <service>" >&2
-    return 1
-  fi
-
   local id
   if ! id=$(canon "$1"); then
     echo "Service '$1' not found (see: pcm list)" >&2
@@ -176,7 +97,7 @@ cmd_install() {
   for arg in "$@"; do
     if [[ "$arg" == */ ]]; then
       src="${arg%/}"
-      dir=$(source_dir "$src") || { echo "pcm: '$src' is not a source with containers (see: anfs src list)" >&2; return 1; }
+      dir=$(source_dir "$src") || { anfs_warn "'$src' is not a source with containers (see: anfs src list)"; return 1; }
       for id in $(all_ids); do
         [[ "$(svc_src "$id")" == "$src" ]] && services+=("$id")
       done

@@ -83,7 +83,7 @@ for dir in "$src_root"/*/; do
   srcs+=(--src "$(basename "$dir")=$copy/$(basename "$dir")")
 done
 # The fixture org is a source of its own
-srcs+=(--src "acme=$copy/anfs/packages/anfs/tests/fixtures/acme")
+srcs+=(--src "acme=$copy/core/packages/anfs/tests/fixtures/acme")
 podman rm -f "anfs-test-$distro" >/dev/null 2>&1 || true
 if $scratch; then
   $H start "$distro" --nested "${srcs[@]}"
@@ -139,18 +139,18 @@ check() {
 if [[ " ${installs[*]} " == *" acme "* ]]; then
   echo "== checks"
   check "ppm: acme/hello stowed and runs"            'acme-hello | grep -q "hello from acme"'
-  check "ppm: acme/acme-infra pulled in stack/fnox" 'ppm list --installed | grep -q "stack/fnox"'
+  check "ppm: acme/acme-infra pulled in stack/fnox" 'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"stack/fnox\")"'
   check "pcm: whoami is running"                     'pcm ps | grep -q whoami'
   check "pcm: whoami answers on its port"            'curl -fsS localhost:8099 | grep -qi hostname'
   check "pcm: anfs-sources mount set, read via exec" 'pcm exec acme/inspector -- ls /src/acme/packages | grep -qx hello'
   check "pcm: the mount set is read-only"            '! pcm exec acme/inspector -- touch /src/acme/x'
   check "pcm: snapshot, then reset to it"            'pcm snapshot whoami s1 && pcm reset -y whoami s1 && pcm snapshot whoami | grep -qx "\* s1" && pcm ps | grep -q whoami'
   check "pcm: the test boxes are valid pcm services"  'pcm validate anfs-test-debian anfs-test-fedora'
-  check "cli: help and completion come from the registry" 'anfs help | grep -q "implode \[-y\]" && pcm completion zsh | grep -q "snapshot:" && ppm completion zsh | grep -q "implode:"'
-  check "pim: acme/hello is listed, and validates with its from: parent" 'pim list | grep -q "^hello" && pim validate acme/hello debian-13'
+  check "cli: help and completion come from the declarations" 'anfs help | grep -q "implode \[-y\]" && pcm __complete "" | grep -q "^snapshot" && ppm __complete "" | grep -q "^implode" && ppm completion zsh | grep -q "ppm __complete"'
+  check "pim: acme/hello is listed, and validates with its from: parent" 'pim list --json | yq -p json -e ".[] | select(.name == \"hello\")" && pim validate acme/hello debian-13'
   check "pim: from: resolves to core/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        core/debian-13"'
   check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
-  check "psm: acme-hello installed for pi"           'psm skills ls | grep -E "^ok +acme +acme-hello"'
+  check "psm: acme-hello installed for pi"           'psm skills ls --json | yq -p json -e ".[] | select(.status == \"ok\" and .config == \"acme\" and .skill == \"acme-hello\")"'
   check "wsm: org installed before tech"             'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'
   check "wsm: org cloned its repo"                   'test -d ~/spaces/acme/main/org/hello-world/.git'
   check "wsm: tech links its files from the source"  'test -L ~/spaces/acme/main/tech/README.md && test "$(wsm path tech)" = ~/spaces/acme/main/tech'
@@ -158,7 +158,7 @@ fi
 
 if [[ " ${installs[*]} " == *" lgat "* ]]; then
   echo "== checks (lgat)"
-  check "ppm: lgat/lgat installed"                   'ppm list --installed | grep -q "lgat/lgat"'
+  check "ppm: lgat/lgat installed"                   'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"lgat/lgat\")"'
   check "ppm: ruby from pde, via mise"               'mise which ruby && mise exec -- ruby -e "exit 0"'
   check "ppm: solana pulled in stack/rust"             'mise which cargo'
   check "pcm: postgres is running"                   'pcm ps | grep -q postgres'

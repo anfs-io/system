@@ -3,7 +3,8 @@
 # and each tool's <TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME, so no tool resolves XDG on its own.
 #
 # Like everything in lib/anfs/ (the libraries every tool sources): functions and variables only,
-# nothing from any tool, bash 3.2-safe under `set -euo pipefail`.
+# nothing from any tool, safe under `set -euo pipefail`. Written for the bash floor (5.2), which
+# bash.sh guarantees: a tool sources that first.
 #
 # Every tool, anfs included, gets <dir>/<tool> and nothing else:
 #   ~/.local/bin/<tool>                 the commands
@@ -93,3 +94,19 @@ anfs_load_conf() {
   done
 }
 anfs_load_conf
+
+# A path as a person reads it: the home directory is ~, whether the path spells it as $HOME or
+# as what $HOME resolves to (the tools store canonical paths, and on some machines the two
+# differ). For display only; what is stored is always whole.
+ANFS_HOME_REAL=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || ANFS_HOME_REAL="$HOME"
+anfs_display() {
+  case "$1" in
+    "$HOME"|"$ANFS_HOME_REAL") printf '~\n' ;;
+    "$HOME"/*)           printf '~/%s\n' "${1#"$HOME"/}" ;;
+    "$ANFS_HOME_REAL"/*) printf '~/%s\n' "${1#"$ANFS_HOME_REAL"/}" ;;
+    *)                   printf '%s\n' "$1" ;;
+  esac
+}
+
+# The canonical path of an existing directory: no symlinks, no dots. Returns 1 when there is none.
+anfs_canon() { (cd -P -- "$1" 2>/dev/null && pwd -P); }

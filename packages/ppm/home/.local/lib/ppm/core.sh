@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Core utility functions for ppm
+#
+# BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
+# 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
 
 # Your customization repo is always the "user" source: created by `ppm customize`, registered by
 # `install.sh --repo <url>`, highest priority, and the default repo for `ppm file claim`
@@ -78,10 +81,12 @@ _sed_inplace() {
 }
 
 # Install dependencies using the OS specific package manager (apt or homebrew)
-# Debug logging — enabled by --debug flag
+# Debug output: on with -d/--debug (or ANFS_DEBUG, PPM_DEBUG). It is anfs's (lib/anfs/log.sh), which
+# also writes it to the log; the fallback is for install.sh, which sources this file without it
 PPM_DEBUG=${PPM_DEBUG:-false}
 
 debug() {
+  if declare -F anfs_debug >/dev/null; then anfs_debug "$@"; return 0; fi
   $PPM_DEBUG && echo -e "[DEBUG] $*" >&2 || true
 }
 
@@ -149,12 +154,22 @@ ppm_fail() {
 #
 # A package registers a function in its install.sh to hear about every later `ppm install` and
 # `ppm remove`: once the whole run is done, ppm calls <function> <install|remove> <repo/pkg>...
-# with every package that run installed (dependencies included) or removed. Registrations live
-# in $PPM_INSTALLED_DIR/callbacks.yml (repo/pkg: function) and are dropped when the package is
-# removed. core/psm uses it to sync skills when an agent package comes or goes.
+# with every package that run installed (dependencies included) or removed. core/psm uses it to
+# sync skills when an agent package comes or goes.
+#
+# The mechanism is anfs's (lib/anfs/callbacks.sh), shared with every tool that emits events: it
+# owns the registrations ($ANFS_STATE_HOME/callbacks/ppm.yml, repo/pkg: function), the run loop and
+# failure isolation. What is ppm's is here and in installer.sh: the package-facing names, and how
+# a handler is run (ppm_callback_invoke: a function of the registering package's install.sh).
 
-_callbacks_file() {
-  echo "$PPM_INSTALLED_DIR/callbacks.yml"
+# Registrations used to live in $PPM_INSTALLED_DIR/callbacks.yml; move them once
+_callbacks_migrate() {
+  local old="$PPM_INSTALLED_DIR/callbacks.yml" new
+  [[ -f "$old" ]] || return 0
+  new=$(anfs_callbacks_file ppm)
+  [[ ! -e "$new" ]] || return 0
+  mkdir -p "$(dirname "$new")"
+  mv "$old" "$new"
 }
 
 # Register the current package's callback; call it from post_install. Re-registering replaces it.
@@ -162,15 +177,13 @@ _callbacks_file() {
 #   post_install() { ppm_register_callback my_pkg_changed; }
 #   my_pkg_changed() { local event="$1"; shift; ... "$@" are repo/pkg names ...; }
 ppm_register_callback() {
-  local fn="${1:-}" file
+  local fn="${1:-}"
   if [[ -z "$fn" || -z "$PPM_CURRENT_PACKAGE" ]]; then
     ppm_fail "ppm_register_callback needs a function name and must be called from a package hook"
     return 1
   fi
-  file=$(_callbacks_file)
-  mkdir -p "$(dirname "$file")"
-  [[ -s "$file" ]] || echo '{}' > "$file"
-  P="$PPM_CURRENT_PACKAGE" F="$fn" yq -i '.[strenv(P)] = strenv(F)' "$file"
+  _callbacks_migrate
+  anfs_callback_register ppm "$PPM_CURRENT_PACKAGE" "$fn"
 }
 
 # Drop the current package's callback. ppm does this itself when the package is removed.
@@ -180,8 +193,7 @@ ppm_unregister_callback() {
 
 # Usage: _callback_unregister <repo/pkg>
 _callback_unregister() {
-  local file
-  file=$(_callbacks_file)
-  [[ -f "$file" && -n "${1:-}" ]] || return 0
-  P="$1" yq -i 'del(.[strenv(P)])' "$file"
+  [[ -n "${1:-}" ]] || return 0
+  _callbacks_migrate
+  anfs_callback_unregister ppm "$1"
 }

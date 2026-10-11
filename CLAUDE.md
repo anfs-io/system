@@ -296,13 +296,218 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - It runs like a hook: a subshell with the package's `install.sh` sourced and
   `PPM_CURRENT_PACKAGE` set to the registering package. A failing callback is `ppm_fail`ed and the
   others still run.
-- Registrations live in `~/.local/state/ppm/installed/callbacks.yml` (`repo/pkg: function`).
-  Removing the package drops its entry, so it is never called about its own removal.
+- Registrations live in `~/.local/state/anfs/callbacks/ppm.yml` (`repo/pkg: function`). Removing
+  the package drops its entry, so it is never called about its own removal. (They used to be in
+  ppm's `installed/callbacks.yml`; ppm moves that file once.)
 - Not called with `-c`, and `-r`'s internal remove is not a removal.
 - For a removal, the package directory normally still exists, so the callback can read the
   removed packages' `package.yml`. It is gone only if its repo was removed first.
 - `core/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
   unlink them (`psm agents rm`) when one is removed.
+
+The mechanism is not ppm's: it is `lib/anfs/callbacks.sh`, shared by every tool that emits
+events. ppm keeps the package-facing names (`ppm_register_callback`, `ppm_unregister_callback`)
+and how a handler is run (`ppm_callback_invoke`: a function of the package's `install.sh`).
+
+### Callbacks Between Tools (lib/anfs/callbacks.sh)
+
+A tool **emits** an event by calling `anfs_callbacks_run <tool> <event> <arg>...` at the end of a
+command; a **listener** is whatever registered a handler with that tool. The tool knows nothing
+about its listeners.
+
+```bash
+anfs_callback_register   <tool> <name> <handler>   # add or replace <name>'s registration
+anfs_callback_unregister <tool> <name>
+anfs_callbacks_run       <tool> <event> <arg>...   # emit
+anfs_callbacks_ls        [tool]                    # tool, name, ok|stale, handler
+```
+
+- The library owns the registrations: `$ANFS_STATE_HOME/callbacks/<tool>.yml`, `name: handler`,
+  one file per emitting tool. They are anfs's and not the tool's because a registration belongs
+  to the listener: it lasts as long as the listener is installed. A tool's own implode deletes
+  that tool's state and leaves its listeners installed, so it must not drop them. A listener
+  unregisters in its `post_remove`; `anfs implode --all` clears what is left.
+- By default a handler is a command line, run as `<handler> <event> <arg>...`. A tool whose
+  handlers are something else defines `<tool>_callback_invoke` (ppm does).
+- Each handler runs in a subshell. One that fails is reported (`anfs_warn`) and the rest still
+  run; one whose command is no longer on PATH is skipped and shows as `stale`.
+- **Who emits:** ppm (`install`/`remove`, with the packages) and wsm (`install` for each level
+  that became installed, `remove` for each one removed, as `source`, `source/ws`,
+  `source/ws/space`). wsm's are tied to the outcome, not the command: `wsm new` emits `install`
+  for a space it installs, a re-install of what is installed emits nothing, `--dry-run` emits
+  nothing, and `implode` emits `remove` for every level.
+  psm, pcm and pim emit nothing yet: add an emitter when there is a listener.
+- A package that listens to another tool registers from its own `install.sh`:
+
+  ```bash
+  post_install() { anfs_callback_register wsm "$PPM_CURRENT_PACKAGE" "pvm link apply --event"; }
+  post_remove()  { anfs_callback_unregister wsm "$PPM_CURRENT_PACKAGE"; }
+  ```
+- `anfs callbacks [tool]` lists them. It does not fire events; run the emitting command with `-d`.
+
+### Lists and --json (lib/anfs/table.sh)
+
+Every list a tool prints goes through `anfs_table`: the tool emits rows (`anfs_row <field>...`)
+and names the columns, and the library picks the form.
+
+```bash
+{ anfs_row "$id" "$dir" "$note"; ... } | anfs_table "ID DIR NOTE" "id dir note"
+```
+
+| When | Form |
+| --- | --- |
+| stdout is a terminal | headers, then the rows, columns aligned |
+| piped | the rows, tab-separated, no header |
+| `--json` | a JSON array of objects, one per row |
+
+- Cells are the same on a terminal and piped: an empty field is `-`, a path at or under `$HOME`
+  starts with `~`. JSON has the raw values: the whole path, `null` for an empty field, a string
+  for everything else (a version or an id that looks like a number stays a string). A key
+  declared with `[]` (`provides[]`) is a list: its items shown separated by spaces, and an array
+  in JSON.
+- `--json` is an option `cli.sh` gives every tool, taken anywhere on the line up to a `--`. It is
+  not passed on to a tool this one runs. `anfs_result k v ...` is the `--json` answer of a command
+  that changes something; `anfs_json_on` asks whether it was given.
+- **A tool reads another tool's list with `--json`, never by column.** pvm reads
+  `wsm ls --json`; the round trips read `ppm list --json`, `pim list --json` and
+  `psm skills ls --json`. Keys may be added to a list; renaming or removing one breaks its
+  readers. The piped form is for a person's own pipes. There is no special flag for another
+  tool's benefit: `pcm list --names` and `pim list --names` are gone, and `ppm container` and
+  `ppm vm` read `list --json` like any reader.
+- Detail views (`pcm inspect`, `ppm show`) are not tables and do not go through this.
+
+The keys, which are the interface:
+
+| Command | Keys |
+| --- | --- |
+| `wsm list` | `id` (a source's ends in `/`), `dir`, `level` (`source`, `workspace`, `space`), `note` (`stale`, `not in the source`) |
+| `wsm list -r` | `path`, `url`, `state` |
+| `ppm list`, `ppm list --installed` | `package`, `installed` (the version, null when not installed) |
+| `pcm list` | `name`, `source`, `status` |
+| `pim list` | `name`, `source`, `status` |
+| `psm skills list` | `status`, `config`, `skill`, `repo` |
+| `psm repo list` | `config`, `repo`, `note` |
+| `anfs callbacks` | `tool`, `listener`, `state`, `handler` |
+| `anfs src list` | `alias`, `url`, `list` (`user`, `system`), `status`, `provides` (a list) |
+| `pim ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
+
+### The Command Line (lib/anfs/cli.sh)
+
+Every tool's commands are declared, once, and everything a person meets comes from the
+declaration: the usage line, help, the check of what was typed, and tab completion. Nothing about
+a command is written twice.
+
+```bash
+cli_cmd remove "Down, then delete everything pcm created for it" \
+  --alias rm \
+  --opt "-y --yes: Do not ask" \
+  --opt "-f --force: Also remove what depends on it" \
+  --arg "service..."
+cli_group skills "Declared skills and their state"
+cli_cmd "skills remove" "Remove skills" --alias rm --arg "skill..."
+cli_standard                 # completion and help, last
+cli_dispatch "$@"
+```
+
+- A two-word name is a sub-command; its function is `cmd_skills_remove`. A group on its own
+  prints its sub-commands. No tool writes its own second-level `case`.
+- `--opt "-y --yes: help"` is a flag; a word after the names (`--to SPEC`) means it takes a value,
+  and the word is its **kind**. `--arg "service..."`, `--arg "[snapshot]"`: `[..]` is optional,
+  `...` is one or more, the word is its kind.
+- `--passthrough`: options the command does not declare are left for it, in place (`pcm up`,
+  `pcm ps`, `pim shell`: they go on to podman or ssh).
+- **The function gets positional arguments as `"$@"` and options in `CLI_OPT`**, keyed by the long
+  name without dashes: `${CLI_OPT[yes]:-false}`, `${CLI_OPT[to]:-}`. A value option given twice
+  holds both, one per line. No command writes a loop over its own options.
+- Options may come anywhere after the command, up to a `--`. Short flags run together (`-cfr`).
+- Before the function runs the line is checked. An unknown option, a missing value, too few or
+  too many arguments are refused the same way by every tool, with exit 64:
+
+  ```
+  pim: unknown option '--bogus'
+  pim: usage: pim build [-f] [-v] [--arch ARCH] [--console] [--verify] <image>...
+  ```
+- `cli_usage_err "message"` is for what a declaration cannot say (`--to` is required). An unknown
+  command exits 64 too.
+- One command runs another with `cli_call <command> <args...>`, which gives it its own options and
+  puts the caller's back. Tests run a command the same way.
+- `cli_before_command`, if the tool defines it, runs between the line being read and the command.
+  ppm uses it (below).
+- Every tool also takes `-d`/`--debug` and `--trace` before the command, `--json` anywhere,
+  `--version` (the package's `package.yml` version unless the tool sets `CLI_VERSION`), `-h`/
+  `--help`, `<command> --help` and `help <command>`.
+- A `cmd_` function nothing declared still runs, with its arguments untouched: plumbing such as
+  `psm path`. *Only* `cmd_` functions run, so a tool's internals are never reachable from its
+  command line, and a command can never shadow a system binary in package hooks (`install`, `file`).
+- A tool whose tests source its libraries directly keeps its declarations in a library file
+  (`lib/pim/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
+
+**The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
+`show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm skills list`,
+`pvm link remove`, `ppm container remove`). pcm and pim keep `up`/`down`/`ps`, the names of what
+they wrap, with `run`/`stop`/`ssh` as aliases; wsm's `status` is a different question from `ps`.
+Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
+says what would happen.
+
+**ppm's options are its commands' own**, like every tool's: `ppm install -f pkg` or
+`ppm install pkg -f`, and `ppm list -f` is refused. Its helpers still read `$force`, `$config`,
+`$reinstall`, `$skip_deps` and `$yes` by name through dynamic scoping, because four of those files
+are sourced by `install.sh` under bash 3.2, which sets the same variables itself: `main()` declares
+them, and `cli_before_command` fills them from `CLI_OPT` once the line is read. The `cmd_`
+functions in the bootstrap files did not change.
+
+**Exit codes:** 0 done; 1 what was asked for is not there or could not be done; 2 ambiguous;
+64 used wrongly; 69 something this needs is missing; 73 already exists; 75 locked.
+
+**Completion asks the tool.** `<tool> __complete <words...>` answers from the declarations: the
+last word is the one being typed, and the answer is candidates, one per line,
+`value<TAB>description`, or `:files` / `:dirs`. `<tool> completion zsh` prints a 30-line script
+that only calls that, so the copy `zcomp` caches holds nothing about the tool's commands and
+cannot go stale.
+
+- A command is offered once, its aliases in its description; an alias is offered itself only when
+  what is typed can be nothing else (`rm<TAB>`).
+- Options are offered only once a `-` is typed.
+- An argument or an option's value completes by its kind: the tool's `complete_<kind>` function
+  (one candidate per line), a path for `dir` and `file`, nothing otherwise.
+- **`complete_<kind>` functions must be fast: file names only, no yq, no git, no list command.**
+  A tab press starts the tool (25 to 40 ms) and runs one of these; the whole is under 100 ms, and
+  `registry.bats` holds the library to that. `wsm ls` takes 240 ms, which is why completion does
+  not call it.
+- One tool may complete another's things by asking it: pvm's `--to` runs
+  `wsm __complete install ""`.
+
+**Shared helpers, used by every tool** (a tool's own `tilde`, `_display`, `confirm` are one-line
+aliases of these; don't write another):
+
+- `anfs_confirm "<what this does>" "<the question>"` (cli.sh) asks before something that cannot
+  be undone: true at once with `-y`; without a terminal it says to pass `-y` and exits 1; anything
+  but a y exits 1 with "nothing done".
+- `anfs_display <path>` shows a path with `~` for home, whether it is spelled as `$HOME` or as what
+  `$HOME` resolves to; `anfs_canon <dir>` resolves one (paths.sh).
+- `anfs_require <command> [hint]` (log.sh) stops with 69 when something is missing.
+- **`lib/anfs/catalog.sh`** finds the definitions of one kind across the sources and resolves a
+  name to one: `catalog_load <kind> <marker> <local alias> <local dir>`, then `catalog_canon`,
+  `catalog_dir`, `catalog_all_ids`, `catalog_effective_ids`. pcm (`containers`, `compose.yml`) and
+  pim (`images`, `image.yml`) are built on it; a new tool with definitions in sources uses it too.
+  One catalogue per process: a tool with two kinds loads one, uses it, then loads the other.
+
+### Messages, Debugging and the Log (lib/anfs/log.sh)
+
+Every tool says things through `anfs_info` (stdout), `anfs_warn`, `anfs_die`, `anfs_fail <code>`
+and `anfs_debug` (stderr, as `<tool>: <msg>`; the name is `$CLI_TOOL`). A tool's own `warn`/`die`
+are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
+
+- **`-d`/`--debug` and `--trace` come before the command** on every tool (`--json`, above, goes
+  anywhere) (`cli.sh` strips them in
+  `cli_dispatch`; a tool that looks at its arguments first calls `cli_globals`). `ppm` also takes
+  them after the command, with its other flags. Debugging is `ANFS_DEBUG` (every tool) or
+  `<TOOL>_DEBUG` (one); `-d` exports `ANFS_DEBUG`, so a tool run by a callback debugs too.
+- **The log is always written**: `~/.local/state/anfs/anfs.log`, one file for every tool, every
+  warn/error/debug line plus one `start:` line per invocation, whether or not `-d` is on. `anfs log
+  [-f] [tool]` prints or follows it. Past 1 MB it becomes `anfs.log.1`.
+- `ANFS_LOG=off` writes no file. Test helpers set it; a test that sources a tool's libraries
+  directly must source `log.sh` first (pim's and ppm's do), since the tool's `warn`/`die` call it.
 
 ## Key Files
 
@@ -560,12 +765,20 @@ command lives in the lib file for its area, next to its helpers:
 
 ```
 packages/anfs/home/.local/lib/anfs/     what every tool sources
+  bash.sh      # the bash floor (5.2): re-exec under a newer bash, or exit 69. Sourced first by
+               # every entry point, and the one file here that must run under bash 3.2
+  log.sh       # anfs_info/warn/die/fail/debug, the log file (anfs log), ANFS_DEBUG, ANFS_TRACE
+  callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
+  catalog.sh   # the definitions of one kind across the sources (pcm's services, pim's images):
+               # catalog_load, catalog_canon, catalog_all_ids
+  table.sh     # anfs_row, anfs_table (aligned on a terminal, tab-separated piped, --json),
+               # anfs_result, anfs_json_on
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),
                # anfs_load_conf (anfs.local.conf, anfs.conf; the environment wins)
   sources.sh   # gitsrc_*: source lists, clone/pull/link, status, provides, the `src` command;
                # anfs_gitsrc_env points it at anfs's lists
-  cli.sh       # the command line: cmd_<name> functions, cli_cmd registry (help and zsh
-               # completion are generated from it), cli_alias, cli_dispatch
+  cli.sh       # the command line: cli_cmd / cli_group declarations, and from them help, the
+               # check of the line (CLI_OPT), `__complete`, cli_call, anfs_confirm
   resolve.sh   # anfs_sources <dir>, anfs_find, anfs_list, anfs_resolve <dir> <deps_fn> (layered
                # topo sort with the same-or-lower-priority dependency rule; ANFS_RESOLVE_FIRST for
                # kinds that don't layer, ANFS_NAME_PARTS=2 for names that nest: wsm's <ws>/<space>)
@@ -584,22 +797,41 @@ packages/ppm/home/.local/lib/ppm/
   completion.sh  # completion
 ```
 
-Rules for `lib/anfs`: it only defines functions (and paths.sh its variables), depends on no tool
-(`debug` is used only if defined), takes its configuration from its own variables (`GITSRC_*`),
-and runs under bash 3.2 with `set -euo pipefail`. Every tool sources it from `~/.local/lib/anfs`
-and nowhere else.
+Rules for `lib/anfs`: it only defines functions (and paths.sh its variables), depends on no tool, takes its configuration from its own variables (`GITSRC_*`),
+and runs under `set -euo pipefail`. Every tool sources it from `~/.local/lib/anfs` and nowhere
+else.
 
-**Every tool's command line is `cli.sh`'s.** A command is a function named `cmd_<name>`; the tool
-registers each public one with `cli_cmd <name> "<usage>" "<summary>"` in the order its help lists
-them, and `cli_dispatch` runs it. Help and the zsh completion's command list are generated from
-that registry, so neither can drift from what exists. A `cmd_` function left unregistered still
-runs (plumbing such as `psm path`), and *only* `cmd_` functions run, so a tool's internals are
-never reachable from its command line — and a command can never shadow a system binary in package
-hooks (`install`, `file`). An extension registers its command where it defines it: `core/dev`'s
-`container.sh` calls `cli_cmd container ...` next to `cmd_container`. What stays each tool's own
-is how it parses its flags.
+**The bash floor is 5.2.** The tools and `lib/anfs` are written for it: associative arrays,
+`mapfile`, namerefs. macOS ships 3.2 and always will, so `lib/anfs/bash.sh` is what makes the
+floor true there, and every entry point sources it first, at top level, before anything else:
 
-Flags (`force`, `config`, `reinstall`, `skip_deps`, `yes`) are locals of `main()` that commands read through dynamic scoping.
+```bash
+source "$HOME/.local/lib/anfs/bash.sh"
+```
+
+- Under 5.2 or newer it does nothing. Under an older bash it re-execs the script with a newer one
+  found **by path** (`$HOMEBREW_PREFIX/bin/bash`, `/opt/homebrew/bin/bash`, `/usr/local/bin/bash`,
+  linuxbrew's), or exits 69 saying how to get one. Never `command -v bash`: the reason the guard
+  exists is that PATH puts `/bin` first in nested login shells and non-interactive ones (see Shell
+  Integration), so `env bash` finds 3.2 on a machine that has 5.
+- An entry point is anything that starts its own bash process: the six tools, pcm's edge
+  providers (`lib/pcm/edges/*`), the `pre-commit` hook. A library a tool sources needs no guard,
+  and neither does a package's `install.sh`: ppm sources it, so it runs under ppm's bash.
+- `anfs` and `ppm` source it only if it exists. `lib/anfs` is stowed file by file, so a pulled
+  source has the file before an install links it, and those two are what repair that.
+- **The bootstrap set stays on 3.2**: `install.sh`, the four ppm libraries it sources
+  (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`) and `bash.sh` itself.
+  They run on a vanilla Mac before Homebrew's bash exists, so no bash 4+ syntax in them. Each says
+  so in its header, and `packages/anfs/tests/bash.bats` parses them under `/bin/bash`. They may
+  call functions from bash 5 libraries, as long as that only happens once the real `ppm` runs.
+- Code that predates the floor (wsm, ppm's `packages.sh`, pim's `image.sh`) still uses parallel
+  arrays. Convert it when it is next changed, not for its own sake.
+- **Do not run `ppm install -r core/anfs`** to pick up a new `lib/anfs` file. `-r` removes the
+  package first, which unlinks `lib/anfs`, and ppm cannot run without it to put it back.
+
+**Every tool's command line is `cli.sh`'s**: see "The Command Line" above. An extension declares
+its commands where it defines them: `core/dev`'s `container.sh` calls `cli_group container` and
+`cli_cmd "container up" ...` next to `cmd_container_up`.
 
 Library sourcing in `ppm`: every `*.sh` in `$PPM_LIB_DIR` (`~/.local/lib/ppm/`) is
 sourced. That directory holds both ppm's own core libraries (stowed from `core/ppm`)
@@ -612,11 +844,14 @@ so they are present before `ppm` first runs.
 Unit tests are bats, no network (local bare repos over file://):
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh
+bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, bash.sh (the floor, the bootstrap set),
+                             # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
+                             # Run bats with </dev/null: pim's ssh stub reads stdin, and a test
+                             # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
-bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode
+bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
 bats packages/pim/tests      # pim: sources, templates, validate, qemu argv, build (qemu/ssh stubbed)
 ```
 
@@ -633,7 +868,7 @@ On macOS (Apple silicon), in a tart VM from `ppm vm build macos`'s vanilla base:
 ```
 packages/anfs/tests/roundtrip-macos [--all]
     # the same sequence on a Mac with no Homebrew or CLT: install.sh installs both. Checks the CLT,
-    # /opt/homebrew, a cask (acme/acme-mac), lib/anfs under /bin/bash 3.2, and with --all the
+    # /opt/homebrew, a cask (acme/acme-mac), the bash floor under /bin/bash, and with --all the
     # login-shell guard (stack/bash makes Homebrew's bash the login shell; implode --all refuses)
 ```
 

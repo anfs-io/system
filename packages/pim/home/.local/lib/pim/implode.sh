@@ -3,8 +3,7 @@
 # ~/.local/bin/pim; functions only.
 
 cmd_implode() {
-  local yes=false d dir
-  [[ "${1:-}" == "-y" || "${1:-}" == "--yes" ]] && yes=true
+  local yes=${CLI_OPT[yes]:-false} d dir
   {
     echo "pim implode removes:"
     for d in "$PIM_STATE_HOME"/run/*/; do

@@ -3,15 +3,7 @@
 # ~/.local/bin/pim; functions only.
 
 cmd_verify() {
-  local arch="" spec=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --arch) arch="${2:?--arch needs a value}"; shift ;;
-      -*) die "verify: unknown option '$1'" ;;
-      *) spec="$1" ;;
-    esac
-    shift
-  done
+  local arch="${CLI_OPT[arch]:-}" spec="${1:-}"
   [[ -n "$spec" ]] || die "Usage: pim verify [--arch A] <image>"
   local id
   id=$(canon_or_die "$spec")

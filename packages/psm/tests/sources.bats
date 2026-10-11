@@ -12,6 +12,7 @@ setup() {
   XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME PSM_CONFIG_HOME PPM_STATE_HOME
   export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+  export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
   mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources" "$T/bin"
   ln -s "$(cd "$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs" && pwd)" "$HOME/.local/lib/anfs"
 
@@ -52,8 +53,11 @@ psm() { "$PSM" "$@"; }
   skill acme bye
   run psm skills ls
   [ "$status" -eq 0 ]
-  [[ "$output" == *"missing  acme"*"bye"* ]]
-  [[ "$output" == *"missing  acme"*"hello"* ]]
+  [[ "$output" == *"missing"$'\t'"acme"$'\t'"bye"$'\t'* ]]
+  [[ "$output" == *"missing"$'\t'"acme"$'\t'"hello"$'\t'* ]]
+  run psm skills ls --json
+  run yq -p json -r '.[] | .status + " " + .config + " " + .skill' <<< "$output"
+  [ "${lines[0]}" = "missing acme bye" ]
 }
 
 @test "install source/: adds each of its skills for the detected agents" {

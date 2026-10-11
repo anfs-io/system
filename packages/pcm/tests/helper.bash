@@ -17,6 +17,16 @@ pcm_setup() {
   source "$ANFS_LIB/paths.sh"
   # shellcheck source=/dev/null
   source "$ANFS_LIB/sources.sh"
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB/catalog.sh"
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB/table.sh"
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB/log.sh"
+  export ANFS_LOG=off   # no log file from tests
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB/cli.sh"
+  CLI_TOOL=pcm
   anfs_gitsrc_env
   # Local sources are read where they are, so tests need no `anfs src update` to link them
   GITSRC_LINK_LOCAL=true

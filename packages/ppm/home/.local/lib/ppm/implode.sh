@@ -15,13 +15,7 @@
 #     passes it
 
 cmd_implode() {
-  local yes="${yes:-false}" arg
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      *) echo "Usage: ppm implode [-y]"; return 1 ;;
-    esac
-  done
+  local yes="${yes:-false}"
 
   local -a installed=()
   local tracker repo pkg
@@ -40,12 +34,7 @@ cmd_implode() {
   done
   echo "Kept: Homebrew, stow, yq, mise and system packages"
 
-  if ! $yes; then
-    [[ -t 0 ]] || { echo "ppm: implode deletes everything ppm installed; pass -y to confirm without a terminal"; return 1; }
-    local answer
-    read -r -p "Implode ppm? [y/N] " answer
-    [[ "$answer" == [yY]* ]] || { echo "Nothing removed"; return 1; }
-  fi
+  $yes || anfs_confirm "implode deletes everything ppm installed" "Implode ppm?"
 
   local -a order=()
   collect_repos

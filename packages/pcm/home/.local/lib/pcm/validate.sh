@@ -83,12 +83,12 @@ service_ports() {
 }
 
 v_error() {
-  echo "pcm: $1: error: $2" >&2
+  anfs_warn "$1: error: $2"
   VALIDATE_ERRORS=$((VALIDATE_ERRORS + 1))
 }
 
 v_warn() {
-  echo "pcm: $1: warning: $2" >&2
+  anfs_warn "$1: warning: $2"
 }
 
 # The service's env must resolve and pass its .env.schema
@@ -387,7 +387,7 @@ cmd_validate() {
   else
     for svc in "$@"; do
       if ! id=$(canon "$svc"); then
-        echo "pcm: unknown service '$svc'" >&2
+        anfs_warn "unknown service '$svc'"
         return 1
       fi
       services+=("$id")
@@ -401,7 +401,7 @@ cmd_validate() {
 
   export_podman_socket "${services[@]}"
   if ! validate_services "${services[@]}"; then
-    echo "pcm: validation failed with $VALIDATE_ERRORS error(s)" >&2
+    anfs_warn "validation failed with $VALIDATE_ERRORS error(s)"
     return 1
   fi
   echo "pcm: valid: ${services[*]}"

@@ -6,11 +6,21 @@
 setup() {
   local lib="$BATS_TEST_DIRNAME/../home/.local/lib/ppm"
 
-  ANFS_SOURCES_HOME="$BATS_TEST_TMPDIR/sources"
-  PPM_INSTALLED_DIR="$BATS_TEST_TMPDIR/state/installed"
-  mkdir -p "$PPM_INSTALLED_DIR"
+  local anfs="$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs"
 
+  ANFS_SOURCES_HOME="$BATS_TEST_TMPDIR/sources"
+  PPM_STATE_HOME="$BATS_TEST_TMPDIR/state"
+  PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
+  export ANFS_STATE_HOME="$BATS_TEST_TMPDIR/state/anfs"
+  REGISTRATIONS="$ANFS_STATE_HOME/callbacks/ppm.yml"
+  mkdir -p "$PPM_INSTALLED_DIR"
+  export ANFS_LOG=off
+  CLI_TOOL=ppm
+
+  # The mechanism is anfs's; ppm's part is the wrappers in core.sh and installer.sh
   # shellcheck source=/dev/null
+  source "$anfs/log.sh"
+  source "$anfs/callbacks.sh"
   source "$lib/core.sh"
   source "$lib/packages.sh"
   source "$lib/installer.sh"
@@ -40,16 +50,16 @@ register() {
   register ai/psm psm_changed
   register pde/other other_changed
 
-  run yq -r '.["ai/psm"]' "$PPM_INSTALLED_DIR/callbacks.yml"
+  run yq -r '.["ai/psm"]' "$REGISTRATIONS"
   [ "$output" = "psm_changed" ]
-  run yq -r 'keys | length' "$PPM_INSTALLED_DIR/callbacks.yml"
+  run yq -r 'keys | length' "$REGISTRATIONS"
   [ "$output" = "2" ]
 }
 
 @test "register outside a package hook fails" {
   PPM_CURRENT_PACKAGE="" run ppm_register_callback fn
   [ "$status" -eq 1 ]
-  [ ! -f "$PPM_INSTALLED_DIR/callbacks.yml" ]
+  [ ! -f "$REGISTRATIONS" ]
 }
 
 @test "unregister drops only that package" {
@@ -57,8 +67,36 @@ register() {
   register pde/other b
   PPM_CURRENT_PACKAGE=ai/psm ppm_unregister_callback
 
-  run yq -r 'keys | .[]' "$PPM_INSTALLED_DIR/callbacks.yml"
+  run yq -r 'keys | .[]' "$REGISTRATIONS"
   [ "$output" = "pde/other" ]
+}
+
+@test "registrations in the old place are moved once, and used" {
+  subscriber ai psm psm_changed
+  printf 'ai/psm: psm_changed\n' > "$PPM_INSTALLED_DIR/callbacks.yml"
+
+  _run_callbacks install ai/pi
+
+  [ ! -e "$PPM_INSTALLED_DIR/callbacks.yml" ]
+  run yq -r '.["ai/psm"]' "$REGISTRATIONS"
+  [ "$output" = "psm_changed" ]
+  run cat "$CALLS"
+  [ "$output" = "ai/psm install ai/pi" ]
+}
+
+@test "a callback that exits is reported like one that fails" {
+  subscriber ai psm a
+  subscriber pde other c
+  echo 'a() { exit 4; }' >> "$ANFS_SOURCES_HOME/ai/packages/psm/install.sh"
+  register ai/psm a
+  register pde/other c
+
+  _run_callbacks install ai/pi 2>/dev/null
+
+  run cat "$CALLS"
+  [ "$output" = "pde/other install ai/pi" ]
+  run messages
+  [[ "$output" == *"[ai/psm] ERROR: callback 'a' failed"* ]]
 }
 
 @test "callbacks get the event and every package, as their own package" {

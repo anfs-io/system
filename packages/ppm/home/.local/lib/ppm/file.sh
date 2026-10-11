@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # File ownership — take individual files out of ppm's management
 #
+# BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
+# 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
+#
 # `ppm file claim` copies a stowed file into your own repo/package and stows it from there.
 # `ppm file add` is claim for files no package owns yet, with the target named up front.
 # `ppm file reset` removes the copy and restores the original package's link.

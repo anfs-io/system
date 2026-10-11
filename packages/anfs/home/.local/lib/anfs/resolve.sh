@@ -12,7 +12,7 @@
 # holding <dir>/ count for a tool, and their position in that filtered list is what layering and
 # the dependency rule compare: a dependency resolves to the same or a lower-priority source.
 #
-# Requires sources.sh. Functions only; bash 3.2-safe.
+# Requires sources.sh. Functions only; written for the bash floor (5.2, see bash.sh).
 
 # The word for one resource of a kind, for messages
 anfs_kind() {
@@ -32,7 +32,7 @@ anfs_sources() {
   local tld="$1" i name dir
   ANFS_SRC_NAMES=() ANFS_SRC_DIRS=()
   gitsrc_collect
-  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
+  for i in "${!GITSRC_NAMES[@]}"; do
     name="${GITSRC_NAMES[$i]}"
     dir=$(gitsrc_dir "$name")
     [[ -d "$dir/$tld" ]] || continue
@@ -45,7 +45,7 @@ anfs_sources() {
 # Usage: anfs_is_source <name>
 anfs_is_source() {
   local n
-  for n in ${ANFS_SRC_NAMES[@]+"${ANFS_SRC_NAMES[@]}"}; do
+  for n in "${ANFS_SRC_NAMES[@]}"; do
     [[ "$n" == "$1" ]] && return 0
   done
   return 1
@@ -58,7 +58,7 @@ anfs_list() {
   local tld="$1" i name want entry
   shift
   want=" $* "
-  for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
+  for i in "${!ANFS_SRC_NAMES[@]}"; do
     name="${ANFS_SRC_NAMES[$i]}"
     [[ $# -eq 0 || "$want" == *" $name "* ]] || continue
     for entry in "${ANFS_SRC_DIRS[$i]}/$tld"/*/; do
@@ -88,7 +88,7 @@ anfs_find() {
   _anfs_split "$spec"
   src="$_ANFS_SRC" name="$_ANFS_NAME"
   [[ -n "$name" ]] || return 1
-  for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
+  for i in "${!ANFS_SRC_NAMES[@]}"; do
     [[ $i -lt $min ]] && continue
     [[ -n "$src" && "${ANFS_SRC_NAMES[$i]}" != "$src" ]] && continue
     if [[ -d "${ANFS_SRC_DIRS[$i]}/$tld/$name" ]]; then
@@ -120,7 +120,8 @@ anfs_resolve() {
   local tld="$1" deps_fn="$2" spec
   shift 2
   ANFS_ORDER=() ANFS_ORDER_DIRS=()
-  _ANFS_RESOLVED=$'\n' _ANFS_RESOLVING=$'\n'
+  # source/name -> 1: what is already ordered, and what is on the current dependency path
+  declare -gA _ANFS_RESOLVED=() _ANFS_RESOLVING=()
   for spec in "$@"; do
     _anfs_resolve_one "$tld" "$deps_fn" "$spec" 0
   done
@@ -139,31 +140,34 @@ _anfs_resolve_one() {
   [[ "${ANFS_RESOLVE_FIRST:-false}" == true ]] && matches="${matches%%$'\n'*}"
 
   local -a names=() dirs=() idxs=()
+  local -A group=()
   while IFS=$'\t' read -r idx src dir; do
     [[ -n "$idx" ]] || continue
     qualified="$src/$name"
-    [[ "$_ANFS_RESOLVED" == *$'\n'"$qualified"$'\n'* ]] && continue
-    if [[ "$_ANFS_RESOLVING" == *$'\n'"$qualified"$'\n'* ]]; then
+    [[ -n "${_ANFS_RESOLVED[$qualified]:-}" ]] && continue
+    if [[ -n "${_ANFS_RESOLVING[$qualified]:-}" ]]; then
       echo "Error: circular dependency: $qualified" >&2
       exit 1
     fi
-    _ANFS_RESOLVING="$_ANFS_RESOLVING$qualified"$'\n'
+    _ANFS_RESOLVING[$qualified]=1 group[$qualified]=1
     names+=("$qualified") dirs+=("$dir") idxs+=("$idx")
   done <<< "$matches"
   [[ ${#names[@]} -gt 0 ]] || return 0
 
   local i dep
+  local -a deps
   for i in "${!names[@]}"; do
-    while IFS= read -r dep; do
+    mapfile -t deps < <("$deps_fn" "${dirs[$i]}")
+    for dep in "${deps[@]}"; do
       [[ -n "$dep" ]] || continue
       [[ "$dep" == "$name" ]] && continue
-      printf '%s\n' "${names[@]}" | grep -qxF -- "$dep" && continue
+      [[ -n "${group[$dep]:-}" ]] && continue
       _anfs_resolve_one "$tld" "$deps_fn" "$dep" "${idxs[$i]}"
-    done < <("$deps_fn" "${dirs[$i]}")
+    done
   done
 
   for i in "${!names[@]}"; do
-    _ANFS_RESOLVED="$_ANFS_RESOLVED${names[$i]}"$'\n'
+    _ANFS_RESOLVED[${names[$i]}]=1
     ANFS_ORDER+=("${names[$i]}")
     ANFS_ORDER_DIRS+=("${dirs[$i]}")
   done

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # core/dev — adds `ppm hooks`: wire ppm's git hooks into the package repos
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_hooks() is the command `ppm hooks`
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm: the `ppm hooks` commands are declared below
 #
 # Each repo gets core.hooksPath pointed at the stowed hook directory, set per repo. It is never
 # set globally: a global core.hooksPath applies to every repo on the machine AND suppresses each
@@ -10,38 +10,19 @@
 
 PPM_HOOKS_DIR="$XDG_CONFIG_HOME/git/ppm-hooks"
 
-cli_cmd hooks "hooks [install|uninstall] [--all] [repo...]" "Wire the package-versioning git hooks into the source repos"
+cli_group hooks "The package-versioning git hooks, wired into the source repos. Without
+names: the repos in system.list. Hooks are not carried by git clone,
+so install is re-run after 'anfs src add'."
+cli_cmd "hooks status" "Which repos are wired up" \
+  --opt "--all: Your user.list repos too" --arg "[source...]"
+cli_cmd "hooks install" "Point each repo's core.hooksPath at the hooks" \
+  --opt "--all: Your user.list repos too" --arg "[source...]"
+cli_cmd "hooks uninstall" "Unset it again (only where ppm set it)" \
+  --opt "--all: Your user.list repos too" --arg "[source...]"
 
-cmd_hooks() {
-  local subcommand="${1:-status}"
-  shift 2>/dev/null || true
-
-  local all=false repos=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --all) all=true ;;
-      -*) echo "Unknown flag: $1"; return 1 ;;
-      *) repos+=("$1") ;;
-    esac
-    shift
-  done
-
-  case "$subcommand" in
-    install)   _hooks_apply set "$all" ${repos[@]+"${repos[@]}"} ;;
-    uninstall) _hooks_apply unset "$all" ${repos[@]+"${repos[@]}"} ;;
-    status)    _hooks_status "$all" ${repos[@]+"${repos[@]}"} ;;
-    *)
-      echo "Usage: ppm hooks <command> [--all] [repo...]"
-      echo "  install [--all] [repo...]    Point each repo's core.hooksPath at $PPM_HOOKS_DIR"
-      echo "  uninstall [--all] [repo...]  Unset it again (only where ppm set it)"
-      echo "  status [--all] [repo...]     Show which repos are wired up (default)"
-      echo ""
-      echo "Without repo names: the repos in system.list. --all adds your user.list repos."
-      echo "Hooks are not carried by git clone, so this is re-run after 'anfs src add'."
-      [[ "$subcommand" == "help" ]] || return 1
-      ;;
-  esac
-}
+cmd_hooks_status()    { _hooks_status "${CLI_OPT[all]:-false}" "$@"; }
+cmd_hooks_install()   { _hooks_apply set "${CLI_OPT[all]:-false}" "$@"; }
+cmd_hooks_uninstall() { _hooks_apply unset "${CLI_OPT[all]:-false}" "$@"; }
 
 # Repo aliases listed in one source-list file (the format collect_repos reads)
 _hooks_aliases_in() {
@@ -79,7 +60,7 @@ _hooks_apply() {
   local alias dir current changed=0
 
   if [[ "$action" == set && ! -d "$PPM_HOOKS_DIR" ]]; then
-    echo "Error: $PPM_HOOKS_DIR does not exist (is core/dev installed?)"
+    anfs_warn "$PPM_HOOKS_DIR does not exist (is core/dev installed?)"
     return 1
   fi
 

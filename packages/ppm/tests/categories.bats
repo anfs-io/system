@@ -20,6 +20,11 @@ setup() {
   # shellcheck source=/dev/null
   source "$anfs/sources.sh"
   source "$anfs/resolve.sh"
+  # cmd_list reads its options from cli.sh's CLI_OPT
+  source "$anfs/cli.sh"
+  source "$anfs/log.sh"
+  export ANFS_LOG=off
+  CLI_TOOL=ppm
   source "$lib/core.sh"
   source "$lib/platform.sh"
   source "$lib/packages.sh"
@@ -55,6 +60,14 @@ pkg() {
   [ "$output" = "$(printf 'stack/git\nstack/herdr')" ]
   run cmd_list @nope
   [ -z "$output" ]
+}
+
+@test "list refuses an option it does not take" {
+  cli_cmd list "Packages" --opt "--installed: Only what is installed" --arg "[filter]"
+  run cli_call list --bogus
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"ppm: unknown option '--bogus'"* ]]
+  [[ "$output" == *"ppm: usage: ppm list [--installed] [filter]"* ]]
 }
 
 @test "list @: each category once, with its number of names" {

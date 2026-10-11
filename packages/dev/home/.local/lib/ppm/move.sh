@@ -24,33 +24,18 @@ _move_usage() {
   echo "  -f, --force   move despite uncommitted changes or a broken dependency"
 }
 
-cli_cmd move "move <repo/package> <target-repo>" "Move a package to another source repo (trackers, claims and commits too)"
+cli_cmd move "Move a package (repo/package) to another source repo: trackers, claims and
+commits too" --opt "-f --force: Despite uncommitted changes or a broken dependency" \
+  --arg "package" --arg "source"
 
 cmd_move() {
-  local args=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --force) force=true ;;
-      -*) echo "Unknown flag: $1"; _move_usage; return 1 ;;
-      *) args+=("$1") ;;
-    esac
-    shift
-  done
-
-  if [[ ${#args[@]} -eq 0 ]]; then
-    _move_usage
-    return 0
-  fi
-  if [[ ${#args[@]} -ne 2 ]]; then
-    _move_usage
-    return 1
-  fi
+  local args=("$@")
 
   local spec="${args[0]}" target="${args[1]%/}"
 
   # A bare name is ambiguous: it can match a layer in every repo
   if [[ "$spec" != */* ]]; then
-    echo "Error: move needs a fully qualified package, e.g. <repo>/$spec"
+    anfs_warn "move needs a fully qualified package, e.g. <repo>/$spec"
     return 1
   fi
   local src_repo="${spec%%/*}" pkg="${spec##*/}"
@@ -61,24 +46,24 @@ cmd_move() {
   local src_root="$ANFS_SOURCES_HOME/$src_repo" target_root="$ANFS_SOURCES_HOME/$target"
   local src_dir="$src_root/packages/$pkg" dst_dir="$target_root/packages/$pkg"
 
-  [[ -d "$src_dir" ]] || { echo "Error: package '$spec' not found"; return 1; }
-  [[ "$target" != "$src_repo" ]] || { echo "Error: $pkg is already in $target"; return 1; }
+  [[ -d "$src_dir" ]] || { anfs_warn "package '$spec' not found"; return 1; }
+  [[ "$target" != "$src_repo" ]] || { anfs_warn "$pkg is already in $target"; return 1; }
 
   if [[ "$(gitsrc_index "$target")" -ge 9999 ]]; then
-    echo "Error: '$target' is not a configured source (see 'anfs src list')"
+    anfs_warn "'$target' is not a configured source (see 'anfs src list')"
     return 1
   fi
   if [[ ! -d "$target_root" ]]; then
-    echo "Error: $target_root does not exist; run 'anfs src update $target' first"
+    anfs_warn "$target_root does not exist; run 'anfs src update $target' first"
     return 1
   fi
   # -f must never overwrite package sources
   if [[ -e "$dst_dir" ]]; then
-    echo "Error: $target/$pkg already exists; remove or rename it first"
+    anfs_warn "$target/$pkg already exists; remove or rename it first"
     return 1
   fi
   if [[ "$src_repo/$pkg" == core/anfs || "$src_repo/$pkg" == core/ppm ]] && ! ${force:-false}; then
-    echo "Error: $src_repo/$pkg is a base package — install.sh stows it from $PPM_REPO_DIR (use -f to override)"
+    anfs_warn "$src_repo/$pkg is a base package — install.sh stows it from $PPM_REPO_DIR (use -f to override)"
     return 1
   fi
 
@@ -90,7 +75,7 @@ cmd_move() {
     if ${force:-false}; then
       echo "Uncommitted changes in ${dirty[*]}; committing only packages/$pkg (-f)"
     else
-      echo "Error: uncommitted changes in: ${dirty[*]}"
+      anfs_warn "uncommitted changes in: ${dirty[*]}"
       echo "Commit or stash them, or pass -f (only packages/$pkg is then committed)"
       return 1
     fi
@@ -127,7 +112,7 @@ cmd_move() {
 
   mkdir -p "$target_root/packages"
   if ! mv "$src_dir" "$dst_dir"; then
-    echo "Error: failed to move $src_dir to $dst_dir"
+    anfs_warn "failed to move $src_dir to $dst_dir"
     $installed && _move_rollback_stow "$src_repo" "$pkg" "$src_dir" || true
     flush_user_messages
     return 1
@@ -140,7 +125,7 @@ cmd_move() {
     rmdir "$PPM_INSTALLED_DIR/$src_repo" 2>/dev/null || true
 
     if ! _move_restow "$target" "$pkg" "$dst_dir"; then
-      echo "Error: failed to stow $target/$pkg; rolling back"
+      anfs_warn "failed to stow $target/$pkg; rolling back"
       mv "$dst_dir" "$src_dir"
       mkdir -p "$PPM_INSTALLED_DIR/$src_repo"
       mv "$dst_tracker" "$src_tracker"

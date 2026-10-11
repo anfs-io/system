@@ -82,7 +82,6 @@ dependents_of_disk() {
 }
 
 cmd_show() {
-  [[ $# -gt 0 ]] || die "Usage: pim show <image>"
   local id name arch chain i f key
   id=$(canon_or_die "$1")
   name=$(img_name "$id")
@@ -118,18 +117,10 @@ cmd_show() {
 }
 
 # `pim rm [-y] [-f] <image>...`: stop and delete the VM and every build; the definition stays
-cmd_rm() {
-  local yes=false force=false arg name d dep
+cmd_remove() {
+  local yes=${CLI_OPT[yes]:-false} force=${CLI_OPT[force]:-false} arg name d dep
   local -a names=()
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      -f|--force) force=true ;;
-      -*) die "rm: unknown option '$arg'" ;;
-      *) names+=("$(img_name "$(canon "$arg" || echo "x/$arg")")") ;;
-    esac
-  done
-  [[ ${#names[@]} -gt 0 ]] || die "Usage: pim rm [-y] [-f] <image>..."
+  for arg in "$@"; do names+=("$(img_name "$(canon "$arg" || echo "x/$arg")")"); done
   for name in "${names[@]}"; do
     for d in "$PIM_DATA_HOME/images/$name"/*/*.qcow2; do
       [[ -f "$d" ]] || continue
@@ -152,8 +143,7 @@ cmd_rm() {
 # `pim clean [--isos]`: delete superseded build disks no other build is based on, stale build
 # workspaces, and with --isos the ISO cache
 cmd_clean() {
-  local isos=false f dir key d freed=0
-  [[ "${1:-}" == "--isos" ]] && isos=true
+  local isos=${CLI_OPT[isos]:-false} f dir key d freed=0
   for f in "$PIM_DATA_HOME"/images/*/*/meta.yml; do
     [[ -f "$f" ]] || continue
     dir=$(dirname "$f")

@@ -88,7 +88,7 @@ setup() {
   grep -q "qemu-img create -q -f qcow2 -b $PIM_DATA_HOME/images/d/arm64/$pkey.qcow2 -F qcow2" "$PIM_CALLS"
   [ "$(meta_get c arm64 .parent.id)" = local/d ]
   [ -n "$(dependents_of_disk "$PIM_DATA_HOME/images/d/arm64/$pkey.qcow2")" ]
-  run cmd_rm -y d
+  run cli_call remove -y d
   [ "$status" -ne 0 ]
   [[ "$output" == *"c/arm64 is built on d"* ]]
 }

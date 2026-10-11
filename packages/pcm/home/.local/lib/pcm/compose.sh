@@ -34,14 +34,14 @@ compose_command() {
     done
     export_podman_socket "${CLOSURE[@]}"
     if ! validate_services "${CLOSURE[@]}"; then
-      echo "pcm: not starting ${services[*]}: validation failed with $VALIDATE_ERRORS error(s)" >&2
+      anfs_warn "not starting ${services[*]}: validation failed with $VALIDATE_ERRORS error(s)"
       return 1
     fi
     # Nothing elevated starts unannounced: each privilege, with the reason it was declared
     local key reason
     for arg in "${CLOSURE[@]}"; do
       while IFS='|' read -r key reason; do
-        [[ -n "$key" ]] && echo "pcm: $arg runs with $key: $reason" >&2
+        [[ -n "$key" ]] && anfs_warn "$arg runs with $key: $reason"
       done < <(declared_privileges "$arg")
     done
   fi
@@ -66,8 +66,8 @@ compose_command() {
       [[ "$NAMED" == *" $arg "* ]] || dependents+=("$arg")
     done
     if [[ ${#dependents[@]} -gt 0 && "$force" != true ]]; then
-      echo "pcm: not stopping ${services[*]}: running services depend on it: ${dependents[*]}" >&2
-      echo "pcm: stop those first, or pass --force to stop them before ${services[*]}" >&2
+      anfs_warn "not stopping ${services[*]}: running services depend on it: ${dependents[*]}"
+      anfs_warn "stop those first, or pass --force to stop them before ${services[*]}"
       return 1
     fi
 
@@ -90,7 +90,7 @@ compose_command() {
       ensure_mount_dirs "$service"
     elif [[ "$subcmd" == "down" && "$NAMED" != *" $service "* ]]; then
       # Options like -v apply only to the services the user named
-      echo "pcm: stopping dependent service $service" >&2
+      anfs_warn "stopping dependent service $service"
       service_args=()
     fi
     compose_flags "$service" || { rc=1; continue; }
@@ -98,7 +98,7 @@ compose_command() {
       rc=$?
       # An orderly shutdown stops at the first failure
       if [[ "$subcmd" == "down" ]]; then
-        echo "pcm: failed to stop $service; not stopping the rest" >&2
+        anfs_warn "failed to stop $service; not stopping the rest"
         return $rc
       fi
     }
@@ -118,7 +118,7 @@ compose_wrapper() {
   done
 
   if [[ $# -eq 0 || "$named" == false ]]; then
-    echo "pcm: --pcm given but no pcm service named; running plain ${RUNNER[*]}" >&2
+    anfs_warn "--pcm given but no pcm service named; running plain ${RUNNER[*]}"
     exec "${RUNNER[@]}" ${PRE[@]+"${PRE[@]}"} "$@"
   fi
 
@@ -126,4 +126,7 @@ compose_wrapper() {
 }
 
 cmd_up()   { compose_command up "$@"; }
-cmd_down() { compose_command down "$@"; }
+cmd_down() {
+  # --force is pcm's (dependents stop first), read by compose_command among the arguments
+  if ${CLI_OPT[force]:-false}; then compose_command down --force "$@"; else compose_command down "$@"; fi
+}

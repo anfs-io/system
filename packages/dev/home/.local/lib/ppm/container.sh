@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # core/dev — adds `ppm container`: disposable Linux boxes for testing anfs installs
-# Stowed to ~/.local/lib/ppm/ and sourced by ppm, so cmd_container() is the command `ppm container`
+# Stowed to ~/.local/lib/ppm/ and sourced by ppm: the `ppm container` commands are declared below
 #
 # The boxes are pcm services, the anfs repo's containers/anfs-test-<distro> definitions: pcm runs
 # them (privileged, declared, so podman works inside), mounts every anfs source read-only at
@@ -15,49 +15,46 @@
 
 PPM_CONTAINER_INSTALLER_URL=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh
 
-cli_cmd container "container <command> <distro> [...]" "Disposable Linux boxes for testing anfs installs (pcm services)"
+cli_group container "Disposable Linux boxes for testing anfs installs (pcm services).
+Users: owner (sudo, password 'owner'), other (no sudo). Sources are
+mounted read-only, so commands that write into a source fail."
+cli_cmd "container list" "The boxes and their snapshots" --alias ls
+cli_cmd "container build" "Build the box's image (up builds it when missing); options go to podman build" \
+  --passthrough --arg "distro"
+cli_cmd "container up" "Start it: pcm up anfs-test-<distro>" --alias start --arg "distro"
+cli_cmd "container down" "Stop it" --alias stop --arg "distro"
+cli_cmd "container shell" "Login shell as a test user (owner or other)" --arg "distro" --arg "[user]"
+cli_cmd "container install" "Run install.sh from the working tree: [owner|other] [--pushed] [installer args]
+(--pushed: from GitHub)" --passthrough --arg "distro" --arg "[word...]"
+cli_cmd "container snapshot" "Save the box (no name lists its snapshots)" --arg "distro" --arg "[snapshot]"
+cli_cmd "container reset" "Recreate it from a snapshot, or from scratch" --arg "distro" --arg "[snapshot]"
+cli_cmd "container remove" "Remove it and its snapshots" --alias rm --arg "distro"
 
-cmd_container() {
-  local subcommand="${1:-}"
-  shift 2>/dev/null || true
+_container_pcm() {
+  command -v pcm >/dev/null 2>&1 || { echo "ppm container needs pcm (ppm install core/anfs)" >&2; exit 1; }
+}
+cmd_container_list()     { _container_pcm; _container_list; }
+cmd_container_build()    { _container_pcm; _container_distro "$1" && podman build -t "localhost/anfs-test-$1" "${@:2}" "$(pcm path "anfs-test-$1")"; }
+cmd_container_up()       { _container_pcm; _container_distro "$1" && pcm up "anfs-test-$1"; }
+cmd_container_down()     { _container_pcm; _container_distro "$1" && pcm down "anfs-test-$1"; }
+cmd_container_shell()    { _container_pcm; _container_distro "$1" && _container_user "${2:-owner}" && pcm shell "anfs-test-$1" -u "${2:-owner}"; }
+cmd_container_install()  { _container_pcm; _container_install "$@"; }
+cmd_container_snapshot() { _container_pcm; _container_distro "$1" && pcm snapshot "anfs-test-$1" ${2:+"$2"}; }
+cmd_container_reset()    { _container_pcm; _container_distro "$1" && pcm reset -y "anfs-test-$1" ${2:+"$2"}; }
+cmd_container_remove()   { _container_pcm; _container_distro "$1" && pcm remove -y "anfs-test-$1"; }
 
-  if [[ -n "$subcommand" && "$subcommand" != "help" ]] && ! command -v pcm >/dev/null 2>&1; then
-    echo "ppm container needs pcm (ppm install core/anfs)"
-    return 1
-  fi
-
-  case "$subcommand" in
-    build)    _container_distro "${1:-}" && podman build -t "localhost/anfs-test-$1" "${@:2}" "$(pcm path "anfs-test-$1")" ;;
-    start)    _container_distro "${1:-}" && pcm up "anfs-test-$1" ;;
-    shell)    _container_distro "${1:-}" && _container_user "${2:-owner}" && pcm shell "anfs-test-$1" -u "${2:-owner}" ;;
-    install)  _container_install "$@" ;;
-    snapshot) _container_distro "${1:-}" && pcm snapshot "anfs-test-$1" ${2:+"$2"} ;;
-    reset)    _container_distro "${1:-}" && pcm reset -y "anfs-test-$1" ${2:+"$2"} ;;
-    stop)     _container_distro "${1:-}" && pcm down "anfs-test-$1" ;;
-    rm)       _container_distro "${1:-}" && pcm remove -y "anfs-test-$1" ;;
-    list)     _container_list ;;
-    *)
-      echo "Usage: ppm container <command> <distro> [...]"
-      echo "  build <distro> [podman build args]   Build the box's image (start builds it when missing)"
-      echo "  start <distro>                       Start it: pcm up anfs-test-<distro>"
-      echo "  shell <distro> [owner|other]         Login shell as a test user"
-      echo "  install <distro> [owner|other] [--pushed] [installer args]"
-      echo "                                       Run install.sh from the working tree (--pushed: from GitHub)"
-      echo "  snapshot <distro> [name]             Save the box (no name lists its snapshots)"
-      echo "  reset <distro> [snapshot]            Recreate it from a snapshot, or from scratch"
-      echo "  stop <distro> | rm <distro>          Stop it, or remove it and its snapshots"
-      echo "  list                                 The boxes and their snapshots"
-      echo ""
-      echo "Distros: $(_container_distros)"
-      echo "Users: owner (sudo, password 'owner'), other (no sudo)"
-      echo "Sources are mounted read-only, so commands that write into a source (file claim) fail."
-      [[ -z "$subcommand" || "$subcommand" == "help" ]] || exit 1
-      ;;
-  esac
+# What cli.sh asks for on a tab press: the boxes, from the definitions' names
+complete_distro() {
+  local d
+  for d in "$ANFS_SOURCES_HOME"/*/containers/anfs-test-*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/anfs-test-}"
+  done | sort -u
 }
 
 _container_distros() {
-  pcm list --names 2>/dev/null | sed -n 's/^anfs-test-//p' | sort -u | paste -sd ' ' -
+  pcm list --json 2>/dev/null | yq -p json -r '.[].name' 2>/dev/null | sed -n 's/^anfs-test-//p' | sort -u | paste -sd ' ' -
 }
 
 _container_distro() {

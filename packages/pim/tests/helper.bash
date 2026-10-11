@@ -5,6 +5,7 @@
 setup_pim() {
   T="$BATS_TEST_TMPDIR"
   export HOME="$T/home"
+  export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
   export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
   export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME
@@ -18,7 +19,8 @@ setup_pim() {
   local lib="$BATS_TEST_DIRNAME/../home/.local/lib/pim"
   local anfs="$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs"
   # shellcheck source=/dev/null
-  source "$anfs/paths.sh"; source "$anfs/sources.sh"; source "$anfs/cli.sh"
+  source "$anfs/paths.sh"; source "$anfs/log.sh"; source "$anfs/sources.sh"; source "$anfs/catalog.sh"; source "$anfs/cli.sh"; source "$anfs/table.sh"
+  CLI_TOOL=pim
   anfs_tool_paths pim
   anfs_gitsrc_env
   PIM_IMAGES_HOME="$PIM_CONFIG_HOME/images" PIM_LOCAL_SOURCE=local PIM_LIB_DIR="$lib"

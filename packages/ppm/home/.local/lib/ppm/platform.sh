@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Platform: OS/distro detection, and Homebrew's location and ownership
 #
+# BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
+# 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
+#
 # Homebrew supports one owner per installation. The owner installs and upgrades formulas;
 # other users run the tools but never write to the prefix.
 

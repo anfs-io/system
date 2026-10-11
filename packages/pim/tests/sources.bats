@@ -14,12 +14,17 @@ setup() { setup_pim; }
   [ "$(canon acme/web)" = acme/web ]
   [ "$(canon db)" = acme/db ]
   run cmd_list
-  [[ "$output" == *"web   local"* ]]
-  [[ "$output" == *"shadowed"* ]]
+  [[ "$output" == *"web"$'\t'"local"$'\t'"-"* ]]
+  [[ "$output" == *"web"$'\t'"acme"$'\t'"shadowed"* ]]
+  ANFS_JSON=true run cmd_list
+  run yq -p json -r '.[] | select(.status == "shadowed") | .name + "@" + .source' <<< "$output"
+  [ "$output" = "web@acme" ]
   run cmd_path acme/db
   [ "$output" = "$HOME/.local/share/anfs/sources/acme/images/db" ]
-  run cmd_list --names
-  [[ "$output" == *"acme/db"* && "$output" == *$'\nweb'* ]]
+  run cli_call list --names
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"pim: unknown option '--names'"* ]]
+  [[ "$output" == *"pim: usage: pim list"* ]]
 }
 
 @test "from: resolves in the same or a lower-priority source, never a higher one" {

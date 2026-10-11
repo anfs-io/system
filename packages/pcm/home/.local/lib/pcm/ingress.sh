@@ -157,7 +157,7 @@ ingress_labels() {
   proxy=$(active_proxy) || return 0
   has_hook labels "$proxy" || return 0
   if ! out=$(run_hook labels "$svc" "$proxy" "$proxy"); then
-    echo "pcm: $(svc_name "$proxy")'s labels hook failed for $(svc_name "$svc"); it will not be routed" >&2
+    anfs_warn "$(svc_name "$proxy")'s labels hook failed for $(svc_name "$svc"); it will not be routed"
     return 0
   fi
   while IFS= read -r line; do

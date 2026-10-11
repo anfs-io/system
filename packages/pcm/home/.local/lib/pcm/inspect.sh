@@ -13,9 +13,7 @@ pcm_containers() {
 }
 
 # $HOME shown as ~
-tilde() {
-  echo "${1/#$HOME/~}"
-}
+tilde() { anfs_display "$1"; }
 
 # `pcm ps [service...] [podman ps flags]`: podman ps limited to pcm's containers, or to the
 # named services' (by name, whichever definition started them)
@@ -37,7 +35,7 @@ cmd_ps() {
     done < <(podman ps -aq --filter "label=$PCM_LABEL_NAME=$arg")
   done
   if [[ ${#filters[@]} -eq 0 ]]; then
-    echo "pcm: no containers for ${names[*]}" >&2
+    anfs_warn "no containers for ${names[*]}"
     return 0
   fi
   exec podman ps "${filters[@]}" ${flags[@]+"${flags[@]}"}
@@ -69,13 +67,9 @@ ids_with_state() {
 # `pcm show <service>`: the definition, its dependencies, data, and its containers with ports and
 # mounts; when nothing is created yet, the ports and mounts it declares
 cmd_show() {
-  if [[ $# -ne 1 ]]; then
-    echo "Usage: pcm show <service>" >&2
-    return 1
-  fi
   local id
   if ! id=$(canon "$1"); then
-    echo "pcm: unknown service '$1' (see: pcm list)" >&2
+    anfs_warn "unknown service '$1' (see: pcm list)"
     return 1
   fi
 

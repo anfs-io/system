@@ -4,17 +4,7 @@
 # `pim publish [-c] [-o path] [--arch A] <image>`: flatten the build (and any from: chain under
 # it) into a single qcow2, optionally compressed, plus its UEFI vars for arm64
 cmd_publish() {
-  local compress=false out="" arch="" spec=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -c|--compress) compress=true ;;
-      -o) out="${2:?-o needs a path}"; shift ;;
-      --arch) arch="${2:?--arch needs a value}"; shift ;;
-      -*) die "publish: unknown option '$1'" ;;
-      *) spec="$1" ;;
-    esac
-    shift
-  done
+  local compress=${CLI_OPT[compress]:-false} out="${CLI_OPT[output]:-}" arch="${CLI_OPT[arch]:-}" spec="${1:-}"
   [[ -n "$spec" ]] || die "Usage: pim publish [-c] [-o path] [--arch A] <image>"
   local id name disk key
   id=$(canon_or_die "$spec")

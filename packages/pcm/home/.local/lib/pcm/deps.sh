@@ -75,7 +75,7 @@ provision() {
   local service="$1" dep="$2" spec="$3" output line
   has_hook provision "$dep" || return 0
   output=$(run_hook provision "$service" "$dep" "$spec") || {
-    echo "pcm: provisioning $dep for $service failed" >&2
+    anfs_warn "provisioning $dep for $service failed"
     return 1
   }
 
@@ -102,7 +102,7 @@ start_deps() {
   local spec dep
 
   if [[ " $chain " == *" $service "* ]]; then
-    echo "pcm: dependency cycle:$chain $service" >&2
+    anfs_warn "dependency cycle:$chain $service"
     return 1
   fi
 
@@ -112,7 +112,7 @@ start_deps() {
 
   for spec in ${specs[@]+"${specs[@]}"}; do
     if ! dep=$(canon "$spec"); then
-      echo "pcm: $service depends on unknown service '$spec'" >&2
+      anfs_warn "$service depends on unknown service '$spec'"
       return 1
     fi
 
@@ -121,7 +121,7 @@ start_deps() {
     else
       edges_publish "$dep" || return 1
       start_deps "$dep" "$chain $service" || return 1
-      echo "pcm: starting $dep (required by $service)" >&2
+      anfs_warn "starting $dep (required by $service)"
       compose_flags "$dep" || return 1
       ensure_mount_dirs "$dep"
       compose_run "$dep" "${FLAGS[@]}" up -d || return 1
@@ -171,7 +171,7 @@ shutdown_order() {
   local -a dependents=()
 
   if [[ " $chain " == *" $service "* ]]; then
-    echo "pcm: dependency cycle:$chain $service" >&2
+    anfs_warn "dependency cycle:$chain $service"
     return 1
   fi
   if [[ " ${ORDER[*]-} " == *" $service "* ]]; then return 0; fi

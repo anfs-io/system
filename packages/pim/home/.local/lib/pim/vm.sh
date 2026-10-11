@@ -40,21 +40,11 @@ vm_stop() {
 }
 
 cmd_up() {
-  local fresh=false snapshot=false console=false arch="" spec=""
+  local fresh=${CLI_OPT[fresh]:-false} snapshot=${CLI_OPT[snapshot]:-false} console=${CLI_OPT[console]:-false}
+  local arch="${CLI_OPT[arch]:-}" spec="${1:-}"
   local -a shares=() ports=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --fresh) fresh=true ;;
-      --snapshot) snapshot=true ;;
-      --console) console=true ;;
-      --arch) arch="${2:?--arch needs a value}"; shift ;;
-      --share) shares+=("${2:?--share needs a path}"); shift ;;
-      -p) ports+=("${2:?-p needs host:guest}"); shift ;;
-      -*) die "up: unknown option '$1'" ;;
-      *) spec="$1" ;;
-    esac
-    shift
-  done
+  [[ -z "${CLI_OPT[share]:-}" ]] || mapfile -t shares <<< "${CLI_OPT[share]}"
+  [[ -z "${CLI_OPT[publish]:-}" ]] || mapfile -t ports <<< "${CLI_OPT[publish]}"
   [[ -n "$spec" ]] || die "Usage: pim up [--fresh|--snapshot] [--console] [--share P] [-p H:G] <image>"
   local id name
   id=$(canon_or_die "$spec")
@@ -143,14 +133,13 @@ cmd_up() {
 }
 
 cmd_shell() {
-  [[ $# -gt 0 ]] || die "Usage: pim shell <image> [-u user] [-- cmd...]"
   local name r user cmd=""
   name=$(img_name "$(canon "$1" || echo "x/$1")")
   shift
   vm_running "$name" || die "$name is not running (pim up $name)"
   r=$(run_dir "$name")
   user=$(cat "$r/user")
-  [[ "${1:-}" == "-u" ]] && { user="${2:?-u needs a user}"; shift 2; }
+  [[ -z "${CLI_OPT[user]:-}" ]] || user="${CLI_OPT[user]}"
   [[ "${1:-}" == "--" ]] && shift
   if [[ "$(cat "$r/backend")" == tart ]]; then
     tart_shell "$name" "$user" "$@"
@@ -169,7 +158,6 @@ cmd_shell() {
 }
 
 cmd_down() {
-  [[ $# -gt 0 ]] || die "Usage: pim down <image>..."
   local spec name
   for spec in "$@"; do
     name=$(img_name "$(canon "$spec" || echo "x/$spec")")
@@ -183,18 +171,14 @@ cmd_down() {
 }
 
 cmd_ps() {
-  local d name rows=""
+  local d name
   for d in "$PIM_STATE_HOME"/run/*/; do
     [[ -d "$d" ]] || continue
     name=$(basename "$d")
     vm_running "$name" || continue
-    rows+="$name|$(cat "$d/arch" 2>/dev/null)|$(cat "$d/backend" 2>/dev/null)|$(cat "$d/pid")|127.0.0.1:$(cat "$d/port" 2>/dev/null)"$'\n'
-  done
-  printf '%-20s %-6s %-7s %-8s %s\n' NAME ARCH BACKEND PID SSH
-  printf '%s' "$rows" | while IFS='|' read -r n a b p s; do
-    [[ -n "$n" ]] && printf '%-20s %-6s %-7s %-8s %s\n' "$n" "$a" "$b" "$p" "$s"
-  done
-  return 0
+    anfs_row "$name" "$(cat "$d/arch" 2>/dev/null)" "$(cat "$d/backend" 2>/dev/null)" "$(cat "$d/pid")" \
+      "127.0.0.1:$(cat "$d/port" 2>/dev/null)"
+  done | anfs_table "NAME ARCH BACKEND PID SSH" "name arch backend pid ssh"
 }
 
 snap_dir() { echo "$PIM_DATA_HOME/snapshots/$1"; }
@@ -202,7 +186,6 @@ snap_dir() { echo "$PIM_DATA_HOME/snapshots/$1"; }
 # `pim snapshot <image> [name]`: save the VM's disk (shut down first, restarted after); no name
 # lists the snapshots
 cmd_snapshot() {
-  [[ $# -gt 0 ]] || die "Usage: pim snapshot <image> [name]"
   local id name snap="${2:-}" was=false
   id=$(canon_or_die "$1")
   name=$(img_name "$id")
@@ -221,21 +204,13 @@ cmd_snapshot() {
   [[ -f "$(vm_dir "$name")/efivars.fd" ]] && cp "$(vm_dir "$name")/efivars.fd" "$(snap_dir "$name")/$snap-efivars.fd"
   cp "$(vm_dir "$name")/base" "$(vm_dir "$name")/arch" "$(snap_dir "$name")/" 2>/dev/null || true
   echo "Saved snapshot $snap of $name (pim reset $name $snap)"
-  $was && cmd_up "$id"
+  $was && cli_call up "$id"
   return 0
 }
 
 # `pim reset [-y] <image> [snapshot]`: recreate the VM from a snapshot, or from its build
 cmd_reset() {
-  local yes=false spec="" snap="" arg was=false
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      -*) die "reset: unknown option '$arg'" ;;
-      *) [[ -z "$spec" ]] && spec="$arg" || snap="$arg" ;;
-    esac
-  done
-  [[ -n "$spec" ]] || die "Usage: pim reset [-y] <image> [snapshot]"
+  local yes=${CLI_OPT[yes]:-false} spec="${1:-}" snap="${2:-}" was=false
   local id name vdir
   id=$(canon_or_die "$spec")
   name=$(img_name "$id")
@@ -252,6 +227,6 @@ cmd_reset() {
     cp "$(snap_dir "$name")/base" "$(snap_dir "$name")/arch" "$vdir/" 2>/dev/null || true
   fi
   echo "Reset $name${snap:+ to $snap}"
-  $was && cmd_up "$id"
+  $was && cli_call up "$id"
   return 0
 }

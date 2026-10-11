@@ -52,20 +52,13 @@ _copy_data() {
 # `pcm exec <service> [-u USER] [-s COMPOSE-SERVICE] [--] <command>...`
 cmd_exec() {
   local id user="" csvc="" ctr
-  id=$(canon "${1:-}") || { echo "Usage: pcm exec <service> [-u user] [-s compose-service] [--] <command>..." >&2; return 1; }
+  id=$(canon "${1:-}") || cli_usage_err "unknown service '${1:-}' (see: pcm list)"
   shift
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -u|--user) user="${2:?--user needs a name}"; shift ;;
-      -s|--service) csvc="${2:?--service needs a compose service}"; shift ;;
-      --) shift; break ;;
-      *) break ;;
-    esac
-    shift
-  done
-  [[ $# -gt 0 ]] || { echo "pcm: exec needs a command" >&2; return 1; }
+  user="${CLI_OPT[user]:-}" csvc="${CLI_OPT[service]:-}"
+  [[ "${1:-}" != -- ]] || shift
+  [[ $# -gt 0 ]] || { anfs_warn "exec needs a command"; return 1; }
   ctr=$(_box_container "$id" "$csvc")
-  [[ -n "$ctr" ]] || { echo "pcm: $id is not running (pcm up $(svc_name "$id"))" >&2; return 1; }
+  [[ -n "$ctr" ]] || { anfs_warn "$id is not running (pcm up $(svc_name "$id"))"; return 1; }
   local tty=() as=()
   [[ -t 0 && -t 1 ]] && tty=(-t)
   [[ -n "$user" ]] && as=(-u "$user" -w "$(_box_home "$ctr" "$user")")
@@ -79,29 +72,21 @@ _box_home() {
 # `pcm shell <service> [-u USER] [-s COMPOSE-SERVICE]`: a login shell, the user's own
 cmd_shell() {
   local id user="" csvc="" ctr shell
-  id=$(canon "${1:-}") || { echo "Usage: pcm shell <service> [-u user] [-s compose-service]" >&2; return 1; }
-  shift
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -u|--user) user="${2:?--user needs a name}"; shift ;;
-      -s|--service) csvc="${2:?--service needs a compose service}"; shift ;;
-      *) echo "pcm: shell: unknown option '$1'" >&2; return 1 ;;
-    esac
-    shift
-  done
+  id=$(canon "${1:-}") || cli_usage_err "unknown service '${1:-}' (see: pcm list)"
+  user="${CLI_OPT[user]:-}" csvc="${CLI_OPT[service]:-}"
   ctr=$(_box_container "$id" "$csvc")
-  [[ -n "$ctr" ]] || { echo "pcm: $id is not running (pcm up $(svc_name "$id"))" >&2; return 1; }
+  [[ -n "$ctr" ]] || { anfs_warn "$id is not running (pcm up $(svc_name "$id"))"; return 1; }
   shell=$(podman exec "$ctr" getent passwd "${user:-root}" 2>/dev/null | cut -d: -f7)
   local args=()
   [[ -n "$user" ]] && args+=(-u "$user")
   [[ -n "$csvc" ]] && args+=(-s "$csvc")
-  cmd_exec "$id" ${args[@]+"${args[@]}"} -- "${shell:-/bin/sh}" -l
+  cli_call exec "$id" ${args[@]+"${args[@]}"} -- "${shell:-/bin/sh}" -l
 }
 
 # `pcm snapshot <service> [name]`: save one; with no name, list them (* marks the active one)
 cmd_snapshot() {
   local id snap dir key ctr image
-  id=$(canon "${1:-}") || { echo "Usage: pcm snapshot <service> [name]" >&2; return 1; }
+  id=$(canon "${1:-}") || cli_usage_err "unknown service '${1:-}' (see: pcm list)"
   snap="${2:-}"
   dir=$(_snapshot_dir "$id")
 
@@ -115,8 +100,8 @@ cmd_snapshot() {
     return 0
   fi
   [[ "$snap" =~ ^[a-z0-9][a-z0-9_.-]*$ && "$snap" != active ]] ||
-    { echo "pcm: snapshot names are lowercase letters, digits, . _ - (and not 'active')" >&2; return 1; }
-  [[ -n "$(project_containers "$id" -a)" ]] || { echo "pcm: $id has no containers to snapshot (pcm up $(svc_name "$id"))" >&2; return 1; }
+    { anfs_warn "snapshot names are lowercase letters, digits, . _ - (and not 'active')"; return 1; }
+  [[ -n "$(project_containers "$id" -a)" ]] || { anfs_warn "$id has no containers to snapshot (pcm up $(svc_name "$id"))"; return 1; }
 
   mkdir -p "$dir"
   : > "$dir/$snap.new"
@@ -126,9 +111,9 @@ cmd_snapshot() {
       --filter "label=com.docker.compose.service=$key" --format '{{.Names}}' | head -n1)
     [[ -n "$ctr" ]] || continue
     image="localhost/pcm-snapshot/$(svc_name "$id")-$key:$snap"
-    echo "pcm: committing $ctr -> $image" >&2
+    anfs_warn "committing $ctr -> $image"
     podman commit -q --change "LABEL $PCM_LABEL_SNAPSHOT=$(svc_name "$id")/$snap" "$ctr" "$image" >/dev/null ||
-      { rm -f "$dir/$snap.new"; echo "pcm: commit of $ctr failed" >&2; return 1; }
+      { rm -f "$dir/$snap.new"; anfs_warn "commit of $ctr failed"; return 1; }
     echo "$key $image" >> "$dir/$snap.new"
   done < <(yq eval '.services | keys | .[]' "$(compose_file "$id")")
   mv "$dir/$snap.new" "$dir/$snap"
@@ -137,7 +122,7 @@ cmd_snapshot() {
   saved=$(_snapshot_data "$id" "$snap")
   remove_data_dir "$saved"
   if [[ -d "$data" ]]; then
-    echo "pcm: saving $(tilde "$data")" >&2
+    anfs_warn "saving $(tilde "$data")"
     _copy_data "$data" "$saved"
   fi
   echo "Saved snapshot $snap of $id"
@@ -146,32 +131,20 @@ cmd_snapshot() {
 # `pcm reset [-y] <service> [snapshot]`: recreate the service from a snapshot, or (with none)
 # from its definition with fresh data. The data it has now is replaced, so it asks unless -y.
 cmd_reset() {
-  local yes=false arg id="" snap=""
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      -*) echo "pcm: reset: unknown option '$arg'" >&2; return 1 ;;
-      *) if [[ -z "$id" ]]; then id="$arg"; else snap="$arg"; fi ;;
-    esac
-  done
+  local yes=${CLI_OPT[yes]:-false} id="${1:-}" snap="${2:-}"
   id=$(canon "$id") || { echo "Usage: pcm reset [-y] <service> [snapshot]" >&2; return 1; }
   local dir data
   dir=$(_snapshot_dir "$id")
   data="$PCM_VOLUMES_HOME/$(svc_name "$id")"
   if [[ -n "$snap" && ! -f "$dir/$snap" ]]; then
-    echo "pcm: no snapshot '$snap' of $id (pcm snapshot $(svc_name "$id"))" >&2
+    anfs_warn "no snapshot '$snap' of $id (pcm snapshot $(svc_name "$id"))"
     return 1
   fi
-  if ! $yes; then
-    [[ -t 0 ]] || { echo "pcm: reset replaces $id's data; pass -y to confirm without a terminal" >&2; return 1; }
-    local answer
-    read -r -p "Reset $id to ${snap:-its definition, with fresh data}? [y/N] " answer
-    [[ "$answer" == [yY]* ]] || { echo "pcm: nothing reset" >&2; return 1; }
-  fi
+  $yes || anfs_confirm "reset replaces $id's data" "Reset $id to ${snap:-its definition, with fresh data}?"
 
   if [[ -n "$(project_containers "$id" -a)" ]]; then
     compose_flags "$id" || return 1
-    compose_run "$id" "${FLAGS[@]}" down >&2 || { echo "pcm: could not stop $id" >&2; return 1; }
+    compose_run "$id" "${FLAGS[@]}" down >&2 || { anfs_warn "could not stop $id"; return 1; }
   fi
   remove_data_dir "$data"
   if [[ -n "$snap" ]]; then

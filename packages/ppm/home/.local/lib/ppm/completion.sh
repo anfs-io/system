@@ -1,98 +1,44 @@
 #!/usr/bin/env bash
-# Shell completion: the completion command
+# ppm library: what cli.sh asks for on a tab press (complete_<kind>): one candidate per line,
+# quickly. They read file names only. Sourced by ~/.local/bin/ppm; functions only.
 
-# Output shell completion for zsh or bash. The command list is generated from the registry
-# (cli_cmd in bin/ppm and in extensions), so it lists exactly what exists.
-cmd_completion() {
-  local shell="${1:-zsh}"
-
-  case "$shell" in
-    zsh)
-      cat <<'EOF'
-#compdef ppm
-
-_ppm() {
-    local -a subcommands
-    local state
-
-    subcommands=(
-EOF
-      cli_zsh_commands
-      echo "    'cd:Change to a package directory'"
-      cat <<'EOF'
-    )
-
-    _arguments -C \
-        '1: :->command' \
-        '*: :->args'
-
-    case $state in
-        command)
-            _describe 'command' subcommands
-            ;;
-        args)
-            case ${words[2]} in
-                install|remove|show|path|cd)
-                    _ppm_packages_available
-                    ;;
-                file)
-                    if [[ ${#words[@]} -eq 3 ]]; then
-                        local -a file_cmds
-                        file_cmds=('add:Move unowned files into repo/package and stow them' 'claim:Copy files into your repo and stow them' 'reset:Restore the original package links' 'protect:Detach files from ppm' 'unprotect:Let ppm manage files again')
-                        _describe 'subcommand' file_cmds
-                    elif [[ ${words[3]} == add && ${#words[@]} -eq 4 ]]; then
-                        _ppm_packages_available
-                    elif [[ ${words[3]} == reset ]]; then
-                        local -a claimed
-                        local claims="${XDG_STATE_HOME:-$HOME/.local/state}/ppm/installed/claims.yml"
-                        [[ -f "$claims" ]] && claimed=(${(f)"$(yq -r 'keys[]' "$claims" 2>/dev/null)"})
-                        compadd -P "$HOME/" -a claimed
-                    else
-                        _files
-                    fi
-                    ;;
-                completion)
-                    local -a shells
-                    shells=('zsh' 'bash')
-                    _describe 'shell' shells
-                    ;;
-            esac
-            ;;
-    esac
+# Every package the sources hold: its name, and repo/name
+complete_package() {
+  local d name
+  for d in "$ANFS_SOURCES_HOME"/*/packages/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    name="${d##*/}"
+    d="${d%/packages/*}"
+    printf '%s\n%s/%s\n' "$name" "${d##*/}" "$name"
+  done | awk '!seen[$0]++'
 }
-
-_ppm_packages_available() {
-    local -a packages
-    local sources_home="${XDG_DATA_HOME:-$HOME/.local/share}/anfs/sources"
-
-    if [[ -d "$sources_home" ]]; then
-        for repo_dir in "$sources_home"/*/packages; do
-            [[ -d "$repo_dir" ]] || continue
-            local repo_name="${repo_dir%/packages}"
-            repo_name="${repo_name##*/}"
-            for pkg_dir in "$repo_dir"/*/; do
-                [[ -d "$pkg_dir" ]] || continue
-                local pkg_name="${pkg_dir%/}"
-                pkg_name="${pkg_name##*/}"
-                packages+=("${repo_name}/${pkg_name}")
-            done
-        done
-        local -a metas=("$sources_home"/*/packages/*/package.yml(N))
-        (( ${#metas} )) && packages+=(${(u)${(f)"$(yq -N -r '.categories[]? | "@" + .' "${metas[@]}" 2>/dev/null)"}})
-    fi
-
-    _describe 'package' packages
+# What install takes: a package, or repo/ for all of a source's
+complete_package_spec() {
+  local d
+  complete_package
+  for d in "$ANFS_SOURCES_HOME"/*/packages; do
+    [[ -d "$d" ]] || continue
+    d="${d%/packages}"
+    printf '%s/\n' "${d##*/}"
+  done
 }
-
-compdef _ppm ppm
-EOF
-      ;;
-    bash)
-      echo "# Bash completion not yet implemented"
-      ;;
-    *)
-      echo "Error: Unknown shell '$shell'. Supported: zsh, bash" >&2
-      return 1
-      ;;
-  esac
+# What is installed: repo/name, and the name
+complete_installed() {
+  local f
+  for f in "$PPM_INSTALLED_DIR"/*/*.yml; do
+    [[ -f "$f" ]] || continue
+    f="${f#"$PPM_INSTALLED_DIR"/}"
+    f="${f%.yml}"
+    printf '%s\n%s\n' "$f" "${f##*/}"
+  done | awk '!seen[$0]++'
 }
+complete_source() {
+  local d
+  for d in "$ANFS_SOURCES_HOME"/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/}"
+  done
+}
+complete_repo() { complete_source; }

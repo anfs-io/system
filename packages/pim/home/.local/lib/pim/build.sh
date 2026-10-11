@@ -86,21 +86,10 @@ _build_cleanup() {
 }
 
 cmd_build() {
-  local force=false arch="" console=false verify=false arg
-  PIM_VERBOSE=false
-  local -a specs=()
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      -f|--force) force=true ;;
-      --arch) arch="${2:?--arch needs a value}"; shift ;;
-      --console) console=true ;;
-      --verify) verify=true ;;
-      -v|--verbose) PIM_VERBOSE=true ;;
-      -*) die "build: unknown option '$1'" ;;
-      *) specs+=("$1") ;;
-    esac
-    shift
-  done
+  local force=${CLI_OPT[force]:-false} arch="${CLI_OPT[arch]:-}" console=${CLI_OPT[console]:-false}
+  local verify=${CLI_OPT[verify]:-false} arg
+  PIM_VERBOSE=${CLI_OPT[verbose]:-false}
+  local -a specs=("$@")
   [[ ${#specs[@]} -gt 0 ]] || die "Usage: pim build [-f] [-v] [--arch A] [--console] [--verify] <image>..."
   local id a
   for arg in "${specs[@]}"; do

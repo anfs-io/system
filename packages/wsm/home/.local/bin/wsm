@@ -22,7 +22,8 @@
 # What is installed is recorded in one tracker per level, $WSM_STATE_HOME/installed/<id>.yml
 # (id: source, source/ws or source/ws/space), which is wsm's only state.
 #
-# Written for bash 3.2, the version macOS ships: no associative arrays, no mapfile/readarray.
+# Runs on the bash floor (5.2; lib/anfs/bash.sh gets it there from macOS's 3.2). Most of this file
+# predates the floor and still avoids associative arrays and mapfile; new code need not.
 set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
@@ -31,18 +32,27 @@ WSM_VERSION=0.4.0
 
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
-if [[ ! -f "$ANFS_LIB/cli.sh" ]]; then
-  echo "wsm: $ANFS_LIB not found; run: ppm install -f core/anfs" >&2
+if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
+  echo "wsm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
   exit 69
 fi
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
+# shellcheck source=/dev/null
+source "$ANFS_LIB/bash.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/log.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/callbacks.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/sources.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/resolve.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/cli.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/table.sh"
 anfs_gitsrc_env
 anfs_tool_paths wsm
 
@@ -55,6 +65,19 @@ WSM_HOME=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || WSM_HOME="$HOME"
 
 # Exit codes
 EX_NOTFOUND=1 EX_AMBIGUOUS=2 EX_STALE=3
+
+# Events (lib/anfs/callbacks.sh): the levels this run installed that were not installed before,
+# and the ones it removed, as ids (source, source/ws, source/ws/space). _wsm_emit tells whoever
+# registered with wsm, once, when the command is over; wsm does not know who that is.
+WSM_EV_INSTALLED=() WSM_EV_REMOVED=()
+_wsm_emit() {
+  local -a installed=("${WSM_EV_INSTALLED[@]}") removed=("${WSM_EV_REMOVED[@]}")
+  WSM_EV_INSTALLED=() WSM_EV_REMOVED=()
+  [[ ${#removed[@]} -eq 0 ]] || anfs_callbacks_run wsm remove "${removed[@]}"
+  [[ ${#installed[@]} -eq 0 ]] || anfs_callbacks_run wsm install "${installed[@]}"
+}
+# On EXIT, so a run that installed some levels and then failed still reports those
+trap _wsm_emit EXIT
 EX_USAGE=64 EX_UNAVAIL=69 EX_EXISTS=73
 
 # Names are <ws>/<space> (lib/anfs resolve.sh): a spec is source-qualified with three segments
@@ -64,22 +87,25 @@ ANFS_RESOLVE_FIRST=true
 
 CLI_TOOL=wsm
 CLI_EX_USAGE=64
-cli_cmd ls         "ls [SPEC] [-r|--repositories]"  "The sources' workspaces and spaces, and where each is installed;
-or the repositories their space.yml files declare, and their state"
-cli_cmd install    "install [SPEC [DIR]] [--dry-run]" "Stow levels into DIR/<source>/<ws>/<space> and clone their
+CLI_VERSION="$WSM_VERSION"
+cli_cmd list "The sources' workspaces and spaces, and where each is installed" --alias ls \
+  --opt "-r --repositories: The repositories their space.yml files declare, and their state" --arg "[spec]"
+cli_cmd install "Stow levels into DIR/<source>/<ws>/<space> and clone their
 repositories, dependencies first. SPEC is source/, source/ws,
-source/ws/space, ws or ws/space; none is the level at ."
-cli_cmd remove     "remove SPEC..."                "Unstow installed spaces (and a named ws or source); clones and your files stay"
-cli_cmd new        "new [[SOURCE/]WS/]SPACE"       "Create a space in a source; the parts left out come from where
-you are. Installed too when its workspace is"
-cli_cmd add        "add FILE..."                   "Move files from an installed tree into the source and stow them back"
-cli_cmd status     "status [SOURCE...]"            "What in the installed trees differs from the sources"
-cli_cmd cd         "cd [-s] [QUERY]"               "Change to an installed space or workspace; -s, --source: its
-directory in the source (requires the wsm shell function)"
-cli_cmd path       "path [-s] [QUERY]"             "Print that path; no QUERY means the level containing ."
-cli_cmd implode    "implode [-y]"                  "Unstow every installed level and delete wsm's state"
-cli_cmd completion "completion <shell>"            "Output shell completion code (zsh)"
-cli_cmd help       "help, --version"               "Show this help, or the version"
+source/ws/space, ws or ws/space; none is the level at ." \
+  --opt "-n --dry-run: Say what would be done" --arg "[spec]" --arg "[dir]"
+cli_cmd remove "Unstow installed spaces (and a named ws or source); clones and your files stay" \
+  --alias rm --arg "level..."
+cli_cmd new "Create a space in a source ([[SOURCE/]WS/]SPACE); the parts left out
+come from where you are. Installed too when its workspace is" --arg "space"
+cli_cmd add "Move files from an installed tree into the source and stow them back" --arg "file..."
+cli_cmd status "What in the installed trees differs from the sources" --arg "[source...]"
+cli_cmd cd "Change to an installed space or workspace (requires the wsm shell function)" \
+  --opt "-s --source: Its directory in the source" --arg "[query]"
+cli_cmd path "Print that path; no QUERY means the level containing ." \
+  --opt "-s --source: Its directory in the source" --arg "[query]"
+cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask"
+cli_standard
 
 cmd_cd() {
   echo "wsm cd needs the wsm shell function (source ~/.config/sh/wsm.sh)" >&2
@@ -114,24 +140,19 @@ EOF
 
 # --- Output helpers -----------------------------------------------------------------------
 
-warn() { echo "wsm: $*" >&2; }
-die()  { echo "wsm: $*" >&2; exit 1; }
-fail() { local code="$1"; shift; echo "wsm: $*" >&2; exit "$code"; }
-usage_err() { echo "Usage: $*" >&2; exit "$EX_USAGE"; }
+# Messages and the log are anfs's (lib/anfs/log.sh)
+warn() { anfs_warn "$@"; }
+die()  { anfs_die "$@"; }
+fail() { anfs_fail "$@"; }
+usage_err() { cli_usage "$@"; }
 
 _now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # Shorten a leading $HOME for display only; the stored value is always absolute
-_display() {
-  case "$1" in
-    "$WSM_HOME")    printf '~\n' ;;
-    "$WSM_HOME"/*)  printf '~/%s\n' "${1#"$WSM_HOME"/}" ;;
-    *)              printf '%s\n' "$1" ;;
-  esac
-}
+_display() { anfs_display "$1"; }
 
 # Absolute, symlinks resolved, no trailing slash
-_canon() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
+_canon() { anfs_canon "$1"; }
 
 # A path as given, made absolute without touching the filesystem
 _abs() {
@@ -190,9 +211,7 @@ _spaces_home() {
   printf '%s\n' "$d"
 }
 
-_require_yq() {
-  command -v yq >/dev/null 2>&1 || fail "$EX_UNAVAIL" "wsm needs yq (https://github.com/mikefarah/yq)"
-}
+_require_yq() { anfs_require yq "https://github.com/mikefarah/yq"; }
 
 _in_list() {
   local want="$1" x
@@ -408,6 +427,7 @@ _unlink_unit() {
   } < <(yq -N -r '.source, (.workspace // ""), (.space // ""), .target,
                   (.dir // (.target + "/" + .workspace + "/" + .space))' "$file")
   rel="$ws${space:+/$space}"
+  WSM_EV_REMOVED+=("$src${rel:+/$rel}")
   [[ -n "$ws" ]] && level=ws
   [[ -n "$space" ]] && level=space
   from="$(_src_dir "$src")/spaces${rel:+/$rel}"
@@ -571,6 +591,8 @@ _install_unit() {
 
   OLD_FILES=()
   _is_named "$tracker" && named=true
+  local was_installed=false
+  [[ ! -f "$tracker" ]] || was_installed=true
   if [[ -f "$tracker" ]]; then
     while IFS= read -r f; do [[ -n "$f" ]] && OLD_FILES+=("$f"); done < <(_tracker_files "$tracker")
   fi
@@ -578,6 +600,7 @@ _install_unit() {
   [[ "$level" == ws ]] && label=workspace
   _link_unit "$from" "$root" "$level" "$dry" "$label $id -> $(_display "$root")" || return 1
   $dry || _tracker_write "$tracker" "$src" "$ws" "$space" "$target" "$root" "$named" ${LINKED[@]+"${LINKED[@]}"}
+  $dry || $was_installed || WSM_EV_INSTALLED+=("$id")
 }
 
 # --- Repositories -------------------------------------------------------------------------
@@ -811,19 +834,7 @@ _spec_here() {
 }
 
 cmd_install() {
-  local dry=false spec="" dir="" arg u="wsm install [SPEC [DIR]] [--dry-run]"
-  for arg in "$@"; do
-    case "$arg" in
-      --dry-run) dry=true ;;
-      -*)        usage_err "$u" ;;
-      *)
-        if [[ -z "$spec" ]]; then spec="$arg"
-        elif [[ -z "$dir" ]]; then dir="$arg"
-        else usage_err "$u"
-        fi
-        ;;
-    esac
-  done
+  local dry=${CLI_OPT[dry-run]:-false} spec="${1:-}" dir="${2:-}" u="wsm install [SPEC [DIR]] [-n]"
   if [[ -z "$spec" ]]; then
     spec=$(_spec_here)
     echo "install $spec"
@@ -978,14 +989,7 @@ _context() {
 
 cmd_remove() {
   local spec j rc=0 f
-  local -a specs=() drop=() sws=()
-  for spec in "$@"; do
-    case "$spec" in
-      -*) usage_err "wsm remove SPEC..." ;;
-      *)  specs+=("$spec") ;;
-    esac
-  done
-  [[ ${#specs[@]} -gt 0 ]] || usage_err "wsm remove SPEC..."
+  local -a specs=("$@") drop=() sws=()
 
   _installed_load
   anfs_sources spaces
@@ -1134,14 +1138,7 @@ _source_of() {
 }
 
 cmd_path() {
-  local source=false q="" arg u="wsm path [-s|--source] [QUERY]"
-  for arg in "$@"; do
-    case "$arg" in
-      -s|--source) source=true ;;
-      -*) usage_err "$u" ;;
-      *)  [[ -z "$q" ]] || usage_err "$u"; q="$arg" ;;
-    esac
-  done
+  local source=${CLI_OPT[source]:-false} q="${1:-}"
   _installed_load
 
   # -s with a source-qualified name needs nothing installed: <src>/spaces/<the rest>
@@ -1193,36 +1190,6 @@ cmd_path() {
   fi
 }
 
-# Print tab-separated rows: columns aligned on a terminal, the tabs kept otherwise
-_columns() {
-  local -a rows=() widths=() cols=()
-  local line i out
-  while IFS= read -r line; do rows+=("$line"); done
-  [[ ${#rows[@]} -gt 0 ]] || return 0
-  if [[ ! -t 1 ]]; then
-    printf '%s\n' "${rows[@]}"
-    return 0
-  fi
-  for line in "${rows[@]}"; do
-    IFS=$'\t' read -r -a cols <<<"$line"
-    for i in "${!cols[@]}"; do
-      [[ ${#cols[$i]} -gt ${widths[$i]:-0} ]] && widths[$i]=${#cols[$i]}
-    done
-  done
-  for line in "${rows[@]}"; do
-    IFS=$'\t' read -r -a cols <<<"$line"
-    out=""
-    for i in "${!cols[@]}"; do
-      if [[ $i -lt $((${#cols[@]} - 1)) ]]; then
-        out="$out$(printf '%-*s  ' "${widths[$i]}" "${cols[$i]}")"
-      else
-        out="$out${cols[$i]}"
-      fi
-    done
-    printf '%s\n' "$out"
-  done
-}
-
 # Whether level id <id> (src/, src/ws, src/ws/space) is in the subtree <filter> names
 _in_filter() {
   local id="${1%/}" f="${2%/}"
@@ -1231,13 +1198,11 @@ _in_filter() {
 
 # One row for a level: its id, and where it is installed (- when it is not)
 _ls_row() {
-  local id="$1" d
+  local id="$1" d level=space note=""
+  case "$id" in */) level=source ;; */*/*) ;; *) level=workspace ;; esac
   d=$(_installed_dir "${id%/}")
-  if [[ -z "$d" ]]; then
-    printf '%s\t-\n' "$id"
-  else
-    printf '%s\t%s%s\n' "$id" "$(_display "$d")" "$([[ -d "$d" ]] || echo ' (stale)')"
-  fi
+  [[ -z "$d" || -d "$d" ]] || note=stale
+  anfs_row "$id" "$d" "$level" "$note"
 }
 
 # One row per repository a level's space.yml declares: where it goes, its url and its state
@@ -1254,26 +1219,18 @@ _ls_repositories() {
       state=$(gitsrc_dir_status "$d/$path")
       [[ "$state" != local ]] || state="not a repo"
     fi
-    printf '%s\t%s\t%s\n' "${id%/}/$path" "${url:--}" "$state"
+    anfs_row "${id%/}/$path" "$url" "$state"
   done < <(_repo_entries "$file")
 }
 
 # `wsm ls [SPEC] [-r|--repositories]`: every source, workspace and space the sources define, each
 # with where it is installed; SPEC (source/, source/ws, source/ws/space) narrows it to that
 # subtree. With -r, the repositories their space.yml files declare instead, and their state.
-cmd_ls() {
-  local repos=false filter="" arg u="wsm ls [SPEC] [-r|--repositories]"
-  for arg in "$@"; do
-    case "$arg" in
-      -r|--repositories) repos=true ;;
-      -*)                usage_err "$u" ;;
-      *)
-        [[ -z "$filter" ]] || usage_err "$u"
-        _valid_name "${arg%/}" && [[ $(_parts "${arg%/}") -le 3 ]] || usage_err "$u"
-        filter="$arg"
-        ;;
-    esac
-  done
+cmd_list() {
+  local repos=${CLI_OPT[repositories]:-false} filter="${1:-}"
+  if [[ -n "$filter" ]]; then
+    _valid_name "${filter%/}" && [[ $(_parts "${filter%/}") -le 3 ]] || cli_usage_err "'$filter' is not a level"
+  fi
   _require_yq
   _installed_load
   anfs_sources spaces
@@ -1312,13 +1269,17 @@ cmd_ls() {
     for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
       _in_filter "${INST_ID[$j]}" "$filter" || continue
       [[ -d "$(_src_dir "${INST_SRC[$j]}")/spaces/${INST_WS[$j]}/${INST_SPACE[$j]}" ]] && continue
-      rows="$rows${INST_ID[$j]}"$'\t'"$(_display "${INST_DIR[$j]}") (not in the source)"$'\n'
+      rows="$rows$(anfs_row "${INST_ID[$j]}" "${INST_DIR[$j]}" space "not in the source")"$'\n'
     done
   fi
   rows=$(printf '%s' "$rows" | grep . || true)
   [[ -n "$rows" || -z "$filter" ]] || fail "$EX_NOTFOUND" "nothing defined under $filter"
-  [[ -n "$rows" ]] || return 0
-  printf '%s\n' "$rows" | _columns
+  # The lists other tools read: with --json (lib/anfs/table.sh), never by column
+  if $repos; then
+    printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY URL STATE" "path url state"
+  else
+    printf '%s' "${rows:+$rows$'\n'}" | anfs_table "ID DIR LEVEL NOTE" "id dir level note"
+  fi
 }
 
 # `wsm new [[SOURCE/]WS/]SPACE`: the parts left out come from where you are, in a source checkout
@@ -1548,12 +1509,7 @@ cmd_add() {
 cmd_status() {
   local arg
   local -a want=()
-  for arg in "$@"; do
-    case "$arg" in
-      -*) usage_err "wsm status [SOURCE...]" ;;
-      *)  want+=("${arg%/}") ;;
-    esac
-  done
+  for arg in "$@"; do want+=("${arg%/}"); done
   _require_yq
   _installed_load
   anfs_sources spaces
@@ -1627,89 +1583,52 @@ cmd_status() {
   return 0
 }
 
-cmd_completion() {
-  case "${1:-}" in
-    zsh)
-      cat <<'COMPLETION'
-#compdef wsm
+# What cli.sh asks for on a tab press (complete_<kind>): one candidate per line, quickly. They
+# read file names only: no yq, no git.
 
-# Installed spaces, as source/ws/space and the bare names a query also takes
-_wsm_installed() {
-  local -a ids
-  ids=(${(f)"$(command wsm ls 2>/dev/null | awk -F'\t' '$2 != "-" && $1 !~ /\/$/ {print $1}')"})
-  compadd -a ids
-  compadd -- ${ids##*/}
+# Every level the sources define: source/, source/ws, source/ws/space
+complete_spec() {
+  local d rel
+  for d in "$ANFS_SOURCES_HOME"/*/spaces/ "$ANFS_SOURCES_HOME"/*/spaces/*/ "$ANFS_SOURCES_HOME"/*/spaces/*/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    rel="${d#"$ANFS_SOURCES_HOME"/}"
+    case "$rel" in
+      */spaces)   printf '%s/\n' "${rel%/spaces}" ;;
+      */spaces/*) [[ "${rel##*/}" == .* ]] || printf '%s/%s\n' "${rel%%/spaces/*}" "${rel#*/spaces/}" ;;
+    esac
+  done
 }
-
-_wsm() {
-  local -a subcmds=(
-COMPLETION
-      cli_zsh_commands
-      cat <<'COMPLETION'
-  )
-
-  if (( CURRENT == 2 )); then
-    _describe 'command' subcmds
-    return
-  fi
-
-  case "${words[2]}" in
-    ls)
-      compadd -- -r --repositories ${(f)"$(command wsm ls 2>/dev/null | cut -f1)"}
-      ;;
-    cd|path)
-      compadd -- -s --source
-      _wsm_installed
-      ;;
-    remove)
-      _wsm_installed
-      ;;
-    install)
-      if (( CURRENT == 3 )); then
-        compadd -- --dry-run ${(f)"$(command wsm ls 2>/dev/null | cut -f1)"}
-      else
-        _path_files -/
-      fi
-      ;;
-    add)
-      _files
-      ;;
-    status)
-      compadd -- ${(f)"$(command wsm ls 2>/dev/null | awk -F'\t' '$2 != "-" && $1 ~ /\/$/ {sub(/\/$/, "", $1); print $1}')"}
-      ;;
-    implode)
-      compadd -- -y
-      ;;
-    completion)
-      (( CURRENT == 3 )) && compadd zsh
-      ;;
-  esac
+# The installed levels, by id: what there is a tracker for
+complete_level() {
+  local f
+  for f in "$WSM_INSTALLED"/*.yml "$WSM_INSTALLED"/*/*.yml "$WSM_INSTALLED"/*/*/*.yml; do
+    [[ -f "$f" ]] || continue
+    f="${f#"$WSM_INSTALLED"/}"
+    printf '%s\n' "${f%.yml}"
+  done
 }
-
-if [[ "${funcstack[1]}" == "_wsm" ]]; then
-  _wsm "$@"
-else
-  compdef _wsm wsm
-fi
-COMPLETION
-      ;;
-    *)
-      echo "Usage: wsm completion <zsh>" >&2
-      return 1
-      ;;
-  esac
+# What cd and path take: an installed workspace or space, by id or by its bare name
+complete_query() {
+  local id
+  while IFS= read -r id; do
+    [[ "$id" == */* ]] || continue
+    printf '%s\n%s\n' "$id" "${id##*/}"
+  done < <(complete_level) | awk '!seen[$0]++'
+}
+complete_source() {
+  local f
+  for f in "$WSM_INSTALLED"/*.yml; do
+    [[ -f "$f" ]] || continue
+    f="${f##*/}"
+    printf '%s\n' "${f%.yml}"
+  done
 }
 
 # `wsm implode [-y]`: unstow every installed level and delete wsm's state. What the spaces hold
 # besides the links (cloned repos, your files) is never touched.
 cmd_implode() {
-  local yes=false arg j f
-  for arg in "$@"; do
-    case "$arg" in
-      -y|--yes) yes=true ;;
-      *) usage_err "wsm implode [-y]" ;;
-    esac
-  done
+  local yes=${CLI_OPT[yes]:-false} j f
 
   _installed_load
   {
@@ -1724,12 +1643,7 @@ cmd_implode() {
     echo "Kept: everything else in the spaces (cloned repos, your files)"
   } >&2
 
-  if ! $yes; then
-    [[ -t 0 ]] || die "implode unstows every space; pass -y to confirm without a terminal"
-    local answer
-    read -r -p "Implode wsm? [y/N] " answer
-    [[ "$answer" == [yY]* ]] || die "nothing removed"
-  fi
+  $yes || anfs_confirm "implode unstows every space" "Implode wsm?"
 
   anfs_sources spaces
   # Spaces, then the workspace and source levels above them
@@ -1742,8 +1656,4 @@ cmd_implode() {
 
 # --- Dispatch -----------------------------------------------------------------------------
 
-if [[ "${1:-}" == --version ]]; then
-  printf 'wsm %s\n' "$WSM_VERSION"
-else
-  cli_dispatch "$@"
-fi
+cli_dispatch "$@"

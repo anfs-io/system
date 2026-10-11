@@ -62,7 +62,7 @@ edge_call() {
 edge_run() {
   local bin
   if ! bin=$(edge_bin "$1"); then
-    echo "pcm: no edge provider '$1' (in $PCM_CONFIG_HOME/edges or pcm's edges/)" >&2
+    anfs_warn "no edge provider '$1' (in $PCM_CONFIG_HOME/edges or pcm's edges/)"
     return 1
   fi
   shift
@@ -128,9 +128,9 @@ edges_apply() {
     [[ -n "$host" ]] || continue
     opts=()
     while IFS= read -r line; do [[ -n "$line" ]] && opts+=("$line"); done < <(edge_options "$domain")
-    echo "pcm: $provider: $verb $host" >&2
+    anfs_warn "$provider: $verb $host"
     PCM_SERVICE="$(svc_name "$svc")" edge_run "$provider" "$verb" "$host" ${origin:+"origin=$origin"} \
-      ${opts[@]+"${opts[@]}"} >&2 || { echo "pcm: $provider could not $verb $host" >&2; rc=1; }
+      ${opts[@]+"${opts[@]}"} >&2 || { anfs_warn "$provider could not $verb $host"; rc=1; }
   done < <(service_edge_hosts "$svc")
   return $rc
 }

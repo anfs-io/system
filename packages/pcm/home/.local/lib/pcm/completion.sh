@@ -1,50 +1,27 @@
 #!/usr/bin/env bash
-# pcm library: shell completion; the completion command
-# Sourced by ~/.local/bin/pcm; defines functions only.
+# pcm library: what cli.sh asks for on a tab press (complete_<kind>): one candidate per line,
+# quickly. They read file names only. Sourced by ~/.local/bin/pcm; functions only.
 
-cmd_completion() {
-  case "${1:-}" in
-    zsh)
-      cat <<'COMPLETION'
-#compdef pcm
-
-_pcm_services() {
-  local -a services=(${(f)"$(command pcm list --names 2>/dev/null)"})
-  compadd -a services
+# Every service: its name, and source/name
+complete_service() {
+  local d name
+  for d in "$PCM_CONTAINERS_HOME"/*/ "$ANFS_SOURCES_HOME"/*/containers/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    name="${d##*/}"
+    printf '%s\n' "$name"
+    [[ "$d" == "$PCM_CONTAINERS_HOME"/* ]] && continue
+    d="${d%/containers/*}"
+    printf '%s/%s\n' "${d##*/}" "$name"
+  done | awk '!seen[$0]++'
 }
-
-_pcm() {
-  local -a subcmds=(
-COMPLETION
-      cli_zsh_commands
-      cat <<'COMPLETION'
-  )
-
-  if (( CURRENT == 2 )); then
-    _describe 'command' subcmds
-    return
-  fi
-
-  case "${words[2]}" in
-    up)          _pcm_services ;;
-    down)        compadd -- --force; _pcm_services ;;
-    validate|ps) _pcm_services ;;
-    remove|rm)   compadd -- -y --force; _pcm_services ;;
-    path|cd|show) (( CURRENT == 3 )) && _pcm_services ;;
-    completion)  (( CURRENT == 3 )) && compadd zsh ;;
-  esac
-}
-
-if [[ "${funcstack[1]}" == "_pcm" ]]; then
-  _pcm "$@"
-else
-  compdef _pcm pcm
-fi
-COMPLETION
-      ;;
-    *)
-      echo "Usage: pcm completion <zsh>" >&2
-      return 1
-      ;;
-  esac
+# What install takes: a service, or source/ for all of a source's
+complete_service_spec() {
+  local d
+  complete_service
+  for d in "$ANFS_SOURCES_HOME"/*/containers; do
+    [[ -d "$d" ]] || continue
+    d="${d%/containers}"
+    printf '%s/\n' "${d##*/}"
+  done
 }

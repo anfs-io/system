@@ -4,7 +4,7 @@
 #   install.sh                       on a vanilla macOS: Xcode CLT, Homebrew, then the toolkit
 #   ppm install stack/pi             an agent, so psm has somewhere to put skills
 #   anfs install acme                the fixture org source, tool by tool (acme/acme-mac adds a cask)
-#   checks                           what Linux can't show: CLT, /opt/homebrew, casks, bash 3.2
+#   checks                           what Linux can't show: CLT, /opt/homebrew, casks, the bash floor
 #   anfs implode [--all]             and $HOME compared with what it was before install.sh
 #
 # Usage: packages/anfs/tests/roundtrip-macos [--all]   (Apple silicon; the box is pim's
@@ -92,13 +92,15 @@ check() {
 echo "== checks"
 check "macOS: Xcode Command Line Tools installed"    'xcode-select -p'
 check "macOS: Homebrew at /opt/homebrew, owned by owner" '[ "$(brew --prefix)" = /opt/homebrew ] && [ -O /opt/homebrew/bin ]'
-check "macOS: lib/anfs loads under /bin/bash 3.2"    '/bin/bash -c "set -euo pipefail; source ~/.local/lib/anfs/paths.sh; source ~/.local/lib/anfs/sources.sh; source ~/.local/lib/anfs/resolve.sh; anfs_gitsrc_env; anfs_sources packages; [ \${#ANFS_SRC_NAMES[@]} -gt 0 ]"'
+check "macOS: /bin/bash is below the floor"           '/bin/bash -c "[ \${BASH_VERSINFO[0]} -lt 5 ]"'
+check "macOS: a tool started under /bin/bash re-execs" 'PATH=/bin:/usr/bin:$HOME/.local/bin /bin/bash ~/.local/bin/wsm --version && PATH=/bin:/usr/bin:$HOME/.local/bin /bin/bash ~/.local/bin/ppm list --installed | grep -q /ppm'
+check "macOS: the bootstrap set parses under /bin/bash" 'for f in ~/.local/lib/anfs/bash.sh ~/.local/lib/ppm/core.sh ~/.local/lib/ppm/platform.sh ~/.local/lib/ppm/file.sh ~/.local/lib/ppm/installer.sh; do /bin/bash -n "$f" || exit 1; done'
 check "ppm: acme/hello stowed and runs"               'acme-hello | grep -q "hello from acme"'
-check "ppm: acme/acme-infra pulled in stack/fnox"   'ppm list --installed | grep -q "stack/fnox"'
-check "ppm: acme/acme-mac installed its cask"         'ppm list --installed | grep -q acme/acme-mac && [ -d /Applications/Rectangle.app ]'
-check "cli: help and completion from the registry"    'anfs help | grep -q "implode \[-y\]" && ppm completion zsh | grep -q "implode:"'
+check "ppm: acme/acme-infra pulled in stack/fnox"   'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"stack/fnox\")"'
+check "ppm: acme/acme-mac installed its cask"         'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"acme/acme-mac\")" && [ -d /Applications/Rectangle.app ]'
+check "cli: help and completion from the declarations" 'anfs help | grep -q "implode \[-y\]" && ppm __complete "" | grep -q "^implode" && ppm completion zsh | grep -q "ppm __complete"'
 check "pim: acme/hello validates with its from: parent" 'pim validate acme/hello debian-13'
-check "psm: acme-hello installed for pi"              'psm skills ls | grep -E "^ok +acme +acme-hello"'
+check "psm: acme-hello installed for pi"              'psm skills ls --json | yq -p json -e ".[] | select(.status == \"ok\" and .config == \"acme\" and .skill == \"acme-hello\")"'
 check "wsm: org installed before tech"                'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'
 if grep -q "pcm install" <<< "$acme_out" && box 'pcm list' >/dev/null 2>&1; then
   echo "  ok    pcm: runs, and its containers are reported failing (no nested virtualization)"

@@ -12,11 +12,13 @@ setup() {
 }
 
 @test "remove: needs a service, rejects unknown services and options" {
-  run cmd_remove
-  [ "$status" -eq 1 ]
-  run cmd_remove ghost
+  run cli_call remove
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"pcm: usage: pcm remove [-y] [-f] <service>..."* ]]
+  run cli_call remove ghost
   [[ "$output" == *"unknown service 'ghost'"* ]]
-  run cmd_remove --bogus app
+  run cli_call remove --bogus app
+  [ "$status" -eq 64 ]
   [[ "$output" == *"unknown option '--bogus'"* ]]
 }
 
