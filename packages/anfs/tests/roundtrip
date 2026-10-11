@@ -139,7 +139,7 @@ check() {
 if [[ " ${installs[*]} " == *" acme "* ]]; then
   echo "== checks"
   check "ppm: acme/hello stowed and runs"            'acme-hello | grep -q "hello from acme"'
-  check "ppm: acme/acme-infra pulled in stack/opentofu" 'ppm list --installed | grep -q "stack/opentofu"'
+  check "ppm: acme/acme-infra pulled in stack/fnox" 'ppm list --installed | grep -q "stack/fnox"'
   check "pcm: whoami is running"                     'pcm ps | grep -q whoami'
   check "pcm: whoami answers on its port"            'curl -fsS localhost:8099 | grep -qi hostname'
   check "pcm: anfs-sources mount set, read via exec" 'pcm exec acme/inspector -- ls /src/acme/packages | grep -qx hello'

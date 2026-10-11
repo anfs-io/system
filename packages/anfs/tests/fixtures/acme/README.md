@@ -6,7 +6,7 @@ A stand-in for a real org repo (lgat): one source holding every resource kind, s
 | Dir | Tool | What |
 | --- | --- | --- |
 | `packages/hello` | ppm | a script stowed to `~/.local/bin/acme-hello`, no dependencies |
-| `packages/acme-infra` | ppm | depends on `opentofu`, which lives in another source (pdt) |
+| `packages/acme-infra` | ppm | depends on `fnox`, which lives in another source (stack) |
 | `containers/whoami` | pcm | a tiny HTTP service, following pcm's conventions |
 | `containers/inspector` | pcm | an idle box with every source mounted (the `anfs-sources` mount set) |
 | `skills/acme-hello` | psm | one skill |
