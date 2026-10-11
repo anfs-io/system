@@ -148,7 +148,7 @@ system_pkg_install() {
 # Get sudo credentials with a normal prompt; on failure report what an admin has to do.
 # Returns 0 with the credential cache primed, so the caller's real command can use `sudo -n` and
 # never block an unattended install. $2 overrides the failure message for callers that need root
-# for something other than a package install (pde/bash registers brew's bash in /etc/shells).
+# for something other than a package install (stack/bash registers brew's bash in /etc/shells).
 _system_sudo() {
   local what="$1"
   local msg="${2:-Installing system packages needs sudo; ask an admin to install: $what}"

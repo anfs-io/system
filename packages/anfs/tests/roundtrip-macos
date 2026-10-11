@@ -2,14 +2,14 @@
 # The anfs round trip on macOS, in a tart VM (core/dev's `ppm vm`; Apple silicon only):
 #
 #   install.sh                       on a vanilla macOS: Xcode CLT, Homebrew, then the toolkit
-#   ppm install ai/pi                an agent, so psm has somewhere to put skills
+#   ppm install stack/pi             an agent, so psm has somewhere to put skills
 #   anfs install acme                the fixture org source, tool by tool (acme/acme-mac adds a cask)
 #   checks                           what Linux can't show: CLT, /opt/homebrew, casks, bash 3.2
 #   anfs implode [--all]             and $HOME compared with what it was before install.sh
 #
 # Usage: packages/anfs/tests/roundtrip-macos [--all]   (Apple silicon; the box is pim's
 #        anfs-test-macos image, built on first use)
-#   --all  implode with --all; before that, pde/bash makes Homebrew's bash the login shell, and
+#   --all  implode with --all; before that, stack/bash makes Homebrew's bash the login shell, and
 #          implode --all must refuse until it is changed back (the login-shell guard)
 #
 # pcm cannot run here: a macOS guest has no nested virtualization, so the podman machine pcm would
@@ -78,8 +78,8 @@ box '
   bash /src/core/install.sh
 ' | tail -n 5
 
-echo "== ppm install ai/pi, then anfs install acme"
-box 'ppm install ai/pi' >/dev/null || echo "!! ppm install ai/pi failed"
+echo "== ppm install stack/pi, then anfs install acme"
+box 'ppm install stack/pi' >/dev/null || echo "!! ppm install stack/pi failed"
 acme_out=$(box 'anfs install -y acme' 2>&1) || true
 
 status=0
@@ -94,7 +94,7 @@ check "macOS: Xcode Command Line Tools installed"    'xcode-select -p'
 check "macOS: Homebrew at /opt/homebrew, owned by owner" '[ "$(brew --prefix)" = /opt/homebrew ] && [ -O /opt/homebrew/bin ]'
 check "macOS: lib/anfs loads under /bin/bash 3.2"    '/bin/bash -c "set -euo pipefail; source ~/.local/lib/anfs/paths.sh; source ~/.local/lib/anfs/sources.sh; source ~/.local/lib/anfs/resolve.sh; anfs_gitsrc_env; anfs_sources packages; [ \${#ANFS_SRC_NAMES[@]} -gt 0 ]"'
 check "ppm: acme/hello stowed and runs"               'acme-hello | grep -q "hello from acme"'
-check "ppm: acme/acme-infra pulled in pdt/opentofu"   'ppm list --installed | grep -q "pdt/opentofu"'
+check "ppm: acme/acme-infra pulled in stack/opentofu"   'ppm list --installed | grep -q "stack/opentofu"'
 check "ppm: acme/acme-mac installed its cask"         'ppm list --installed | grep -q acme/acme-mac && [ -d /Applications/Rectangle.app ]'
 check "cli: help and completion from the registry"    'anfs help | grep -q "implode \[-y\]" && ppm completion zsh | grep -q "implode:"'
 check "pim: acme/hello validates with its from: parent" 'pim validate acme/hello debian-13'
@@ -108,7 +108,7 @@ fi
 
 if $all; then
   echo "== login-shell guard: Homebrew's bash as the login shell"
-  box 'ppm install pde/bash' >/dev/null 2>&1 || true
+  box 'ppm install stack/bash' >/dev/null 2>&1 || true
   if box 'dscl . -read ~ UserShell | grep -q /opt/homebrew/bin/bash'; then
     if box 'anfs implode -y --all' >/dev/null 2>&1; then
       echo "  FAIL  implode --all ran with Homebrew's bash as the login shell"; status=1
@@ -117,7 +117,7 @@ if $all; then
     fi
     box 'sudo -n chsh -s /bin/zsh owner' >/dev/null 2>&1
   else
-    echo "  FAIL  pde/bash did not make Homebrew's bash the login shell"; status=1
+    echo "  FAIL  stack/bash did not make Homebrew's bash the login shell"; status=1
   fi
   echo "== anfs implode --all"
   box 'anfs implode -y --all' | tail -n 5 || { echo "!! anfs implode --all failed"; status=1; }

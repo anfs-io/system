@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installing and removing packages: the install/remove commands, the hook lifecycle, and stow
 
-# Shared stow ignore list. Layers of the same package name (e.g. user/git, pde/git)
+# Shared stow ignore list. Layers of the same package name (e.g. user/git, stack/git)
 # accumulate into one list so lower-priority layers skip files stowed by higher ones.
 # install() resets it when moving on to a different package name.
 PPM_IGNORE_ARGS=()
@@ -251,7 +251,7 @@ _run_callbacks() {
 # PPM_LIB_DIR. The handler gets <repo> <pkg> <package_dir> and records what it created with
 # meta_add_resource, so removal can find it without the package directory.
 #
-# `meta:` is free-form metadata other packages read (ai/psm reads `meta.agent`), never a resource.
+# `meta:` is free-form metadata other packages read (core/psm reads `meta.agent`), never a resource.
 # A key with no handler is deliberately silent. The cost is that a misspelled resource key does
 # nothing quietly, which --debug will tell you about.
 
@@ -575,7 +575,7 @@ package_links() {
 
 # Remove links in $HOME that would conflict with stow but point at a file ppm no longer has
 # stow reports a dangling link into another package as "not owned by stow" and aborts, which is
-# what happens when a file moves between packages (pde/zsh's .inputrc to pde/cli): the old
+# what happens when a file moves between packages (stack/zsh's .inputrc to stack/cli): the old
 # package's link outlives its source. A dangling link into $ANFS_SOURCES_HOME is unambiguously ppm's
 # own leftover, so it is removed without -f. Anything else (a real file, a live link, a link
 # elsewhere) is left for stow to report.

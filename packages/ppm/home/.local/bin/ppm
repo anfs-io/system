@@ -31,12 +31,12 @@ PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
 # are sourced) so help and completion are generated from what exists
 source "$HOME/.local/lib/anfs/cli.sh"
 CLI_TOOL=ppm
-cli_cmd list       "list [filter] [--installed]"  "List available packages"
-cli_cmd install    "install [-cfrsy] <package|repo/>..." "Install packages and their dependencies
+cli_cmd list       "list [filter|@category|@] [--installed]" "List available packages (@category: its packages, @: the categories)"
+cli_cmd install    "install [-cfrsy] <package|repo/|@category>..." "Install packages and their dependencies
 -c config only (no hooks, no declared software)
 -f replace conflicting files   -r reinstall
--s skip dependencies           -y no confirmation for repo/"
-cli_cmd remove     "remove <package|repo/>..."   "Remove packages (and the software ppm installed for them)"
+-s skip dependencies           -y no confirmation for repo/ and @category"
+cli_cmd remove     "remove <package|repo/|@category>..."   "Remove packages (and the software ppm installed for them)"
 cli_cmd show       "show <package>"              "Show a package: layers, dependencies, what is installed"
 cli_cmd deps       "deps <package>"              "Show a package's dependency tree"
 cli_cmd path       "path <package>"              "Print a package's directory"

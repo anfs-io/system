@@ -7,7 +7,7 @@
 #            | host         the host's source clones are copied in, in the host's priority order:
 #                           the image gets exactly this machine's sources, offline
 #     repo: <git url>       a customization repo (install.sh --repo)
-#     packages: [pde/zsh]   installed after the toolkit
+#     packages: [stack/zsh]   installed after the toolkit
 #
 # It runs as the image's user (who has passwordless sudo, so install.sh's prompts don't block),
 # after the image's scripts and before finalize.

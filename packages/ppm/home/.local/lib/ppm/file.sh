@@ -9,7 +9,7 @@
 # Claims are recorded in $PPM_INSTALLED_DIR/claims.yml:
 #   .config/git/ignore:
 #     claimant: user/git
-#     owner: pde/git       # empty if the file was not managed by ppm
+#     owner: stack/git       # empty if the file was not managed by ppm
 # Protected paths (relative to $HOME) are recorded in $PPM_INSTALLED_DIR/protected.yml as a
 # plain list; the installer seeds them into stow's ignore list so they are left alone.
 

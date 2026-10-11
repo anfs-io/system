@@ -2,7 +2,7 @@
 # The anfs round trip, on a fresh Linux box:
 #
 #   install.sh                       the toolkit: core/anfs and everything it depends on
-#   ppm install ai/pi                an agent, so psm has somewhere to put skills
+#   ppm install stack/pi             an agent, so psm has somewhere to put skills
 #   anfs install acme                the fixture org source (packages/anfs/tests/fixtures/acme): its packages,
 #                                    containers, skills and spaces, tool by tool
 #   checks                           each tool's view of what acme put there
@@ -121,8 +121,8 @@ box '
 echo "== anfs src list"
 box 'anfs src list'
 
-echo "== ppm install ai/pi, then anfs install ${installs[*]}"
-box 'ppm install ai/pi' || echo "!! ppm install ai/pi failed"
+echo "== ppm install stack/pi, then anfs install ${installs[*]}"
+box 'ppm install stack/pi' || echo "!! ppm install stack/pi failed"
 box "anfs install -y ${installs[*]}" || echo "!! anfs install failed"
 
 status=0
@@ -139,7 +139,7 @@ check() {
 if [[ " ${installs[*]} " == *" acme "* ]]; then
   echo "== checks"
   check "ppm: acme/hello stowed and runs"            'acme-hello | grep -q "hello from acme"'
-  check "ppm: acme/acme-infra pulled in pdt/opentofu" 'ppm list --installed | grep -q "pdt/opentofu"'
+  check "ppm: acme/acme-infra pulled in stack/opentofu" 'ppm list --installed | grep -q "stack/opentofu"'
   check "pcm: whoami is running"                     'pcm ps | grep -q whoami'
   check "pcm: whoami answers on its port"            'curl -fsS localhost:8099 | grep -qi hostname'
   check "pcm: anfs-sources mount set, read via exec" 'pcm exec acme/inspector -- ls /src/acme/packages | grep -qx hello'
@@ -160,7 +160,7 @@ if [[ " ${installs[*]} " == *" lgat "* ]]; then
   echo "== checks (lgat)"
   check "ppm: lgat/lgat installed"                   'ppm list --installed | grep -q "lgat/lgat"'
   check "ppm: ruby from pde, via mise"               'mise which ruby && mise exec -- ruby -e "exit 0"'
-  check "ppm: solana pulled in pdt/rust"             'mise which cargo'
+  check "ppm: solana pulled in stack/rust"             'mise which cargo'
   check "pcm: postgres is running"                   'pcm ps | grep -q postgres'
   check "pcm: postgres accepts connections"          'c=$(podman ps --filter label=io.pcm.name=postgres --format "{{.Names}}" | head -n1); for i in $(seq 30); do podman exec "$c" pg_isready -U postgres && exit 0; sleep 2; done; exit 1'
   check "wsm: lgat's spaces installed"              'wsm path lgat/ >/dev/null'

@@ -318,7 +318,7 @@ stow_base() {
   # than hardcoded so the list follows whatever it ships. Two kinds are cleared, both of which
   # would otherwise make stow abort the whole run:
   #   - a dangling link, left when a file moved out of the package, or out of a package that is
-  #     gone (mise.zsh used to come from pde/mise)
+  #     gone (mise.zsh used to come from stack/mise)
   #   - a link already pointing into the package, i.e. one of ours from an earlier run
   # A live link into any *other* package is left alone: it belongs to a higher-priority layer
   # (user/anfs's anfs.conf is the documented case), and stow should report that as a real conflict

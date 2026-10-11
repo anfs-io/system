@@ -29,7 +29,7 @@ Priority matters because **a package can exist in several repos at once, and eac
 layer**. Installing `git` installs every `git` package in source order, sharing one ignore list, so
 a file already placed by a higher-priority layer is skipped by the ones below it. The result is
 per-file override: your repo can ship one line of git configuration and inherit everything else
-from the shared repo. Installing a single layer by name (`ppm install pde/git`) deliberately
+from the shared repo. Installing a single layer by name (`ppm install stack/git`) deliberately
 does not do this — it will conflict on files a higher layer owns, because that is the honest answer
 when you ask for exactly one layer.
 
@@ -112,10 +112,10 @@ things a subprocess cannot do to the shell that started it: `ppm cd` changes you
 successful `install`, `remove` or `src update` reloads your shell configuration, so a newly
 installed package's aliases and completions work immediately instead of after the next login.
 
-The shell *rc* files themselves belong to a shell package (`pde/zsh`, `pde/bash`), never to this
+The shell *rc* files themselves belong to a shell package (`stack/zsh`, `stack/bash`), never to this
 one. ppm must work on a machine with no shell package installed, so it ships snippets and lets
 whoever owns `.zshrc` decide to source them. The dependency only runs one way: this package's
-snippets use helpers from `pde/zsh` when they are present and degrade silently when they are not.
+snippets use helpers from `stack/zsh` when they are present and degrade silently when they are not.
 
 This package also ships mise's activation, because mise is part of ppm's bootstrap rather than a
 package: `install.sh` installs it alongside `stow` and `yq`. Packages therefore declare the mise

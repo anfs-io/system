@@ -114,7 +114,7 @@ Every source is cloned once under `~/.local/share/anfs/sources/`:
 ```
 ~/.local/share/anfs/sources/   (each directory is named by its source alias)
   core/             ← this repo (the toolkit itself; anfs-io/system)
-  stack/            ← the other default source (system.list): packages in categories
+  stack/            ← the other default source (system.list): the packages, containers and skills
   user/             ← your customization repo: the "user" source, highest priority
 ```
 
@@ -161,11 +161,12 @@ machine only, seeded by install.sh with `PPM_GROUP_ID`). Every tool loads them t
 
 ## Package Structure
 
-Each package is a directory under `<repo>/packages/<n>/`:
+Each package is a directory under `<repo>/packages/<n>/`, and every one has a `package.yml`
+(the pre-commit hook refuses a commit that would leave one without):
 
 ```
 packages/<n>/
-  package.yml     # metadata: version, author, depends
+  package.yml     # required: version, author, depends, categories...
   install.sh      # optional: pre/post_install hooks, OS-specific install
   home/           # optional: stow target → $HOME
 ```
@@ -184,6 +185,11 @@ depends:
 - `author` — package author
 - `depends` — list of package names (resolved across repos in source order)
 - No `depends` key if package has no dependencies
+- `categories` — list of groups the package belongs to (`categories: [ai]`). Only metadata:
+  names, layering and `depends:` never see it, and packages stay flat under `packages/`. A name
+  is in a category when any of its layers says so, so a user repo can add packages to one.
+  `ppm list @` lists the categories, `ppm list @ai` the layers in one, and `ppm install @ai`
+  (or `remove`) expands to its bare names, skipping those whose `platforms` exclude this machine.
 - `meta` — free-form map that ppm never reads, for other packages to read. `ai/*` agent packages
   declare `meta: {agent: <skills-cli-id>}` (one id or a list), which `psm` targets. Package
   metadata goes here rather than in a new top-level key, which would be a declared resource.
@@ -212,7 +218,7 @@ cask:
 - A tap-qualified name (`brew: {macos: [openai/tools/tart]}`) is installed from that tap, and
   ppm runs `brew trust <tap>` first: declaring it is the decision to trust the tap, and Homebrew
   otherwise refuses the formula's dependencies from the same tap.
-- `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` skips them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
+- `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` and `@category` skip them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
 - A `system` map with entries for other distros but not this one (and no `linux` key) is an error.
 - Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside stow and yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
 - Trackers record the formulas/casks ppm installed (`installed_deps`). `ppm remove` uninstalls them when no other installed package recorded or declares them. System packages are never removed.
@@ -220,7 +226,7 @@ cask:
 
 ### Declared Resources (a package.yml key ppm core does not own)
 
-ppm owns `version`, `author`, `depends`, `platforms`, `brew`, `cask`, `system` and `meta`
+ppm owns `version`, `author`, `depends`, `platforms`, `categories`, `brew`, `cask`, `system` and `meta`
 (`PPM_CORE_KEYS` in `packages.sh`). **Any other top-level key is a declared resource**: during
 `install_single_package`, right after stow and before the `install_<os>`/`post_install` hooks, ppm
 calls `ppm_resource_<key> <repo> <package> <package_dir>` — a function another package contributes
@@ -269,7 +275,7 @@ Available functions packages can call from their hooks:
 - `debug "message"` — log debug info (visible with `--debug` flag)
 - `user_message "message"` — queue a message for the user (displayed after install completes). Supports `\n` for line breaks. Auto-prefixed with `[repo/package]`.
 - `ppm_fail "message"` — signal a non-fatal install failure. Prints to stderr immediately and queues for end-of-run summary. Caller should `return` after calling.
-- `_system_sudo "<what>" ["<message>"]` — obtain sudo for a hook that needs root. Returns 0 with the credential cache primed, so the real command can use `sudo -n` and never block an unattended install; on failure it `ppm_fail`s with `<message>` (default: the system-package wording) and returns 1. `pde/bash` uses it to write `/etc/shells`. Call it right before the command that needs root, not once up front: **every `brew` command resets sudo's cached credentials** (Homebrew's `brew.sh` runs `sudo --reset-timestamp`), so a cache primed before the brew phase is gone by the time hooks run. With no terminal it uses `SUDO_ASKPASS` (`sudo -A`) when that is set, as Homebrew's own scripts do; that is how the macOS round trip runs unattended. `anfs implode --all` authenticates the same way right before Homebrew's uninstaller.
+- `_system_sudo "<what>" ["<message>"]` — obtain sudo for a hook that needs root. Returns 0 with the credential cache primed, so the real command can use `sudo -n` and never block an unattended install; on failure it `ppm_fail`s with `<message>` (default: the system-package wording) and returns 1. `stack/bash` uses it to write `/etc/shells`. Call it right before the command that needs root, not once up front: **every `brew` command resets sudo's cached credentials** (Homebrew's `brew.sh` runs `sudo --reset-timestamp`), so a cache primed before the brew phase is gone by the time hooks run. With no terminal it uses `SUDO_ASKPASS` (`sudo -A`) when that is set, as Homebrew's own scripts do; that is how the macOS round trip runs unattended. `anfs implode --all` authenticates the same way right before Homebrew's uninstaller.
 - `ppm_register_callback <function>` — call from `post_install` to hear about every later run
   (below). `ppm_unregister_callback` drops it.
 
@@ -316,7 +322,7 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
-- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `pde/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `core/dev`'s `ppm user`)
+- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `stack/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `core/dev`'s `ppm user`)
 - `~/.cache/ppm/brew_last_update`
 - Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
 
@@ -342,15 +348,15 @@ Rules:
   `<shell>/` file at *source* time; calling one at *runtime* is fine. `sh/ppm.sh` does exactly
   that: it defines the `ppm()` wrapper and calls `_ppm_shell_reload` (defined per shell) only
   after a successful `install`/`remove`/`src update`.
-- **The rc file belongs to a shell package, never to `core/anfs`.** `pde/zsh` owns
-  `.zshrc`/`.zshenv` and its sourcing loop; `pde/bash` owns `.bashrc`/`.bash_profile`. With no
+- **The rc file belongs to a shell package, never to `core/anfs`.** `stack/zsh` owns
+  `.zshrc`/`.zshenv` and its sourcing loop; `stack/bash` owns `.bashrc`/`.bash_profile`. With no
   shell package installed nothing sources anything — `ppm` still works, but `ppm cd` and mise
   activation are absent. A rc that adds the `sh/` tier must also add it to any reload helper it
-  ships (`pde/zsh` updates both `.zshrc` and `zsrc`).
+  ships (`stack/zsh` updates both `.zshrc` and `zsrc`).
 - **The rc sets the base environment before it sources any snippet** — XDG vars, `$BIN_DIR`,
   Homebrew, `$BIN_DIR` first on PATH. It must not live in a snippet: snippets guard on
   `command -v <tool>`, so a tool that isn't on PATH yet makes them silently no-op. This is why
-  `pde/zsh` keeps that block in `.zshrc` rather than in `aliases.zsh`, and `pde/bash` in
+  `stack/zsh` keeps that block in `.zshrc` rather than in `aliases.zsh`, and `stack/bash` in
   `.bashrc`. Reloading must stay idempotent (`ensure_path` strips before prepending).
 - **Re-assert Homebrew's PATH entries on every rc run, outside the `shellenv` guard.**
   `brew shellenv` forks, so it sits behind `if [ -z "$HOMEBREW_PREFIX" ]` — everything else it
@@ -364,15 +370,15 @@ Rules:
   `$BIN_DIR`, unconditionally. Each call prepends, so that order leaves `~/.local/bin` first.
 - **`ensure_path` is rc-provided base API in both shells.** `.zshrc` and `.bashrc` each define it
   before their snippet loop, so a portable `sh/` snippet may call it, not only a `zsh/` or
-  `bash/` one (`pde/ruby-tools` and `pdt/solana` do today from `.zsh`). The bash copy is written
+  `bash/` one (`stack/solana` does today from `.zsh`). The bash copy is written
   for bash 3.2.
 - **A shell whose rc path is fixed has to move the distro's file aside.** `~/.bashrc` exists on
-  stock Debian and Fedora, so `pde/bash`'s `pre_install` renames it to `.bashrc.pre-ppm` (and
+  stock Debian and Fedora, so `stack/bash`'s `pre_install` renames it to `.bashrc.pre-ppm` (and
   `post_remove` restores it); otherwise stow aborts the install and `-f` would delete it. Note
   that shipping `~/.bash_profile` also stops login bash from reading `~/.profile`, which is what
   puts `~/.local/bin` on PATH on Debian — another reason the rc owns the base environment.
-- **The shell package owns the login shell.** `pde/zsh`'s `post_install` chsh's to the distro
-  zsh; `pde/bash`'s does the same for `$(brew_prefix)/bin/bash`, **on macOS only**. There
+- **The shell package owns the login shell.** `stack/zsh`'s `post_install` chsh's to the distro
+  zsh; `stack/bash`'s does the same for `$(brew_prefix)/bin/bash`, **on macOS only**. There
   `/etc/shells` lists just `/bin/*`, and `chpass` rejects anything unlisted, so the hook
   registers the path first (`grep -qxF`, then `_system_sudo` and `sudo -n tee -a`) and only then
   chsh's — falling back to `sudo -n chsh -s <shell> <user>` because an unprivileged `chsh` cannot
@@ -383,7 +389,7 @@ Rules:
   the 3.2 being escaped. On Linux the distro bash is already 5.2+ and stays the login shell:
   brew's Linux prefix is under `/home` (may be unmounted at login via autofs or NFS), SELinux
   labels binaries there `user_home_t` not `shell_exec_t`, and brew may link its own glibc.
-  Neither package rolls the login shell back on remove — `pde/bash` does not uninstall the
+  Neither package rolls the login shell back on remove — `stack/bash` does not uninstall the
   formula, so the shell keeps working, and `/etc/shells` is machine-wide.
 - **The rc only loads for interactive shells** (`case $- in *i*)` in bash, zsh's own rule for
   `.zshrc`). So `ssh host 'ppm ...'` gets the real `ppm` binary from PATH, not the wrapper, and
@@ -391,11 +397,11 @@ Rules:
 - **Glob two levels** (`*.sh` and `*/*.sh`), which is what packages actually use
   (`~/.config/zsh/op/`, `ssh/`, `ruby/`). Don't reach for bash's `globstar`: macOS ships bash
   3.2, which doesn't have it.
-- **Guard every helper borrowed from another package.** `core/anfs`'s files use `pde/zsh`'s
+- **Guard every helper borrowed from another package.** `core/anfs`'s files use `stack/zsh`'s
   `zcomp`, `zsrc` and `load_conf` when present and degrade silently when not, because ppm must
-  not depend on a package repo. The dependency is one-way: `pde/zsh` knows nothing of ppm.
+  not depend on a package repo. The dependency is one-way: `stack/zsh` knows nothing of ppm.
 - **Don't declare software the bootstrap owns.** `core/anfs` ships mise's activation but no
-  `brew: [mise]`, and `pde/bash` declares no `brew: macos: [bash]` — both are untracked
+  `brew: [mise]`, and `stack/bash` declares no `brew: macos: [bash]` — both are untracked
   `install.sh` bootstrap formulas, and declaring them would let `ppm remove` uninstall what ppm
   itself runs on.
 
@@ -459,7 +465,10 @@ Plans are in `chorus/units/`. Follow the Chorus methodology:
 ### Git Hooks
 
 `core/dev` ships a `pre-commit` hook that bumps a package's patch version when a commit touches
-it, and creates `package.yml` for a package that has none. The files live in the package at
+it, and creates `package.yml` for a package that has none. It then refuses the commit if any
+directory under `packages/` would be left without a `package.yml` (a `package.yml` deleted on its
+own) or with one that is not a YAML map with `categories`, if present, a list (checked when `yq`
+is installed). The files live in the package at
 `packages/dev/home/.config/git/ppm-hooks/` and are stowed to `~/.config/git/ppm-hooks/`.
 
 `ppm hooks` wires them up, because **git does not carry hooks through a clone** — so this is an
@@ -510,7 +519,7 @@ live in the package at `packages/dev/home/.local/lib/ppm/move.sh`, stowed to
 and `ppm user`.
 
 ```
-ppm move <repo/package> <target-repo>      # e.g. ppm move pde/rails pdt
+ppm move <repo/package> <target-repo>      # e.g. ppm move stack/rails user
   -f, --force   move despite uncommitted changes or a broken dependency
 ```
 
@@ -614,7 +623,7 @@ End to end, on a fresh Linux box:
 
 ```
 packages/anfs/tests/roundtrip [debian|fedora] [source...]
-    # install.sh, ppm install ai/pi, anfs install acme (or the named sources), checks,
+    # install.sh, ppm install stack/pi, anfs install acme (or the named sources), checks,
     # anfs implode, then $HOME diffed against its pre-install state
 ```
 
@@ -624,7 +633,7 @@ On macOS (Apple silicon), in a tart VM from `ppm vm build macos`'s vanilla base:
 packages/anfs/tests/roundtrip-macos [--all]
     # the same sequence on a Mac with no Homebrew or CLT: install.sh installs both. Checks the CLT,
     # /opt/homebrew, a cask (acme/acme-mac), lib/anfs under /bin/bash 3.2, and with --all the
-    # login-shell guard (pde/bash makes Homebrew's bash the login shell; implode --all refuses)
+    # login-shell guard (stack/bash makes Homebrew's bash the login shell; implode --all refuses)
 ```
 
 pcm cannot run containers in the macOS VM: a macOS guest gets no nested virtualization, so the

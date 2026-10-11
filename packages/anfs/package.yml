@@ -1,4 +1,4 @@
-version: 0.2.2
+version: 0.2.3
 author: rjayroach
 # core/anfs is the toolkit: the anfs command and the libraries every tool shares (this package),
 # plus every tool and the software they run on. install.sh stows this package and core/ppm, then

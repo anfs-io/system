@@ -28,36 +28,107 @@ collect_packages() {
   done
 }
 
-# Expand repo-trailing-slash arguments into individual packages
+# --- Categories ---
+#
+# A package joins categories through `categories: [ai, ...]` in its package.yml. A category is
+# only metadata: names, layering and depends: never see it. A name is in a category when any of
+# its layers says so, so a user repo can add its own packages to a category.
+
+# package.yml of every package in the loaded sources, one path per line, in source order
+_package_metas() {
+  collect_packages
+  local p meta
+  for p in ${PACKAGES[@]+"${PACKAGES[@]}"}; do
+    meta="$ANFS_SOURCES_HOME/${p%%/*}/packages/${p#*/}/package.yml"
+    [[ -f "$meta" ]] && echo "$meta"
+  done
+}
+
+# Evaluate a yq expression over many package.yml files in one call. One malformed file stops yq,
+# so on failure fall back to a call per file, skipping and naming the ones yq can't read.
+# Usage: _yq_metas <expression> <file>...
+_yq_metas() {
+  local expr="$1" out meta
+  shift
+  [[ $# -gt 0 ]] || return 0
+  if out=$(yq -N -r "$expr" "$@" 2>/dev/null); then
+    [[ -z "$out" ]] || printf '%s\n' "$out"
+    return 0
+  fi
+  for meta in "$@"; do
+    yq -N -r "$expr" "$meta" 2>/dev/null || echo "Warning: skipping unreadable $meta" >&2
+  done
+}
+
+# Every layer ("repo/pkg") that declares a category, in source order
+# Usage: category_members <category>
+category_members() {
+  local metas=() meta
+  while IFS= read -r meta; do metas+=("$meta"); done < <(_package_metas)
+  # flatten also accepts `categories: ai`
+  C="$1" _yq_metas 'select([.categories // []] | flatten | any_c(. == strenv(C))) | filename' \
+    ${metas[@]+"${metas[@]}"} | sed "s|^$ANFS_SOURCES_HOME/||; s|/packages/|/|; s|/package.yml\$||"
+}
+
+# Every category declared in the loaded sources, with the number of packages in it
+categories_list() {
+  local metas=() meta
+  while IFS= read -r meta; do metas+=("$meta"); done < <(_package_metas)
+  # One count per name, however many layers declare it
+  _yq_metas 'filename as $f | [.categories // []] | flatten | .[] | . + " " + ($f | sub(".*/packages/", "") | sub("/package.yml$", ""))' \
+    ${metas[@]+"${metas[@]}"} | sort -u | awk '{ n[$1]++ } END { for (c in n) printf "%s  %d\n", c, n[c] }' | sort
+}
+
+# --- Expansion ---
+
+# Expand "repo/" (every package in a source) and "@category" (every name in a category) into
+# packages, skipping those this platform doesn't support. Other arguments pass through.
 # Sets EXPANDED_PACKAGES array in caller's scope
 expand_packages() {
   local verb="$1"; shift
   EXPANDED_PACKAGES=()
+  local arg label p dir supported
   for arg in "$@"; do
     if [[ "$arg" == */ ]] && is_repo_name "${arg%/}"; then
-      arg="${arg%/}"
-      collect_packages "$arg"
-      [[ ${#PACKAGES[@]} -eq 0 ]] && { echo "Error: No packages found in repo '$arg'"; exit 1; }
-      local supported=() p
-      for p in "${PACKAGES[@]}"; do
-        if meta_supported "$ANFS_SOURCES_HOME/${p%%/*}/packages/${p#*/}"; then
-          supported+=("$p")
-        else
-          echo "Skipping $p: not supported on $(platform)"
-        fi
-      done
-      [[ ${#supported[@]} -gt 0 ]] || { echo "Error: No packages in repo '$arg' support $(platform)"; exit 1; }
-      PACKAGES=("${supported[@]}")
-      if ! $force && ! ${yes:-false}; then
-        echo "About to $verb all packages (${#PACKAGES[@]}) from $arg:"
-        printf '  %s\n' "${PACKAGES[@]}"
-        read -p "Continue? [y/N] " confirm
-        [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
-      fi
-      EXPANDED_PACKAGES+=("${PACKAGES[@]}")
+      label="repo '${arg%/}'"
+      collect_packages "${arg%/}"
+    elif [[ "$arg" == @?* ]]; then
+      label="category '${arg#@}'"
+      collect_repos
+      PACKAGES=()
+      while IFS= read -r p; do
+        [[ -n "$p" ]] && PACKAGES+=("$p")
+      done < <(category_members "${arg#@}" | sed 's|.*/||' | awk '!seen[$0]++')
     else
       EXPANDED_PACKAGES+=("$arg")
+      continue
     fi
+    [[ ${#PACKAGES[@]} -eq 0 ]] && { echo "Error: No packages found in $label"; exit 1; }
+
+    supported=()
+    for p in "${PACKAGES[@]}"; do
+      # A category's bare name is judged by its highest-priority layer
+      if [[ "$p" == */* ]]; then
+        dir="$ANFS_SOURCES_HOME/${p%%/*}/packages/${p#*/}"
+      else
+        dir=$(find_package_dir "$p") && dir="${dir##*$'\t'}"
+      fi
+      if meta_supported "$dir"; then
+        supported+=("$p")
+      else
+        echo "Skipping $p: not supported on $(platform)"
+      fi
+    done
+    [[ ${#supported[@]} -gt 0 ]] || { echo "Error: No packages in $label support $(platform)"; exit 1; }
+    PACKAGES=("${supported[@]}")
+
+    if ! $force && ! ${yes:-false}; then
+      echo "About to $verb all packages (${#PACKAGES[@]}) from $label:"
+      printf '  %s\n' "${PACKAGES[@]}"
+      read -p "Continue? [y/N] " confirm
+      [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+    fi
+    EXPANDED_PACKAGES+=("${PACKAGES[@]}")
   done
 }
 
@@ -114,6 +185,14 @@ meta_version() {
   local meta="$1/package.yml"
   [[ -f "$meta" ]] || return 0
   yq -r '.version // ""' "$meta" 2>/dev/null
+}
+
+# Categories a package declares, one per line
+# Usage: meta_categories <package_dir>
+meta_categories() {
+  local meta="$1/package.yml"
+  [[ -f "$meta" ]] || return 0
+  yq -r '.categories[]? // ""' "$meta" 2>/dev/null
 }
 
 # Platforms a package supports (macos, linux, debian, fedora); nothing means every platform
@@ -173,8 +252,8 @@ meta_deps() {
 # hands it to ppm_resource_<key>, a function another package contributes through PPM_LIB_DIR.
 # A key with no handler is not an error, so an unhandled key is a debug line rather than a warning.
 # `meta:` is ppm's but ppm never reads it: a free-form map for other packages to read, such as the
-# `meta.agent` ids ai/psm syncs skills to. Put package metadata there, not in a top-level key.
-PPM_CORE_KEYS="version author depends platforms brew cask system meta"
+# `meta.agent` ids core/psm syncs skills to. Put package metadata there, not in a top-level key.
+PPM_CORE_KEYS="version author depends platforms categories brew cask system meta"
 
 # Top-level keys of a package.yml that ppm core does not own, one per line
 # Usage: meta_extra_keys <package_dir>
@@ -347,9 +426,14 @@ _tracker_remove_file() {
 # --- Commands ---
 
 # List the packages found in the cached repositories
-# Optionally filter by a substring pattern
+# Optionally filter by a substring pattern; "@category" lists that category, a bare "@" the categories
 cmd_list() {
   local filter="${1:-}" installed_only=false
+
+  case "$filter" in
+    @) collect_repos; categories_list; return ;;
+    @*) collect_repos; category_members "${filter#@}"; return ;;
+  esac
 
   if [[ "$filter" == "--installed" ]]; then
     installed_only=true
@@ -406,6 +490,10 @@ cmd_show() {
     if [[ -n "$version" ]]; then
       echo "Version: $version"
     fi
+
+    local categories
+    categories=$(meta_categories "$package_dir")
+    [[ -z "$categories" ]] || echo "Categories: $(echo $categories)"
 
     local deps
     deps=$(meta_depends "$package_dir")

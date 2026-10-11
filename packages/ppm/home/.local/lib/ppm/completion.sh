@@ -77,6 +77,8 @@ _ppm_packages_available() {
                 packages+=("${repo_name}/${pkg_name}")
             done
         done
+        local -a metas=("$sources_home"/*/packages/*/package.yml(N))
+        (( ${#metas} )) && packages+=(${(u)${(f)"$(yq -N -r '.categories[]? | "@" + .' "${metas[@]}" 2>/dev/null)"}})
     fi
 
     _describe 'package' packages

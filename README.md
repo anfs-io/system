@@ -57,7 +57,8 @@ commands.
 
 ## Getting Started
 
-`ppm list` shows every package available to you and `ppm show <package>` explains one. A package
+`ppm list` shows every package available to you, `ppm list @` the categories they are grouped in
+(`ppm install @ai` installs one), and `ppm show <package>` explains one. A package
 brings its own software with it — you never install the tool and its configuration separately —
 and several can be named at once. Some places to start:
 
@@ -157,7 +158,7 @@ curl -fsSL https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/inst
 
 If your repo is private, the installer can only clone it once the machine can authenticate to
 GitHub. When the key lives in 1Password, install its packages from
-[pde](https://github.com/anfs-io/pde) first (`ppm install op ssh`), authorize the CLI from
+[stack](https://github.com/anfs-io/stack) first (`ppm install op ssh`), authorize the CLI from
 the 1Password desktop app, and then register the repo by hand:
 
 ```bash
@@ -208,7 +209,7 @@ anfs ships a default source list and reads yours first. In priority order:
 
 | Repo | Alias | Contents |
 | --- | --- | --- |
-| [stack](https://github.com/anfs-io/stack) | `stack` | packages in categories (`ai/`, `pde/`, `pdt/`, `utils/`: `ppm install ai/`), `containers/` and `skills/` |
+| [stack](https://github.com/anfs-io/stack) | `stack` | the packages (grouped by category: `ppm list @` to see them, `ppm install @ai` for one), `containers/` and `skills/` |
 | [system](https://github.com/anfs-io/system) | `core` | this repository — last, so everything may layer over it |
 
 `anfs src list` shows what each source provides. See each repo's README for what it holds, and

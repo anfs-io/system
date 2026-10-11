@@ -151,7 +151,7 @@ ppm_fail() {
 # `ppm remove`: once the whole run is done, ppm calls <function> <install|remove> <repo/pkg>...
 # with every package that run installed (dependencies included) or removed. Registrations live
 # in $PPM_INSTALLED_DIR/callbacks.yml (repo/pkg: function) and are dropped when the package is
-# removed. ai/psm uses it to sync skills when an agent package comes or goes.
+# removed. core/psm uses it to sync skills when an agent package comes or goes.
 
 _callbacks_file() {
   echo "$PPM_INSTALLED_DIR/callbacks.yml"
