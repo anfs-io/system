@@ -7,7 +7,7 @@ tools that share one idea of where things come from:
 | Tool | Reads | Does |
 | --- | --- | --- |
 | `ppm` | `packages/` | software and dotfiles: a manifest of what a package needs, files symlinked with GNU Stow |
-| `pcm` | `containers/` | podman compose services, with their configuration schema and dependencies |
+| [`pcm`](packages/pcm/README.md) | `containers/` | podman compose services, with their configuration schema and dependencies |
 | `psm` | `skills/` | agent skills, synced to every AI agent installed |
 | `wsm` | `spaces/` | workspaces: where they live, what they depend on, the repos inside them |
 | `anfs` | — | the sources every tool reads, and the commands that span them |
@@ -194,7 +194,7 @@ also works on its own.
 | --- | --- |
 | [`anfs`](packages/anfs/README.md) | the anfs command, the libraries every tool shares, the source list and `anfs.conf`; depends on everything below |
 | [`ppm`](packages/ppm/README.md) | the package manager: its command, libraries and shell integration |
-| `pcm` | Personal Container Manager |
+| [`pcm`](packages/pcm/README.md) | Personal Container Manager |
 | `psm` | Personal Skills Manager |
 | [`wsm`](packages/wsm/README.md) | work space manager |
 | `podman`, `varlock`, `node` | what pcm and psm run on |
