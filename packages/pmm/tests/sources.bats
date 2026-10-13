@@ -158,6 +158,11 @@ setup() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"not 'images' or 'networks'"* ]]
   ! mach_exists networks
+  # pmm-image-... are the builds in tart's store, and a tart machine is pmm-<name>
+  run cli_call run deb --name image-deb-test
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not 'image-...'"* ]]
+  ! mach_exists image-deb-test
   run cli_call run deb --name images --no-start
   [ "$status" -ne 0 ]
   ! mach_exists images

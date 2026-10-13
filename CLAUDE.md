@@ -47,7 +47,8 @@ machines/networks/<name>/      a network (network.yml)
   snapshots and the runtime record, so the machine `web1` is the highest-priority source's `web1`.
   A definition a higher one shadows is listed and nothing else.
   `images` and `networks` are not machine names: they are the directories beside the machines,
-  and `validate` and `run --name` refuse them.
+  and `validate` and `run --name` refuse them. So is `image-...`: a tart machine is the VM
+  `pmm-<name>`, and `pmm-image-...` are the builds.
 - **A machine is defined or was run from an image.** `pmm run debian-13 --cpus 4` makes a machine
   from the image and starts it: named for the image, then `debian-13-2`, or `--name`. It writes
   no definition. The settings from the command line are `settings:` in the machine's own
@@ -626,7 +627,9 @@ cannot go stale.
   what is typed can be nothing else (`rm<TAB>`).
 - Options are offered only once a `-` is typed.
 - An argument or an option's value completes by its kind: the tool's `complete_<kind>` function
-  (one candidate per line), a path for `dir` and `file`, nothing otherwise.
+  (one candidate per line), a path for `dir` and `file`, nothing otherwise. The arguments
+  already on the line are in `CLI_COMPLETE_ARGS`, for one that depends on them: pmm's
+  `complete_snapshot` lists the snapshots of the machine before it.
 - **`complete_<kind>` functions must be fast: file names only, no yq, no git, no list command.**
   A tab press starts the tool (25 to 40 ms) and runs one of these; the whole is under 100 ms, and
   `registry.bats` holds the library to that. `wsm ls` takes 240 ms, which is why completion does

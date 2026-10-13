@@ -192,17 +192,32 @@ cmd_run() {
   yq -i '{"settings": .}' "$MACH_DRAFT"
   ! $rm || yq -i '.rm = true' "$MACH_DRAFT"
   if ! validate_quiet "$id"; then
-    rm -f "$MACH_DRAFT"
-    MACH_DRAFT=""
+    _draft_drop
     die "$name was not made: its settings do not validate"
   fi
-  # the limit is checked before anything is cloned
-  ! $start || [[ "$(_def_backend "$id")" != tart ]] || macos_limit "$name"
-  machine_make "$name" "$id"
-  rm -f "$MACH_DRAFT"
-  MACH_DRAFT=""
+  # In a subshell, so that the draft goes whatever stops the making (an image that does not
+  # build dies in there). Not in an || list: errexit must stay on inside it.
+  set +e
+  (
+    set -e
+    # the limit is checked before anything is cloned
+    ! $start || [[ "$(_def_backend "$id")" != tart ]] || macos_limit "$name"
+    machine_make "$name" "$id"
+  )
+  n=$?
+  set -e
+  _draft_drop
+  [[ $n -eq 0 ]] || exit "$n"
   if $start; then cli_call up "$name"; fi
   anfs_result name "$name" image "$(state_get "$name" .image)" key "$(state_get "$name" .key)"
+}
+
+# The draft is gone once the machine has its record, or was not made; so is its directory, which
+# is nothing a run should leave behind
+_draft_drop() {
+  rm -f "$MACH_DRAFT"
+  rmdir "$PMM_STATE_HOME/draft" 2>/dev/null || true
+  MACH_DRAFT=""
 }
 
 # A machine `run --rm` made goes when it is shut down

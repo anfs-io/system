@@ -40,6 +40,7 @@ cli_standard
 
 complete_thing() { printf 'alpha\tthe first\nbeta\n'; }
 complete_spec() { echo "src/ws"; }
+complete_word() { printf 'of:%s\n' "\${CLI_COMPLETE_ARGS[*]}"; }
 cli_dispatch "\$@"
 SH
   chmod +x "$TOOL"
@@ -241,6 +242,16 @@ complete() { "$TOOL" __complete "$@"; }
   [ -z "$output" ]
   run complete link add ""
   [ "$output" = ":dirs" ]
+}
+
+@test "a completion function is told the arguments before the one being typed" {
+  run complete run alpha ""
+  [ "$output" = "of:alpha" ]
+  # options and their values are not arguments
+  run complete run alpha x ""
+  [ "$output" = "of:alpha x" ]
+  run complete up --share /x alpha ""
+  [ -z "$output" ]
 }
 
 @test "an option's value completes by the option's kind, and does not count as an argument" {

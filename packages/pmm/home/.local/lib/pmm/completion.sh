@@ -22,6 +22,17 @@ complete_machine() {
     done
   } | awk '!seen[$0]++'
 }
+# The snapshots of the machine already on the line. A qemu machine's only: a tart machine's are
+# clones in tart's store, and asking tart is not for a tab press
+complete_snapshot() {
+  local d
+  [[ ${#CLI_COMPLETE_ARGS[@]} -gt 0 ]] || return 0
+  for d in "$PMM_DATA_HOME/snapshots/${CLI_COMPLETE_ARGS[0]##*/}"/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/}"
+  done
+}
 # What install takes: a machine, or source/ for everything a source defines
 complete_machine_spec() {
   local d

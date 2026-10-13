@@ -25,7 +25,7 @@ cli_cmd down "Shut machines down (guest poweroff, then QMP, then kill)" --alias 
 cli_cmd shell "Log in to a running machine" \
   --alias ssh --passthrough --opt "-u --user USER: As that user" --arg "machine" --arg "[word...]"
 cli_cmd exec "Run a command in a running machine: <machine> -- <cmd>..." \
-  --passthrough --opt "-u --user USER: As that user" --arg "machine" --arg "word..."
+  --passthrough --opt "-u --user USER: As that user" --arg "machine" --arg "cmd..."
 cli_cmd ps "Running machines: NAME ARCH BACKEND PID SSH"
 cli_cmd list "Every machine, defined, made or running: NAME SOURCE IMAGE STATE ADDRESS" --alias ls
 cli_cmd show "Settings, the build it is on, snapshots" --arg "machine"

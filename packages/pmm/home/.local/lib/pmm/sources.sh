@@ -22,9 +22,10 @@ all_ids()       { catalog_all_ids; }
 effective_ids() { catalog_effective_ids; }
 
 name_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]*$ ]]; }
-# A machine's name: not `images` or `networks`, which are the directories beside the machines
-mach_name_ok() { name_ok "$1" && [[ "$1" != images && "$1" != networks ]]; }
-PMM_NAME_RULE="lowercase letters, digits, . _ - (not 'images' or 'networks': those are machines/'s own directories)"
+# A machine's name: not `images` or `networks`, which are the directories beside the machines,
+# and not `image-...`: a tart machine is the VM pmm-<name>, and pmm-image-... are the builds
+mach_name_ok() { name_ok "$1" && [[ "$1" != images && "$1" != networks && "$1" != image-* ]]; }
+PMM_NAME_RULE="lowercase letters, digits, . _ - (not 'images' or 'networks': those are machines/'s own directories; not 'image-...': those are the builds' names)"
 
 # Resolve a machine spec. Sets M_NAME, and M_ID to where its settings are: its definition's id,
 # `-/<name>` for a machine run from an image (its record has them), or nothing for a machine

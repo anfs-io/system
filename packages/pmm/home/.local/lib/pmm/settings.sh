@@ -186,7 +186,7 @@ state_write() {
   IMAGE="$2" ARCH="$3" BACKEND="$4" KEY="$5" DISK="$6" USER_="$7" SSHKEY="$8" BU="${9:-}" BP="${10:-}" AT="$(now_iso)" \
     yq -n '.image = strenv(IMAGE) | .arch = strenv(ARCH) | .backend = strenv(BACKEND) | .key = strenv(KEY)
            | .base = strenv(DISK) | .user = strenv(USER_) | .sshkey = strenv(SSHKEY) | .created_at = strenv(AT)
-           | .boot = (strenv(BU) | select(. != "") | {"user": ., "password": strenv(BP)})' > "$f.tmp"
+           | with(select(strenv(BU) != ""); .boot = {"user": strenv(BU), "password": strenv(BP)})' > "$f.tmp"
   chmod 600 "$f.tmp"
   mv "$f.tmp" "$f"
 }

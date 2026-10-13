@@ -32,7 +32,8 @@
 #
 #   A kind is what completion needs. A tool with a function complete_<kind> is asked for
 #   candidates (one per line, optionally <TAB>description); `dir` and `file` complete paths; any
-#   other kind completes nothing.
+#   other kind completes nothing. For an argument that depends on the ones before it (a machine's
+#   snapshots), the function finds those in CLI_COMPLETE_ARGS.
 #
 # RECEIVING
 #   The function gets the positional arguments as "$@" and the options in CLI_OPT, keyed by the
@@ -650,6 +651,7 @@ _cli_complete_names() {
 _cli_complete() {
   local cur="" rc=0 name short long kind help spec n=0 i want=""
   local -a words=() specs=()
+  CLI_COMPLETE_ARGS=()
   [[ $# -eq 0 ]] || { cur="${*: -1}"; words=("${@:1:$#-1}"); }
   # The options before the command are not the command's
   while [[ ${#words[@]} -gt 0 ]]; do
@@ -701,6 +703,7 @@ _cli_complete() {
       continue
     fi
     n=$((n + 1))
+    CLI_COMPLETE_ARGS+=("${words[$i]}")
   done
   while IFS= read -r spec; do
     [[ -z "$spec" ]] || specs+=("$spec")

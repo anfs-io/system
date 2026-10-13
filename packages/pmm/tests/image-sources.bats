@@ -106,3 +106,20 @@ setup() { setup_images; }
   run "$PMM" __complete run ""
   [ "$(sort <<< "$output" | paste -sd' ' -)" = "acme/web mine web" ]
 }
+
+@test "completion: image names in under 100 ms" {
+  [[ -n "${EPOCHREALTIME:-}" ]] || skip "no microsecond clock in this bash"
+  add_source acme
+  image "$T/srcs/acme/machines/images/web" "$(deb_yml)"
+  image "$PMM_IMAGES_HOME/mine" "$(deb_yml)"
+  local start end best=999999 i
+  # The best of three, as registry.bats measures the library: the first run pays for a cold file cache
+  for i in 1 2 3; do
+    start="${EPOCHREALTIME/[.,]/}"
+    "$PMM" __complete image build "" >/dev/null
+    end="${EPOCHREALTIME/[.,]/}"
+    (( end - start >= best )) || best=$(( end - start ))
+  done
+  echo "best of three: $(( best / 1000 )) ms"
+  (( best / 1000 < 100 ))
+}

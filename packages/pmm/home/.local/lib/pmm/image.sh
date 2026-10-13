@@ -62,7 +62,7 @@ img_user() { img_get "$(img_root "$1")" .user.name pmm; }
 img_pick_arch() {
   local id="$1" want="${2:-}"
   want=$(arch_norm "${want:-$(host_arch)}")
-  img_arches "$id" | grep -qx "$want" || die "$id supports $(img_arches "$id" | paste -sd, -), not $want (--arch)"
+  grep -qx "$want" <<< "$(img_arches "$id")" || die "$id supports $(img_arches "$id" | paste -sd, -), not $want (--arch)"
   echo "$want"
 }
 

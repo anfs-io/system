@@ -33,6 +33,8 @@ teardown() {
   [ "$(state_get web1 .image)" = local/deb ]
   [ "$(state_get web1 .key)" = "$KEY" ]
   [ "$(state_get web1 .user)" = pmm ]
+  # a boot account is the stock image's (tart): this build has none
+  ! grep -q '^boot:' "$(state_file web1)"
   [ "$(held deb)" = web1 ]
   ! grep -q qemu-system "$PMM_CALLS"
   [ "$(mach_state web1)" = stopped ]
@@ -77,7 +79,17 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"image 'nope' not found"* ]]
   ! mach_exists web3
-  [ ! -e "$PMM_STATE_HOME/draft/web3.yml" ]
+  [ ! -e "$PMM_STATE_HOME/draft" ]
+  # settings that do not validate, and a making that dies part way: no draft is left either
+  run cli_call run deb --name web3 --memory bogus
+  [ "$status" -ne 0 ]
+  [ ! -e "$PMM_STATE_HOME/draft" ]
+  image_ensure_built() { die "the build failed"; }
+  run cli_call run deb --name web3
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the build failed"* ]]
+  ! mach_exists web3
+  [ ! -e "$PMM_STATE_HOME/draft" ]
 }
 
 @test "run: the settings live with the disk: down, then up, starts it with them; remove leaves no trace" {
@@ -106,6 +118,7 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = "Removed deb" ]
   [ ! -e "$PMM_DATA_HOME/machines/deb" ] && [ ! -e "$PMM_STATE_HOME/run/deb" ]
+  [ ! -e "$PMM_STATE_HOME/draft" ]
   [ "$(find "$PMM_CONFIG_HOME" | sort)" = "$before" ]
   [ -z "$(held deb)" ]
   ANFS_JSON=true run cmd_list
@@ -226,6 +239,13 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$(mach_snapshots web1)" =~ ^[0-9]{8}-[0-9]{6}$ ]]
   cli_call "snapshot create" web1 s1 >/dev/null
+  # tab completes the snapshots of the machine on the line
+  run "$PMM" __complete snapshot remove web1 ""
+  [[ "$(sort <<< "$output" | tail -n 1)" == s1 ]] && [ "${#lines[@]}" -eq 2 ]
+  run "$PMM" __complete reset -y web1 ""
+  [ "${#lines[@]}" -eq 2 ]
+  run "$PMM" __complete reset other ""
+  [ -z "$output" ]
   run cli_call "snapshot remove" web1 s1 </dev/null
   [ "$status" -ne 0 ]     # asks
   run cli_call "snapshot remove" -y web1 nope
