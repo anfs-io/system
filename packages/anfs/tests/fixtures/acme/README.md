@@ -9,6 +9,9 @@ A stand-in for a real org repo (lgat): one source holding every resource kind, s
 | `packages/acme-infra` | ppm | depends on `fnox`, which lives in another source (stack) |
 | `containers/whoami` | pcm | a tiny HTTP service, following pcm's conventions |
 | `containers/inspector` | pcm | an idle box with every source mounted (the `anfs-sources` mount set) |
+| `images/hello` | pim | an image built on anfs's `debian-13` (`from:`) |
+| `machines/hello` | pmm | a machine from that image |
+| `networks/lab` | pmm | an isolated network; validated, installed nowhere |
 | `skills/acme-hello` | psm | one skill |
 | `spaces/org`, `spaces/tech` | wsm | `tech` depends on `org` |
 

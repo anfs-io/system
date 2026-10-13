@@ -1,0 +1,9 @@
+version: 0.1.0
+author: rjayroach
+# What pmm's networks need of a Linux host, and the one sudo that sets it up (install.sh). Kept
+# out of pmm so that installing pmm asks for nothing: only a host that wants networks installs
+# this. libvirt is used for networks alone (the bridge, DHCP, DNS); pmm starts every machine.
+# Debian only so far. ppm never removes system packages.
+depends: [pmm]
+system:
+  debian: [libvirt-daemon-system, libvirt-clients, libnss-libvirt, dnsmasq-base]

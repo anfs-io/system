@@ -21,6 +21,8 @@ source "$ANFS_LIB/callbacks.sh"
 source "$ANFS_LIB/sources.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/catalog.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/iso.sh"
 anfs_tool_paths pim
 anfs_gitsrc_env
 : "${PIM_IMAGES_HOME:=$PIM_CONFIG_HOME/images}"
@@ -54,7 +56,9 @@ Definition: images/<name>/ in a source
                  from: <image>     a qcow2 overlay on another image's build; resolves to the
                                    same or a lower-priority source, like a dependency
                  base: <oci image>                                        (tart)
-                 disk: 20G  memory: 2048  cpus: 2
+                 disk: 20G  memory: 2048  cpus: 2     the disk's size; what a build boots with
+                 machine: {profile: medium, min: {cpus: 2, memory: 4G, disk: 20G}}
+                                   for pmm: the profile its machines get, and their minimums
                  user: {name: pim, password_hash: <crypt>, authorized_keys: [...]}
                  vars: {HOSTNAME: x, ...}     ${VAR}s for the answer file
                  scripts: {defaults: true}    false skips the distro's default scripts
@@ -73,10 +77,12 @@ first boot, machine-id). Builds are cached by a hash of the definition, its scri
 and the parent's build; `build` is a no-op while that hash is unchanged.
 
 Access: each root image gets its own ssh key ($PIM_DATA_HOME/keys/<image>); the user's
-password is locked unless user.password_hash is set. VMs forward ssh on 127.0.0.1 only.
+password is locked unless user.password_hash is set.
 
-Files: ISOs in $PIM_CACHE_HOME/isos, builds in $PIM_DATA_HOME/images/<name>/<arch>/,
-VM disks in $PIM_DATA_HOME/vms/<name>/, runtime state in $PIM_STATE_HOME/run/<name>/.
+Running an image is pmm's: `pmm up --image <image>`, or any number of named machines from it
+(pmm help). A build a machine is based on is held: clean keeps it, remove refuses.
+
+Files: ISOs in $ANFS_ISO_HOME (~/.cache/anfs/isos, shared with ventoy and pmm), builds in $PIM_DATA_HOME/images/<name>/<arch>/.
 EOF
 }
 

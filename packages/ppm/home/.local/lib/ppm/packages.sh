@@ -253,7 +253,7 @@ meta_deps() {
 # A key with no handler is not an error, so an unhandled key is a debug line rather than a warning.
 # `meta:` is ppm's but ppm never reads it: a free-form map for other packages to read, such as the
 # `meta.agent` ids core/psm syncs skills to. Put package metadata there, not in a top-level key.
-PPM_CORE_KEYS="version author depends platforms categories brew cask system meta"
+PPM_CORE_KEYS="version author depends platforms categories brew cask system meta onboard"
 
 # Top-level keys of a package.yml that ppm core does not own, one per line
 # Usage: meta_extra_keys <package_dir>

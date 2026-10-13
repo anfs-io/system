@@ -7,13 +7,15 @@
 # images), named by pim:
 #
 #   pim-<name>-<key>        a build (stopped; cloned, never booted read-write)
-#   pim-<name>              the image's VM (pim up)
-#   pim-<name>-snap-<snap>  a snapshot of it
 #   pim-<name>-building     a build in progress
+#   pim-<name>-verify       the throwaway copy `pim verify` boots
+#
+# Machines made from a build are pmm's (pmm-<name>); pmm sources this file for what starts, reaches
+# and stops a tart VM, so those functions take the VM and what they need, never an image id.
 #
 # Clones are APFS copy-on-write, so they cost seconds and almost no disk. The stock image's own
 # account (user.bootstrap, default admin/admin) is used once with its password to install the
-# image's key; scripts then run as root through its sudo. user.name is who `pim shell` logs in as
+# image's key; scripts then run as root through its sudo. user.name is who `pmm shell` logs in as
 # (a script creates it and authorizes $PIM_SSH_PUBKEY when it is not the bootstrap account).
 #
 # Shutting down is from inside the guest, then waiting for tart: `tart stop` can return while the
@@ -24,7 +26,13 @@ tart_vm_build() { echo "pim-$1-$2"; }
 _tart_names() {
   tart list --format json 2>/dev/null | yq -p json -r '.[] | select(.Source == "local") | .Name' 2>/dev/null
 }
-tart_exists() { _tart_names | grep -qx "$1"; }
+# The names are read whole first: grep -q leaves at its first match, and under pipefail a writer
+# cut short by that would make the answer "no"
+tart_exists() {
+  local names
+  names=$(_tart_names) || true
+  grep -qx "$1" <<< "$names"
+}
 _tart_state() {
   tart list --format json 2>/dev/null | yq -p json -r ".[] | select(.Name == \"$1\") | .State" 2>/dev/null
 }
@@ -83,12 +91,11 @@ _tart_wait() {  # <secs> <command...>: until the command succeeds
 }
 
 # --dir arguments for shares: path[:tag][:ro]; a path ending in /* is each directory in it, tagged
-# by its name. Extra specs (pim up --share) come first, and win over an image share of the same
-# tag. In the guest they appear under "/Volumes/My Shared Files/<tag>".
-# Usage: _tart_dirs <id> [extra spec...]
+# by its name. An earlier spec wins over a later one of the same tag. In the guest they appear
+# under "/Volumes/My Shared Files/<tag>".
+# Usage: _tart_dirs [spec...]
 _tart_dirs() {
-  local id="$1" spec path tag ro d tags=" "
-  shift
+  local spec path tag ro d tags=" "
   TART_DIRS=()
   while IFS= read -r spec; do
     [[ -n "$spec" ]] || continue
@@ -109,7 +116,7 @@ _tart_dirs() {
       tags+="$tag "
       TART_DIRS+=("--dir=$tag:$(cd "$path" && pwd -P)$ro")
     fi
-  done < <(printf '%s\n' "$@"; img_list "$id" .shares)
+  done < <(printf '%s\n' "$@")
 }
 
 # Boot a VM headless in the background (tart has no daemon: the process is the VM); prints its pid
@@ -212,60 +219,6 @@ tart_build() {
   echo "Built $id (tart) in $(( $(date +%s) - start ))s: $built"
 }
 
-tart_running() {
-  local r
-  r=$(run_dir "$1")
-  [[ -f "$r/pid" ]] && pid_alive "$(cat "$r/pid")"
-}
-
-tart_up() {
-  local id="$1" fresh="$2" name key built inst r pid ip sshkey user
-  shift 2
-  name=$(img_name "$id")
-  key=$(meta_get "$name" arm64 .cache_key)
-  built=$(tart_vm_build "$name" "$key")
-  inst="pim-$name"
-  tart_exists "$built" || die "$id has no tart build (pim build $id)"
-  $fresh && tart delete "$inst" >/dev/null 2>&1 || true
-  tart_exists "$inst" || tart clone "$built" "$inst"
-  sshkey=$(pim_key "$id")
-  user=$(img_user "$id")
-  _tart_dirs "$id" "$@"
-  r=$(run_dir "$name")
-  mkdir -p "$r"
-  pid=$(_tart_run "$inst" "$r/tart.log" ${TART_DIRS[@]+"${TART_DIRS[@]}"})
-  printf '%s\n' "$pid" > "$r/pid"
-  printf '%s\n' tart > "$r/backend"
-  printf '%s\n' arm64 > "$r/arch"
-  printf '%s\n' "$user" > "$r/user"
-  printf '%s\n' "$sshkey" > "$r/key"
-  printf '%s\n' "$id" > "$r/id"
-  ip=$(tart ip "$inst" --wait 180 2>/dev/null) || die "$inst got no address; see $(tilde "$r/tart.log")"
-  printf '%s\n' "$ip" > "$r/ip"
-  printf '%s\n' 22 > "$r/port"
-  _tart_wait "$PIM_SSH_TIMEOUT" _tart_ssh "$sshkey" "$ip" "$user" true || die "no ssh to $user@$ip"
-  echo "$name is up: pim shell $name  (ssh $user@$ip -i $(tilde "$sshkey"))"
-}
-
-tart_shell() {
-  local name="$1" user="$2" r ip
-  shift 2
-  r=$(run_dir "$name")
-  ip=$(tart ip "pim-$name" --wait 30 2>/dev/null) || die "pim-$name has no address"
-  if [[ $# -gt 0 ]]; then _tart_ssh "$(cat "$r/key")" "$ip" "$user" "$*"
-  elif [[ -t 0 ]]; then _tart_ssh "$(cat "$r/key")" "$ip" "$user" -t
-  else _tart_ssh "$(cat "$r/key")" "$ip" "$user" bash -s
-  fi
-}
-
-tart_stop() {
-  local name="$1" r ip
-  r=$(run_dir "$name")
-  _tart_boot "$(cat "$r/id")"
-  ip=$(tart ip "pim-$name" --wait 10 2>/dev/null || cat "$r/ip")
-  _tart_shutdown "pim-$name" "$(cat "$r/pid")" "$(cat "$r/key")" "$ip"
-}
-
 tart_verify() {
   local id="$1" name key built vm script pid ip sshkey user log rc=0
   name=$(img_name "$id")
@@ -282,7 +235,9 @@ tart_verify() {
   mkdir -p "$log"
   tart delete "$vm" >/dev/null 2>&1 || true
   tart clone "$built" "$vm"
-  _tart_dirs "$id"
+  local -a shares=()
+  mapfile -t shares < <(img_list "$id" .shares)
+  _tart_dirs ${shares[@]+"${shares[@]}"}
   echo "== verify $id (tart, $key) with $(tilde "$script")"
   pid=$(_tart_run "$vm" "$log/verify.log" ${TART_DIRS[@]+"${TART_DIRS[@]}"})
   if ip=$(tart ip "$vm" --wait 180 2>/dev/null) && _tart_wait 300 _tart_ssh "$sshkey" "$ip" "$user" true; then
@@ -301,39 +256,6 @@ tart_verify() {
   fi
   return $rc
 }
-
-tart_snapshot() {
-  local id="$1" snap="$2" name inst was=false
-  name=$(img_name "$id")
-  inst="pim-$name"
-  tart_exists "$inst" || die "$name has no VM yet (pim up $name)"
-  vm_running "$name" && { was=true; vm_stop "$name"; }
-  tart delete "$inst-snap-$snap" >/dev/null 2>&1 || true
-  tart clone "$inst" "$inst-snap-$snap"
-  echo "Saved snapshot $snap of $name (pim reset $name $snap)"
-  # Recreated from the snapshot rather than restarted: a restarted original has been seen to come
-  # back without the writes the clone captured
-  if $was; then
-    tart delete "$inst" >/dev/null
-    tart clone "$inst-snap-$snap" "$inst"
-    tart_up "$id" false
-  fi
-}
-
-tart_reset() {
-  local id="$1" snap="$2" name inst was=false
-  name=$(img_name "$id")
-  inst="pim-$name"
-  [[ -z "$snap" ]] || tart_exists "$inst-snap-$snap" || die "$name has no snapshot '$snap'"
-  vm_running "$name" && { was=true; vm_stop "$name"; }
-  tart delete "$inst" >/dev/null 2>&1 || true
-  [[ -z "$snap" ]] || tart clone "$inst-snap-$snap" "$inst"
-  echo "Reset $name${snap:+ to $snap}"
-  $was && tart_up "$id" false
-  return 0
-}
-
-tart_snapshots() { _tart_names | sed -n "s/^pim-$1-snap-//p" || true; }
 
 tart_rm() {
   # tart creates its home on any command; a machine that never ran tart has none to clean

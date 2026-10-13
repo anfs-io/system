@@ -26,4 +26,3 @@ complete_image_spec() {
   done
 }
 complete_arch() { printf '%s\n' arm64 amd64; }
-complete_snapshot() { :; }

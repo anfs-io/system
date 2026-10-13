@@ -59,6 +59,10 @@ cmd_implode() {
     # The package's repo is gone, or remover found no layer: undo what the tracker recorded
     meta_is_installed "$repo" "$pkg" && _implode_orphan "$repo" "$pkg"
   done
+  # What -f moved aside and no package removal put back (its package is gone, or the path was
+  # still taken then): the backup dir goes with the state dir below, so it all goes home now
+  PPM_CURRENT_PACKAGE=""
+  _backup_restore "" .pre-ppm
   flush_user_messages
 
   # Links into the sources that no tracker knew about (a tracker lost, a file moved by hand)

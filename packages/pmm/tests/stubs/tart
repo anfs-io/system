@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# tart, as far as pmm and pim's builds list use it: a VM is a file in $TART_STUB holding its state
+# (running or stopped). `run` runs until killed, as the real one does.
+echo "tart $*" >> "$PIM_CALLS"
+cmd="$1"; shift
+case "$cmd" in
+  list)
+    first=true
+    printf '['
+    for f in "$TART_STUB"/*; do
+      [[ -f "$f" ]] || continue
+      $first || printf ','
+      first=false
+      state=$(cat "$f")
+      printf '{"Source":"local","Name":"%s","State":"%s","Running":%s}' "$(basename "$f")" "$state" "$([[ "$state" == running ]] && echo true || echo false)"
+    done
+    printf ']\n' ;;
+  get) [[ -f "$TART_STUB/$1" ]] && echo '{"OS":"darwin"}' ;;
+  clone) [[ -f "$TART_STUB/$1" ]] || exit 1; echo stopped > "$TART_STUB/$2" ;;
+  rename) mv "$TART_STUB/$1" "$TART_STUB/$2" ;;
+  delete) [[ -f "$TART_STUB/$1" ]] || exit 2; rm -f "$TART_STUB/$1" ;;
+  set) : ;;
+  stop) echo stopped > "$TART_STUB/$1" ;;
+  ip) echo 192.168.64.9 ;;
+  run)
+    for a; do vm="$a"; done
+    echo running > "$TART_STUB/$vm"
+    sleep 300 >/dev/null 2>&1 &
+    pid=$!
+    trap 'echo stopped > "$TART_STUB/$vm"; kill "$pid" 2>/dev/null; exit 0' TERM
+    wait "$pid" ;;
+esac

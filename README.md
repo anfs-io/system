@@ -97,10 +97,11 @@ are per project rather than per machine.
 **Then make it yours**
 
 ```bash
-ppm customize
+anfs onboard
 ```
 
-This creates a git repo for your own machine configuration and puts it at the top of your source
+This offers the packages that take part in onboarding (git and GitHub, ssh, 1Password), walks
+through the steps they bring one at a time, and creates a git repo for your own machine configuration and puts it at the top of your source
 list, so from then on your packages and your edits override the shared ones — file by file, without
 forking anything. It is the step that turns ppm from someone else's setup into yours, and it is
 what lets the next machine be one command. See
@@ -119,7 +120,9 @@ installs the irreducible prerequisites and then hands over to ppm itself:
 - anfs itself, by stowing its two base packages, [`anfs`](packages/anfs/README.md) and
   [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
   `~/.config/anfs/` (your source list, `anfs.local.conf`)
-- `anfs src update`, then any packages you named, then `ppm install core/anfs`: the rest of the
+- `anfs src update`, then the package for your login shell (`stack/bash` or `stack/zsh`: it is
+  what puts Homebrew on the PATH of a new shell; `--no-shell` skips it), then any packages you
+  named, then `ppm install core/anfs`: the rest of the
   toolkit — `pcm`, `psm`, `wsm` — and the software they run on (podman, varlock, node). On macOS
   the podman machine is created the first time `pcm up` needs it, not at install.
 
@@ -138,7 +141,7 @@ to ask the owner to run.
 
 ## A New Machine From Your Own Repo
 
-Once you have a customization repo (see [`ppm customize`](packages/ppm/README.md#your-own-repo)),
+Once you have a customization repo (see [`anfs onboard`](packages/ppm/README.md#your-own-repo)),
 pass its URL to the installer. It is registered as the `user` source — the highest priority one —
 and its `anfs` package is installed, which brings your source list and settings with it:
 

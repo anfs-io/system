@@ -46,9 +46,10 @@ arch_qemu() {
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # A short directory for UNIX sockets: macOS caps socket paths at 104 bytes, and $PIM_STATE_HOME
-# (or a test's tmp dir) can be longer than that
+# (or a test's tmp dir) can be longer than that. [tool] is whose it is (default pim): pmm keeps
+# its machines' sockets in its own, which pim's implode leaves alone
 sock_dir() {
-  local d="/tmp/pim-$(id -u)"
+  local d="/tmp/${1:-pim}-$(id -u)"
   mkdir -p "$d" && chmod 700 "$d"
   echo "$d"
 }
@@ -60,11 +61,14 @@ port_open() {
   return 0
 }
 
-# A free localhost port from PIM_SSH_PORT_BASE up, skipping ports recorded for running VMs
+# A free localhost port from PIM_SSH_PORT_BASE up, skipping ports recorded for builds in progress
+# and, in each [dir] given, for running machines (<dir>/*/port)
 free_port() {
-  local p="$PIM_SSH_PORT_BASE" taken=" " f
-  for f in "$PIM_STATE_HOME"/run/*/port "$PIM_STATE_HOME"/build/*/port; do
-    [[ -f "$f" ]] && taken+="$(cat "$f") "
+  local p="$PIM_SSH_PORT_BASE" taken=" " f d
+  for d in "$PIM_STATE_HOME/build" "$@"; do
+    for f in "$d"/*/port; do
+      [[ -f "$f" ]] && taken+="$(cat "$f") "
+    done
   done
   while [[ "$taken" == *" $p "* ]] || port_open "$p"; do
     p=$((p + 1))

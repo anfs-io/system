@@ -199,6 +199,7 @@ remover() {
       if ! ${keep_tracker:-false}; then
         _remove_declared_resources "$repo_name" "$pkg_name"
         _remove_installed_deps "$repo_name" "$pkg_name" "$pkg_dir"
+        _backup_restore "$repo_name/$pkg_name"
         meta_mark_removed "$repo_name" "$pkg_name"
         _callback_unregister "$repo_name/$pkg_name"
         PPM_REMOVED+=("$repo_name/$pkg_name")
@@ -608,17 +609,83 @@ _link_points_into() {
   [[ "$dest" == "${dir#$HOME/}/"* ]]
 }
 
-# Remove files from $HOME that would conflict with stow
-# Files in PPM_IGNORE_ARGS (stowed by a previous subdir or higher-priority layer) are kept
+# Clear what in $HOME would conflict with stow (-f)
+# Files in PPM_IGNORE_ARGS (stowed by a previous subdir or higher-priority layer) are kept.
+# A link into the sources is ppm's own and is deleted; anything else is the user's and is moved
+# to the backup dir, from where removing the package (or imploding) puts it back.
 force_remove_conflicts() {
-  local full_path="$1"
+  local full_path="$1" target
 
   while IFS= read -r file; do
     [[ -z "$file" ]] && continue
+    target="$HOME/$file"
+    is_stow_ignored "$file" && continue
+    [[ -e "$target" || -L "$target" ]] || continue
 
-    # Remove the file from $HOME if it exists and isn't ignored
-    if ! is_stow_ignored "$file" && [[ -e "$HOME/$file" || -L "$HOME/$file" ]]; then
-      rm -f "$HOME/$file"
+    if [[ -L "$target" ]] && _link_points_into "$target" "$ANFS_SOURCES_HOME"; then
+      rm -f "$target"
+    else
+      _backup_file "$file"
     fi
   done < <(package_links "$full_path")
+}
+
+# Move ~/<rel> into $PPM_STATE_HOME/backup/files, recorded in the manifest ("repo/pkg<TAB>rel")
+# against the package being installed. Bootstrap set (bash 3.2), like the rest of this file.
+_backup_file() {
+  local rel="$1" dir="$PPM_STATE_HOME/backup" dest n=1
+  dest="$dir/files/$rel"
+  # The first backup of a path is the file that was there before ppm, and the one a restore
+  # puts back: a later one is kept beside it, never over it
+  while [[ -e "$dest" || -L "$dest" ]]; do
+    dest="$dir/files/$rel.$n"
+    n=$((n + 1))
+  done
+  mkdir -p "${dest%/*}"
+  mv "$HOME/$rel" "$dest"
+  [[ "$dest" != "$dir/files/$rel" ]] ||
+    printf '%s\t%s\n' "${PPM_CURRENT_PACKAGE:-}" "$rel" >> "$dir/manifest"
+  user_message "Moved your existing ~/$rel aside (-f) to ${dest/#$HOME/~}; removing the package puts it back"
+}
+
+# Put backed-up files back where they were: those recorded against <repo/pkg>, or all of them
+# when it is empty. A path something else occupies keeps its backup for a later run — unless a
+# suffix is given (implode, which is about to delete the backup dir): then it lands at
+# <path><suffix> instead, so nothing of the user's is ever dropped.
+# Usage: _backup_restore [repo/pkg] [suffix]
+_backup_restore() {
+  local owner="${1:-}" suffix="${2:-}" dir="$PPM_STATE_HOME/backup"
+  local manifest="$dir/manifest" kept="" pkg rel src target n
+  [[ -f "$manifest" ]] || return 0
+
+  while IFS=$'\t' read -r pkg rel; do
+    [[ -n "$rel" ]] || continue
+    if [[ -n "$owner" && "$pkg" != "$owner" ]]; then
+      kept="$kept$pkg"$'\t'"$rel"$'\n'
+      continue
+    fi
+    src="$dir/files/$rel"
+    [[ -e "$src" || -L "$src" ]] || continue
+    target="$HOME/$rel"
+    if [[ -e "$target" || -L "$target" ]]; then
+      if [[ -z "$suffix" ]]; then
+        kept="$kept$pkg"$'\t'"$rel"$'\n'
+        continue
+      fi
+      target="$HOME/$rel$suffix" n=1
+      while [[ -e "$target" || -L "$target" ]]; do
+        target="$HOME/$rel$suffix.$n"
+        n=$((n + 1))
+      done
+    fi
+    mkdir -p "${target%/*}"
+    mv "$src" "$target"
+    user_message "Restored your original ${target/#$HOME/~}"
+  done < "$manifest"
+
+  if [[ -n "$kept" ]]; then
+    printf '%s' "$kept" > "$manifest"
+  else
+    rm -f "$manifest"
+  fi
 }

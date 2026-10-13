@@ -13,7 +13,7 @@ The `anfs` command and everything the tools share:
 It depends on the rest of the toolkit — `ppm`, `pcm`, `psm`, `wsm` and the `podman`, `varlock`
 and `node` they run on — so `ppm install core/anfs` installs everything, and keeps it updated.
 
-**Customizing it.** Your own repo's `anfs` package (`user/anfs`, which `ppm customize` creates) is
+**Customizing it.** Your own repo's `anfs` package (`user/anfs`, which `anfs onboard` creates) is
 a layer of this one: its `user.list` holds your sources, and an `anfs.conf` there replaces the
 default settings for every tool. Machine-only settings go in `~/.config/anfs/anfs.local.conf`. The
 environment wins over both files.

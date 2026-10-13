@@ -51,8 +51,10 @@ argv() { qemu_argv "$@"; echo "${QEMU_ARGV[*]}"; }
   [[ "${QEMU_ARGV[*]}" == *"-kernel /k -initrd /ird -append auto=true --- -no-reboot"* ]]
 }
 
-@test "free_port skips ports recorded for running VMs and ports in use" {
-  mkdir -p "$PIM_STATE_HOME/run/x"
-  echo 42200 > "$PIM_STATE_HOME/run/x/port"
+@test "free_port skips ports recorded for builds, for machines in a given dir, and ports in use" {
+  mkdir -p "$PIM_STATE_HOME/build/x" "$T/run/m"
+  echo 42200 > "$PIM_STATE_HOME/build/x/port"
   [ "$(free_port)" = 42201 ]
+  echo 42201 > "$T/run/m/port"
+  [ "$(free_port "$T/run")" = 42202 ]
 }

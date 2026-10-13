@@ -1,0 +1,5 @@
+version: 0.1.0
+author: rjayroach
+# Machines run from pim's builds, and the qemu, tart and ssh code pmm sources is pim's
+depends:
+  - pim

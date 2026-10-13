@@ -4,7 +4,7 @@
 # BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
 # 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
 
-# Your customization repo is always the "user" source: created by `ppm customize`, registered by
+# Your customization repo is always the "user" source: created by `anfs onboard`, registered by
 # `install.sh --repo <url>`, highest priority, and the default repo for `ppm file claim`
 PPM_USER_REPO_ALIAS=user
 

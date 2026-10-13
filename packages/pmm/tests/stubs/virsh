@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# virsh, as far as pmm uses it: a network is a file in $VIRSH_STUB holding its state (active or
+# inactive); its XML is kept beside it. Reservations are only logged.
+echo "virsh $*" >> "$PIM_CALLS"
+[[ "$1" == -c ]] && shift 2
+cmd="$1"; shift
+case "$cmd" in
+  net-list)
+    for f in "$VIRSH_STUB"/*.state; do
+      [[ -f "$f" ]] || continue
+      [[ " $* " == *" --all "* || "$(cat "$f")" == active ]] && basename "$f" .state
+    done
+    exit 0 ;;
+  net-define)
+    name=$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' "$1")
+    [[ -n "$name" ]] || exit 1
+    cp "$1" "$VIRSH_STUB/$name.xml"
+    echo inactive > "$VIRSH_STUB/$name.state" ;;
+  net-start) [[ -f "$VIRSH_STUB/$1.state" && "${VIRSH_STUB_START_RC:-0}" == 0 ]] || exit 1; echo active > "$VIRSH_STUB/$1.state" ;;
+  net-destroy) [[ -f "$VIRSH_STUB/$1.state" ]] || exit 1; echo inactive > "$VIRSH_STUB/$1.state" ;;
+  net-undefine) rm -f "$VIRSH_STUB/$1.state" "$VIRSH_STUB/$1.xml" ;;
+  net-autostart|net-update) [[ -f "$VIRSH_STUB/$1.state" ]] || exit 1 ;;
+  *) exit 1 ;;
+esac

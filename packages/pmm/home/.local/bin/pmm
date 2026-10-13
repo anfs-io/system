@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
+# cloned once under ~/.local/share/anfs/sources; pmm reads the machines/ directory of each
+ANFS_LIB="$HOME/.local/lib/anfs"
+if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
+  echo "pmm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
+  exit 1
+fi
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
+# shellcheck source=/dev/null
+source "$ANFS_LIB/bash.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/log.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/callbacks.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/catalog.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/iso.sh"
+anfs_tool_paths pmm
+# pim's paths too: its libraries (below) read them, and the migration moves what pim kept
+anfs_tool_paths pim
+anfs_gitsrc_env
+: "${PMM_MACHINES_HOME:=$PMM_CONFIG_HOME/machines}"
+: "${PMM_SSH_PORT_BASE:=2222}"
+: "${PMM_SSH_TIMEOUT:=600}"
+: "${PMM_INSTALL:=up}"
+: "${PMM_MACOS_LIMIT:=2}"
+: "${PMM_PIM:=pim}"
+# Networks: local definitions, libvirt, and what qemu's bridge helper needs (pmm-network sets
+# the last two up). The backend is libvirt on Linux; there is none elsewhere yet
+: "${PMM_NETWORKS_HOME:=$PMM_CONFIG_HOME/networks}"
+: "${PMM_LIBVIRT_URI:=qemu:///system}"
+: "${PMM_BRIDGE_CONF:=/etc/qemu/pmm-bridge.conf}"
+if [[ -z "${PMM_BRIDGE_HELPER:-}" ]]; then
+  PMM_BRIDGE_HELPER=/usr/lib/qemu/qemu-bridge-helper
+  [[ -e "$PMM_BRIDGE_HELPER" || ! -e /usr/libexec/qemu-bridge-helper ]] || PMM_BRIDGE_HELPER=/usr/libexec/qemu-bridge-helper
+fi
+: "${PMM_SYS_NET:=/sys/class/net}"
+: "${PMM_NET_CHECK:=true}"
+: "${PMM_SSH_CONFIG=$HOME/.ssh/config.d/05-pmm.conf}"
+if [[ -z "${PMM_NET_BACKEND:-}" ]]; then
+  [[ "$(uname -s)" == Linux ]] && PMM_NET_BACKEND=libvirt || PMM_NET_BACKEND=none
+fi
+export PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME
+# What pim's port search (free_port, sourced below) starts from
+PIM_SSH_PORT_BASE="$PMM_SSH_PORT_BASE"
+
+# The implicit, highest-priority source: machines made on the spot, in $PMM_MACHINES_HOME
+PMM_LOCAL_SOURCE=local
+
+# The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pmm/; the
+# registry is the help, in this order, and the completion's command list
+# shellcheck source=/dev/null
+source "$ANFS_LIB/cli.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/table.sh"
+CLI_TOOL=pmm
+# The commands are declared in lib/pmm/commands.sh, which the tests load too
+
+cli_help_epilogue() {
+  cat <<'EOF'
+A <machine> is `name` or `source/name`. A plain name resolves to the highest-priority source
+that defines it: local ($PMM_MACHINES_HOME), then the anfs sources in order. The name alone is
+the machine: its disk, its snapshots, what `up` and `shell` act on.
+
+A machine runs from a pim image's build, the way an instance runs from an AMI: any number per
+image, each on the build it was created from until `pmm reset` moves it onto the current one.
+
+Definition: machines/<name>/machine.yml in a source (`pmm create` writes a local one)
+  image: debian-13          a pim image, name or source/name; required unless media: is given
+  media: [proxmox]          ISOs (a CD) and disk images (a USB drive) to boot from when the disk
+                            does not: a file, or an id in the ISO catalogue (isos/isos.yml in a
+                            source; downloaded into ~/.cache/anfs/isos). With no image: a blank
+                            machine, an empty disk for what the media install (qemu)
+  profile: medium           a named shape (below)
+  cpus: 4                   each of these overrides the profile
+  memory: 8G                8G, 512M, or a number of MB
+  disk: 40G                 grows the machine's disk; growing the filesystem is the image's job
+                            (a blank machine: its disk's size, 20G unless set)
+  shares: ["~/src:ro"]      PATH[:tag][:ro]; mounted at /mnt/<tag> (qemu)
+  ports: ["8080:80"]        host:guest, on 127.0.0.1; for a machine on no network
+  interfaces:               the networks it is on (Linux, qemu); the first is where ssh goes
+    - network: lab          a pmm network, installed with the machine if it is not
+      address: 10.20.0.11   optional: kept for it either way, and its name resolves there
+      mac: 52:54:00:..      optional: minted once and kept
+  user: admin               who `pmm shell` logs in as (default: the image's user)
+  arch: arm64               default: the host's
+
+Profiles: machines/profiles.yml in a source, a map of name to {cpus, memory, disk}; a
+higher-priority source wins by name. A setting is the first of: the machine's own, its
+profile's, the profile its image names (image.yml machine.profile), then 2 cpus and 2048 MB.
+
+Files: a machine in $PMM_DATA_HOME/machines/<name>/, its snapshots in
+$PMM_DATA_HOME/snapshots/<name>/, runtime state in $PMM_STATE_HOME/run/<name>/. macOS guests
+(tart) are in tart's own store as pmm-<name>.
+
+Network: networks/<name>/network.yml in a source (`pmm network create` writes a local one)
+  kind: nat                 nat (out through the host), isolated (machines and the host only),
+                            bridged (onto a bridge the host already has)
+  subnet: 10.20.0.0/24      nat and isolated: required. The host is .1, DHCP hands out the upper
+                            half, machines get the lowest free address unless they name one
+  interface: br0            bridged: the host's bridge. Addresses and names are the LAN's
+  domain: lab               optional: web1.lab as well as web1
+
+A machine with no interfaces has qemu's user-mode network: ssh and any ports: are forwarded on
+127.0.0.1 only. The host setup networks need is one package: ppm install core/pmm-network.
+`ssh <machine>` works for running machines where ~/.ssh/config includes ~/.ssh/config.d/*.conf.
+EOF
+}
+
+cmd_cd() {
+  echo "pmm cd requires the pmm shell function (source pmm.zsh)" >&2
+  return 1
+}
+
+# Every *.sh in <dir>/../lib/<tool>, the stowed dir preferred; next to this script's real path is
+# the fallback (unstowed, or tests)
+pmm_lib_dir() {
+  local self="${BASH_SOURCE[0]}" dir link
+  if [[ -n "${PMM_LIB_DIR:-}" ]]; then echo "$PMM_LIB_DIR"; return; fi
+  if [[ -f "$HOME/.local/lib/pmm/commands.sh" ]]; then echo "$HOME/.local/lib/pmm"; return; fi
+  dir="$(cd "$(dirname "$self")" && pwd)"
+  while [[ -L "$self" ]]; do
+    link="$(readlink "$self")"
+    [[ "$link" == /* ]] || link="$dir/$link"
+    self="$link"
+    dir="$(cd "$(dirname "$self")" && pwd)"
+  done
+  echo "$dir/../lib/pmm"
+}
+PMM_LIB_DIR="$(pmm_lib_dir)"
+if [[ ! -f "$PMM_LIB_DIR/commands.sh" ]]; then
+  echo "pmm: libraries not found in $PMM_LIB_DIR; run: ppm install -f core/pmm" >&2
+  exit 1
+fi
+
+# The machinery is pim's, since building an image means booting one: its small helpers, qemu's
+# command line, ssh, and what starts and stops a tart VM. Those four files define no command.
+: "${PIM_LIB_DIR:=$HOME/.local/lib/pim}"
+for lib_file in core qemu ssh tart; do
+  if [[ ! -f "$PIM_LIB_DIR/$lib_file.sh" ]]; then
+    echo "pmm: pim's libraries not found in $PIM_LIB_DIR; run: ppm install core/pim" >&2
+    exit 69
+  fi
+  # shellcheck source=/dev/null
+  source "$PIM_LIB_DIR/$lib_file.sh"
+done
+for lib_file in "$PMM_LIB_DIR"/*.sh; do
+  # shellcheck source=/dev/null
+  [[ -f "$lib_file" ]] && source "$lib_file"
+done
+
+cmd=$(cli_resolve "${1:-help}")
+shift 2>/dev/null || true
+
+# install pulls stale sources first, like ppm install
+[[ "$cmd" == "install" ]] && { gitsrc_update_stale >&2 || true; }
+case "$cmd" in
+  completion|help|-h|--help) ;;
+  *) load_machines ;;
+esac
+
+cli_dispatch "$cmd" "$@"

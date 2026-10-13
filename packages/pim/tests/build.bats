@@ -8,9 +8,9 @@ setup() {
   export PIM_FW_CODE="$T/fw/code.fd" PIM_FW_VARS="$T/fw/vars.fd"
   image "$PIM_IMAGES_HOME/d" "$(deb_yml 'description: one')"
   # the ISO, already cached and verified
-  mkdir -p "$PIM_CACHE_HOME/isos"
-  echo iso > "$PIM_CACHE_HOME/isos/a.iso"
-  sleep 1; echo "$SHA" > "$PIM_CACHE_HOME/isos/a.iso.sha256"
+  mkdir -p "$ANFS_ISO_HOME"
+  echo iso > "$ANFS_ISO_HOME/a.iso"
+  sleep 1; echo "$SHA" > "$ANFS_ISO_HOME/a.iso.sha256"
   wait_ssh() { return 0; }
 }
 

@@ -422,6 +422,52 @@ anfs_confirm() {
   exit 1
 }
 
+# Ask for a line of text; the answer is left in REPLY. Enter takes the default, and with
+# -y/--yes a default is taken unasked. Without a terminal there is nobody to ask: that is
+# refused as a usage error naming <what>, the option that gives the answer.
+# Usage: anfs_ask "<what>" "<the question>" [default]
+anfs_ask() {
+  local what="$1" question="$2" default="${3:-}"
+  REPLY="$default"
+  if ${CLI_OPT[yes]:-false} && [[ -n "$default" ]]; then return 0; fi
+  if [[ ! -t 0 ]]; then
+    echo "$CLI_TOOL: $question needs an answer; pass $what" >&2
+    exit "$CLI_EX_USAGE"
+  fi
+  read -r -p "$question${default:+ [$default]}: " REPLY
+  [[ -n "$REPLY" ]] || REPLY="$default"
+  [[ -n "$REPLY" ]] && return 0
+  echo "$CLI_TOOL: nothing done" >&2
+  exit 1
+}
+
+# Ask for one of several; the choice (its first word, before any ": description") is left in
+# REPLY. The first option is the default: Enter takes it, and so does -y/--yes. Without a
+# terminal and without -y it is refused as a usage error naming <what>, like anfs_ask.
+# Usage: anfs_choose "<what>" "<the question>" "<option>[: <description>]"...
+anfs_choose() {
+  local what="$1" question="$2" answer i
+  shift 2
+  REPLY="${1%%: *}"
+  ! ${CLI_OPT[yes]:-false} || return 0
+  if [[ ! -t 0 ]]; then
+    echo "$CLI_TOOL: $question needs an answer; pass $what" >&2
+    exit "$CLI_EX_USAGE"
+  fi
+  echo "$question" >&2
+  for ((i = 1; i <= $#; i++)); do
+    printf '  %d) %s\n' "$i" "${!i}" >&2
+  done
+  read -r -p "Choice [1]: " answer
+  [[ -n "$answer" ]] || answer=1
+  if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= $# )); then
+    REPLY="${!answer%%: *}"
+    return 0
+  fi
+  echo "$CLI_TOOL: '$answer' is not one of 1-$#; nothing done" >&2
+  exit 1
+}
+
 # The tool's version, into CLI_VERSION, when the tool did not set one: its package's, from the
 # package.yml three directories above the script (<package>/home/.local/bin/<tool>). That file is
 # what the commit hook bumps, so there is no second number to keep in step.

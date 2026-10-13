@@ -20,6 +20,8 @@ anfs_kind() {
     packages) echo package ;;
     containers) echo container ;;
     images) echo image ;;
+    machines) echo machine ;;
+    networks) echo network ;;
     skills) echo skill ;;
     spaces) echo space ;;
     *) echo "$1" ;;

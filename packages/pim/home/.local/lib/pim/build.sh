@@ -21,7 +21,7 @@ build_key() {
   fi
   {
     echo "$PIM_BUILD_VERSION"
-    yq -o=json -I0 'del(.description) | sort_keys(..)' "$dir/image.yml"
+    yq -o=json -I0 'del(.description, .machine) | sort_keys(..)' "$dir/image.yml"
     echo "arch $arch"
     if [[ -z "$parent" ]]; then
       echo "iso $(img_get "$id" ".iso.$arch.sha256" | tr '[:upper:]' '[:lower:]')"

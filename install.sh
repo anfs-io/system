@@ -27,7 +27,9 @@
 #      (machine-local settings)
 #   8. With --repo: adds your customization repo as the "user" source (highest priority) and
 #      installs its anfs package, which replaces the seeded user.list with a link into it
-#   9. Runs 'anfs src update', installs any requested packages, then 'ppm install core/anfs':
+#   9. Runs 'anfs src update', installs your login shell's package from stack (bash or zsh:
+#      without it nothing puts Homebrew on an interactive shell's PATH), any requested packages,
+#      then 'ppm install core/anfs':
 #      the whole toolkit — pcm, psm, wsm and the software they run on (podman, varlock, node) —
 #      tracked like any package, so `anfs implode` can take it all out again
 #
@@ -55,10 +57,11 @@
 #                      Fedora (and derivatives that declare ID_LIKE=fedora)
 #
 # OPTIONS:
-#   --repo <url>    your customization repo (see `ppm customize`), added as the "user" source
+#   --repo <url>    your customization repo (see `anfs onboard`), added as the "user" source
 #                   (or set ANFS_INSTALL_REPO)
 #   --script-only   only clone anfs, stow the base packages and seed config (needs stow)
 #   --skip-deps     skip prerequisites and Homebrew setup (you manage them)
+#   --no-shell      do not install your login shell's package (or set ANFS_INSTALL_SHELL=false)
 #   <package...>    packages to install (or set ANFS_INSTALL_PACKAGES; none by default)
 #
 # Everything runs from main() on the last line, so a partially downloaded script does nothing.
@@ -361,7 +364,7 @@ install_configs() {
 }
 
 
-# --repo: your customization repo (see `ppm customize`), always registered as the "user" source
+# --repo: your customization repo (see `anfs onboard`), always registered as the "user" source
 # (highest priority). Its anfs package is a layer of core/anfs; installing it with -f swaps the
 # seeded user.list for the repo's copy, which lists the repo itself, and puts its anfs.conf (if it
 # ships one) over the default.
@@ -385,6 +388,45 @@ install_repo() {
 }
 
 
+# The user's login shell, by name (bash, zsh, ...): from the account record, which is what the
+# next login starts, then $SHELL. Empty when neither says (a container with no passwd entry).
+login_shell() {
+  local user shell=""
+  user=$(id -un)
+  if [[ "$(os)" == "macos" ]]; then
+    shell=$(dscl . -read "/Users/$user" UserShell 2>/dev/null | awk '{print $2}') || true
+  elif command -v getent >/dev/null 2>&1; then
+    shell=$(getent passwd "$user" 2>/dev/null | cut -d: -f7) || true
+  fi
+  [[ -n "$shell" ]] || shell="${SHELL:-}"
+  echo "${shell##*/}"
+}
+
+
+# Install the login shell's package from stack. Homebrew, mise and the tools they install are on
+# PATH only where a shell package's rc file runs `brew shellenv`: a stock ~/.profile (Debian) adds
+# ~/.local/bin, so anfs and ppm resolve after a fresh install but brew, yq and stow do not.
+# Never fatal: a shell stack has no package for, or a failed install, leaves a hint instead.
+# Sets installed_shell for the closing message.
+install_shell() {
+  local shell prefix
+  shell=$(login_shell)
+
+  if [[ -n "$shell" && -d "$ANFS_SOURCES_HOME/stack/packages/$shell" ]]; then
+    if ppm install "stack/$shell"; then
+      installed_shell="$shell"
+      return 0
+    fi
+    warn "stack/$shell did not install; fix what it reported and run: ppm install stack/$shell"
+  else
+    warn "no shell package for your login shell (${shell:-unknown}); anfs ships bash and zsh"
+  fi
+  prefix=$(brew --prefix 2>/dev/null) || prefix=""
+  [[ -z "$prefix" ]] ||
+    warn "until then, add Homebrew to your shell's startup file: eval \"\$($prefix/bin/brew shellenv)\""
+}
+
+
 install_packages() {
   local pkg
   for pkg in "$@"; do
@@ -397,7 +439,8 @@ install_packages() {
 
 
 main() {
-  local skip_deps=false script_only=false
+  local skip_deps=false script_only=false want_shell="${ANFS_INSTALL_SHELL:-true}"
+  installed_shell=""
   repo_url="${ANFS_INSTALL_REPO:-}"
   local packages=()
 
@@ -405,6 +448,7 @@ main() {
     case "$1" in
       --skip-deps) skip_deps=true ;;
       --script-only) script_only=true ;;
+      --no-shell) want_shell=false ;;
       --repo)
         [[ $# -ge 2 ]] || die "--repo requires a URL"
         repo_url="$2"
@@ -461,10 +505,13 @@ EOF
   setup_known_hosts
   [[ -z "$repo_url" ]] || install_repo
   anfs src update || warn "anfs src update skipped or failed for one or more sources"
+  [[ "$want_shell" != true ]] || install_shell
   install_packages ${packages[@]+"${packages[@]}"}
 
   echo -e "\n${GREEN}Installation complete!${NC}"
-  # echo -e "Open a new shell or run: ${CYAN}source ~/.zshrc${NC}"
+  if [[ -n "$installed_shell" ]]; then
+    echo -e "Installed stack/$installed_shell. Log out and back in, or run: ${CYAN}exec $installed_shell -l${NC}"
+  fi
 }
 
 main "$@"

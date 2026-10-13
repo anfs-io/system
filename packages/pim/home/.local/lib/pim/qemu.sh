@@ -50,8 +50,11 @@ efivars_new() {
 # The console device of a guest's kernel
 qemu_console() { [[ "$1" == arm64 ]] && echo ttyAMA0 || echo ttyS0; }
 
-# Fill QEMU_ARGV with the machine for a guest: accel, cpu, memory, firmware, the disk, rng, nic.
-# Usage: qemu_argv <arch> <cpus> <memory MB> <disk> <efivars|""> <ssh port> [hostfwd host:guest...]
+# Fill QEMU_ARGV with the machine for a guest: accel, cpu, memory, firmware, the disk, rng, nics.
+# The user-mode nic forwards 127.0.0.1:<ssh port> to the guest's 22; with no port there is none.
+# QEMU_MAC, when set, is its MAC. QEMU_NICS, when set, holds more nics (qemu_nic_bridge), which
+# follow it: with no user-mode nic the first of them is the guest's first interface.
+# Usage: qemu_argv <arch> <cpus> <memory MB> <disk> <efivars|""> <ssh port|""> [hostfwd host:guest...]
 qemu_argv() {
   local arch="$1" cpus="$2" mem="$3" disk="$4" vars="$5" port="$6" accel cpu fwd f
   shift 6
@@ -71,12 +74,22 @@ qemu_argv() {
     QEMU_ARGV+=(-drive "if=pflash,format=raw,readonly=on,file=$FW_CODE"
                 -drive "if=pflash,format=raw,file=$vars")
   fi
-  fwd="hostfwd=tcp:127.0.0.1:$port-:22"
-  for f in "$@"; do fwd+=",hostfwd=tcp:127.0.0.1:${f%%:*}-:${f#*:}"; done
   QEMU_ARGV+=(-drive "file=$disk,format=qcow2,if=virtio"
-              -device virtio-rng-pci
-              -netdev "user,id=net0,$fwd" -device virtio-net-pci,netdev=net0
-              -display none)
+              -device virtio-rng-pci)
+  if [[ -n "$port" ]]; then
+    fwd="hostfwd=tcp:127.0.0.1:$port-:22"
+    for f in "$@"; do fwd+=",hostfwd=tcp:127.0.0.1:${f%%:*}-:${f#*:}"; done
+    QEMU_ARGV+=(-netdev "user,id=net0,$fwd" -device "virtio-net-pci,netdev=net0${QEMU_MAC:+,mac=$QEMU_MAC}")
+  fi
+  QEMU_ARGV+=(${QEMU_NICS[@]+"${QEMU_NICS[@]}"} -display none)
+}
+
+# Add a nic on a host bridge to QEMU_NICS, through qemu's bridge helper (which must be allowed
+# the bridge: /etc/qemu/bridge.conf)
+# Usage: qemu_nic_bridge <bridge> <mac>
+qemu_nic_bridge() {
+  local n=$(( ${#QEMU_NICS[@]} / 4 + 1 ))
+  QEMU_NICS+=(-netdev "bridge,id=net$n,br=$1" -device "virtio-net-pci,netdev=net$n,mac=$2")
 }
 
 # Add the installer: the ISO as a CD, direct kernel boot with the injected initrd, no reboot

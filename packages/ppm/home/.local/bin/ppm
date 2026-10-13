@@ -8,7 +8,7 @@
 #
 # Commands are implemented in the libraries under ~/.local/lib/ppm/ (stowed from
 # packages/ppm/home/.local/lib/ppm/):
-#   sources.sh     customize; the sources holding packages/ (collect_repos)
+#   sources.sh     the sources holding packages/ (collect_repos)
 #   packages.sh    list, show, path, deps
 #   installer.sh   install, remove
 #   file.sh        file (add, claim, reset, protect, unprotect)
@@ -64,7 +64,6 @@ cli_cmd "file claim" "Copy stowed files into your repo and stow them from there"
 cli_cmd "file reset" "Remove claimed files and restore the original links" --arg "file..."
 cli_cmd "file protect" "Detach files from ppm; keep a local copy stow will not touch" --arg "file..."
 cli_cmd "file unprotect" "Let ppm manage the files again" --arg "file..."
-cli_cmd customize "Create your own repo (the user source) to customize the toolkit"
 cli_cmd implode "Remove every package ppm installed, then ppm's own files" --opt "-y --yes: Do not ask"
 
 cmd_cd() {

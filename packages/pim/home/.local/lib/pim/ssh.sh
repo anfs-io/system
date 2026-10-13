@@ -3,7 +3,8 @@
 #
 # Every guest is reached on 127.0.0.1:<port> with the root image's key, as the image's user, who
 # has passwordless sudo. Host keys are not recorded: a VM's key changes with every fresh build,
-# and ~/.ssh is not pim's to write.
+# and ~/.ssh is not pim's to write. PIM_SSH_HOST, when set, is the address instead of 127.0.0.1
+# (a pmm machine on a network).
 
 PIM_SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR
               -o ConnectTimeout=10 -o BatchMode=yes -o IdentitiesOnly=yes)
@@ -12,7 +13,7 @@ PIM_SSH_OPTS=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o Log
 pim_ssh() {
   local key="$1" port="$2" user="$3"
   shift 3
-  ssh "${PIM_SSH_OPTS[@]}" -i "$key" -p "$port" "$user@127.0.0.1" "$@"
+  ssh "${PIM_SSH_OPTS[@]}" -i "$key" -p "$port" "$user@${PIM_SSH_HOST:-127.0.0.1}" "$@"
 }
 
 # Wait until sshd answers with its banner (a TCP connect alone is not enough: user-mode
@@ -26,7 +27,7 @@ wait_ssh() {
     [[ -z "$pid" ]] || pid_alive "$pid" || { warn "the VM exited while waiting for ssh"; return 1; }
     (( $(date +%s) - start < timeout )) || { warn "no ssh on port $port after ${timeout}s"; return 1; }
     banner=""
-    if { exec 3<>"/dev/tcp/127.0.0.1/$port"; } 2>/dev/null; then
+    if { exec 3<>"/dev/tcp/${PIM_SSH_HOST:-127.0.0.1}/$port"; } 2>/dev/null; then
       IFS= read -r -t 5 banner <&3 || true
       exec 3<&- 3>&-
     fi

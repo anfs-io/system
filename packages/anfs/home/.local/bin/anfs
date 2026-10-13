@@ -5,6 +5,7 @@
 #   packages/    ppm   software and dotfiles
 #   containers/  pcm   podman compose services
 #   images/      pim   VM images (qemu, tart)
+#   machines/    pmm   machines run from those images
 #   skills/      psm   agent skills
 #   spaces/      wsm   workspaces
 # and the tools each read their own directory of every source. anfs adds the commands that span
@@ -13,6 +14,9 @@
 # Commands:
 #   src <add|remove|list|ssh|update>   the source lists (~/.config/anfs/{user,system}.list)
 #   install [-y] <source>...           every resource of each source, tool by tool
+#   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
+#                                      your own repo, and the steps installed packages bring
+#                                      (lib/anfs/onboard.sh; the contract is lib/ppm/onboard.sh)
 #   implode [-y] [--all]               every tool's implode, then anfs itself; --all also what
 #                                      install.sh added (Homebrew when it installed it)
 #
@@ -40,6 +44,8 @@ anfs_gitsrc_env
 # shellcheck source=/dev/null
 source "$ANFS_LIB/cli.sh"
 CLI_TOOL=anfs
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/onboard.sh" ]]; then source "$ANFS_LIB/onboard.sh"; fi
 cli_group src "The sources every tool reads"
 cli_cmd "src list" "The sources in priority order: status, and what each provides" --alias ls
 cli_cmd "src add" "Add a source to your list (and clone it)" \
@@ -49,11 +55,31 @@ cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "
 cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
 never pulled)" --arg "[source...]"
 cli_cmd install "Install everything a source holds: its packages (ppm),
-containers (pcm), images (pim), skills (psm) and spaces
-(wsm), in that order. To pick single resources use the
+containers (pcm), images (pim), machines (pmm), skills (psm)
+and spaces (wsm), in that order. To pick single resources use the
 tool itself." --opt "-y --yes: Do not ask" --arg "source..."
+# A step's options are declared by the package that owns it (package.yml onboard.options), so
+# they are read only when the line is about onboard: one yq over the sources' package.yml files
+_onboard_opts=()
+if [[ " $* " == *" onboard "* ]] && declare -F onboard_options >/dev/null; then
+  while IFS= read -r _spec; do
+    [[ -z "$_spec" ]] || _onboard_opts+=(--opt "$_spec")
+  done < <(onboard_options)
+fi
+cli_cmd onboard "Make a fresh install yours, step by step. anfs's own steps are
+packages (what your sources offer to install) and repo (your
+own repo, the user source); installed packages add theirs:
+your git identity, an ssh key, GitHub, a password manager.
+Each step looks at the machine first, so a rerun does only
+what is missing. No step named means all of them." \
+  --opt "--check: Only report each step's state; exit 1 when one is still to do" \
+  --opt "-y --yes: Take every proposal without asking" \
+  --opt "--install PACKAGE: A package on offer to install (or all); may be repeated" \
+  --opt "--repo REPO: Your repo: local, new (also published, by a package that can), or a git URL" \
+  ${_onboard_opts[@]+"${_onboard_opts[@]}"} \
+  --arg "[step...]"
 cli_cmd implode "Remove everything the toolkit put on this machine:
-wsm, psm, pim, pcm, then ppm (which removes the tools and the
+wsm, psm, pmm, pim, pcm, then ppm (which removes the tools and the
 software they run on), then the sources. Space contents
 are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,
@@ -155,8 +181,9 @@ cmd_install() {
     dir=$(gitsrc_dir "$src")
     [[ -d "$dir" ]] || die "source '$src' is not cloned yet (anfs src update $src)"
     for t in $ANFS_TOOLS; do
-      tld=$(anfs_tool_dir "$t")
-      [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
+      for tld in $(anfs_tool_dirs "$t"); do
+        [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
+      done
     done
   done
   [[ -n "$plan" ]] || die "nothing to install: ${srcs[*]} hold none of: $GITSRC_DIRS"
@@ -168,10 +195,11 @@ cmd_install() {
   # run on, and spaces come last so whatever they open has been installed
   local rc=0
   for t in $ANFS_TOOLS; do
-    tld=$(anfs_tool_dir "$t")
     local -a specs=()
     for src in "${srcs[@]}"; do
-      [[ -d "$(gitsrc_dir "$src")/$tld" ]] && specs+=("$src/")
+      for tld in $(anfs_tool_dirs "$t"); do
+        [[ -d "$(gitsrc_dir "$src")/$tld" ]] && { specs+=("$src/"); break; }
+      done
     done
     [[ ${#specs[@]} -gt 0 ]] || continue
     echo "== $t install ${specs[*]}"

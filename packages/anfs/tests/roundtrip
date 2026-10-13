@@ -100,7 +100,7 @@ before=$(snapshot_home)
 
 # In the box: brew and ~/.local/bin on PATH, the way a login shell has them
 box() {
-  $H exec "$distro" -- bash -c '[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH"; export PIM_INSTALL=validate; '"$1"
+  $H exec "$distro" -- bash -c '[ -x /home/linuxbrew/.linuxbrew/bin/brew ] && eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"; export PATH="$HOME/.local/bin:$PATH"; export PIM_INSTALL=validate PMM_INSTALL=validate; '"$1"
 }
 
 echo "== install.sh (every /src mounted as a local source)"
@@ -149,6 +149,9 @@ if [[ " ${installs[*]} " == *" acme "* ]]; then
   check "cli: help and completion come from the declarations" 'anfs help | grep -q "implode \[-y\]" && pcm __complete "" | grep -q "^snapshot" && ppm __complete "" | grep -q "^implode" && ppm completion zsh | grep -q "ppm __complete"'
   check "pim: acme/hello is listed, and validates with its from: parent" 'pim list --json | yq -p json -e ".[] | select(.name == \"hello\")" && pim validate acme/hello debian-13'
   check "pim: from: resolves to core/debian-13 (same or lower priority)"  'pim show acme/hello | grep -q "from        core/debian-13"'
+  check "pmm: acme/hello is listed as defined, and validates against pim's image" 'pmm list --json | yq -p json -e ".[] | select(.name == \"hello\" and .state == \"defined\")" && pmm validate acme/hello'
+  check "pmm: the network acme/lab is listed as defined"  'pmm network list --json | yq -p json -e ".[] | select(.name == \"lab\" and .source == \"acme\" and .state == \"defined\")"'
+  check "pim: the commands that went to pmm say so"  'pim up hello 2>&1 | grep -q "is now .pmm up."'
   check "pcm: reset to the definition clears it"     'pcm reset -y whoami && ! pcm snapshot whoami | grep -q "^\*"'
   check "psm: acme-hello installed for pi"           'psm skills ls --json | yq -p json -e ".[] | select(.status == \"ok\" and .config == \"acme\" and .skill == \"acme-hello\")"'
   check "wsm: org installed before tech"             'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'

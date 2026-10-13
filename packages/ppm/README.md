@@ -35,8 +35,9 @@ when you ask for exactly one layer.
 
 ## Your Own Repo
 
-`ppm customize` creates a git repository for this machine's customizations, registers it as the
-`user` source at the top of your list, and moves your source list into it. From then on your
+`anfs onboard` creates a git repository for this machine's customizations, registers it as the
+`user` source at the top of your list, and moves your source list into it (`anfs onboard repo`
+does only that). From then on your
 configuration has somewhere to live that is yours, versioned, and portable to the next machine by
 URL.
 

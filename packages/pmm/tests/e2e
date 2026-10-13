@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# pmm end to end, for real: qemu with hvf (macOS) or kvm (Linux), the host's arch.
+# Usage: packages/pmm/tests/e2e [debian|fedora]   (default: debian)
+#
+# Runs the working tree's pmm and pim against isolated copies of both (a temp dir for config, data
+# and state; the ISO cache is the real one, so an ISO downloads once) with this repo's images/ as
+# pim's local source. Two machines run from one image. Each step is checked; the temp dir must be
+# empty of pmm's files at the end.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PMM="$here/../home/.local/bin/pmm"
+PIM="$here/../../pim/home/.local/bin/pim"
+root=$(mktemp -d "${TMPDIR:-/tmp}/pmm-e2e.XXXXXX")
+export PMM_LIB_DIR="$here/../home/.local/lib/pmm" PIM_LIB_DIR="$here/../../pim/home/.local/lib/pim"
+export PMM_PIM="$PIM"
+export PIM_IMAGES_HOME="$here/../../../images"
+export PIM_CONFIG_HOME="$root/pim/config" PIM_DATA_HOME="$root/pim/data" PIM_STATE_HOME="$root/pim/state"
+export PMM_CONFIG_HOME="$root/pmm/config" PMM_DATA_HOME="$root/pmm/data" PMM_STATE_HOME="$root/pmm/state"
+export PMM_CACHE_HOME="$root/pmm/cache"
+export PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines"
+export PMM_SSH_PORT_BASE=2342 PIM_SSH_PORT_BASE=2322
+# tart's store is not this run's to touch: implode deletes every pim- and pmm- VM in it
+export TART_HOME="$root/no-tart"
+case "${1:-debian}" in
+  debian) img=debian-13 ;;
+  fedora) img=fedora-44 ;;
+  *) echo "usage: e2e [debian|fedora]" >&2; exit 64 ;;
+esac
+
+status=0
+step() {
+  local what="$1"; shift
+  local t0=$(date +%s)
+  if "$@" > "$root/step.log" 2>&1; then
+    echo "  ok    $what ($(( $(date +%s) - t0 ))s)"
+  else
+    echo "  FAIL  $what"; sed 's/^/        /' "$root/step.log" | tail -n 25; status=1
+  fi
+}
+pmm() { "$PMM" "$@"; }
+pim() { "$PIM" "$@"; }
+mkdir -p "$root/share" "$PMM_MACHINES_HOME" && echo shared > "$root/share/f"
+printf 'small: {cpus: 1, memory: 1G}\n' > "$PMM_MACHINES_HOME/profiles.yml"
+
+echo "== $img"
+step "pim build"                      pim build "$img"
+step "create a, with a read-only share" pmm create a --image "$img" --profile small --share "$root/share:sh:ro"
+step "validate"                       pmm validate a
+step "pim holds the build for a"      bash -c "'$PIM' builds --json $img | yq -p json -e '.[0].held | contains([\"pmm:a\"])'"
+step "up a"                           pmm up a
+step "shell runs a command"           bash -c "'$PMM' shell a -- 'cat /mnt/sh/f; echo kept > ~/kept' | grep -qx shared"
+step "the share is read-only"         bash -c "! '$PMM' shell a -- touch /mnt/sh/x"
+step "the profile's one cpu"          bash -c "'$PMM' shell a -- nproc | grep -qx 1"
+step "up --image: a second machine"   pmm up b --image "$img"
+step "ps lists both"                  bash -c "[ \"\$('$PMM' ps --json | yq -p json -r '[.[].name] | sort | join(\",\")')\" = a,b ]"
+step "b has its own disk"             bash -c "! '$PMM' shell b -- test -e kept"
+step "down a"                         pmm down a
+step "up again: the disk persisted"   bash -c "'$PMM' up a >/dev/null && '$PMM' shell a -- cat kept | grep -qx kept"
+step "snapshot, change, reset to it"  bash -c "'$PMM' snapshot a s1 >/dev/null && '$PMM' shell a -- rm kept && '$PMM' reset -y a s1 >/dev/null && '$PMM' shell a -- cat kept | grep -qx kept"
+step "pim rm is refused while held"   bash -c "! '$PIM' rm -y $img"
+step "reset onto the build: a new disk" bash -c "'$PMM' reset -y a >/dev/null && ! '$PMM' shell a -- test -e kept"
+step "list: a and b running"          bash -c "[ \"\$('$PMM' list --json | yq -p json -r '[.[] | select(.state == \"running\")] | length')\" = 2 ]"
+step "rm b"                           pmm rm -y b
+step "implode"                        pmm implode -y
+step "the build is no longer held"    bash -c "[ \"\$('$PIM' builds --json $img | yq -p json -r '.[0].held | length')\" = 0 ]"
+step "pim rm, now that nothing holds it" pim rm -y "$img"
+left=$(find "$root/pmm" -mindepth 1 2>/dev/null | head -5)
+[[ -z "$left" ]] && echo "  ok    implode left nothing" || { echo "  FAIL  implode left: $left"; status=1; }
+rm -rf "$root"
+[[ $status -eq 0 ]] && echo "== PASS" || echo "== FAIL"
+exit $status

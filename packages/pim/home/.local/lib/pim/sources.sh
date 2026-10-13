@@ -2,8 +2,8 @@
 # pim library: image sources and resolution; the list, path and install commands
 # Sourced by ~/.local/bin/pim; defines functions only.
 
-# Inside pim an image is its id, `source/name`. The name alone is its runtime identity: the
-# build and VM directories, the run state, the ssh key.
+# Inside pim an image is its id, `source/name`. The name alone is its identity on disk: the build
+# directories and the ssh key.
 
 # Finding definitions across the sources is anfs's (lib/anfs/catalog.sh); these are pim's names
 # for it. An image is a directory with an image.yml, in a source's images/ or in
@@ -26,8 +26,8 @@ canon_or_die() {
   canon "$1" || die "image '$1' not found (see: pim list)"
 }
 
-# `pim list`: NAME SOURCE STATUS. STATUS: the arches built for that definition, running when its
-# VM is up, shadowed when a higher-priority source defines the name.
+# `pim list`: NAME SOURCE STATUS. STATUS: the arches built for that definition, or shadowed when
+# a higher-priority source defines the name. (What runs from a build is a machine: pmm list.)
 # A tool that wants the names reads `pim list --json` (lib/anfs/table.sh).
 cmd_list() {
   local id
@@ -56,7 +56,6 @@ cmd_list() {
         [[ "$(meta_get "$(img_name "$id")" "$arch" .id)" == "$id" ]] && built+="${built:+,}$arch"
       done
       [[ -n "$built" ]] && status="built $built"
-      vm_running "$(img_name "$id")" && status="${status:+$status, }running"
     else
       status="shadowed"
     fi

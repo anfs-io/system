@@ -434,7 +434,7 @@ gitsrc_link_local() {
   [[ "${GITSRC_LINK_LOCAL:-false}" == true ]] && return 0
   [[ "$path" == "~"* ]] && path="$HOME${path:1}"
   dir="$GITSRC_REPOS_DIR/$name"
-  # The source may be the directory itself (a repo created in place, e.g. by ppm customize)
+  # The source may be the directory itself (a repo created in place, e.g. by anfs onboard)
   [[ "$path" == "$dir" ]] && return 0
   if [[ -L "$dir" ]]; then
     [[ "$(readlink "$dir")" == "$path" ]] && return 0
@@ -481,7 +481,7 @@ anfs_gitsrc_env() {
   GITSRC_LINK_LOCAL=false
   local t
   GITSRC_DIRS=""
-  for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dir "$t")"; done
+  for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dirs "$t")"; done
   GITSRC_DIRS="${GITSRC_DIRS# }"
   GITSRC_SYSTEM_LIST_HINT="run 'ppm file protect ~/.config/anfs/system.list' to edit it here"
 }
