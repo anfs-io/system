@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pmm library: reading an image definition — image.yml, the from: chain, the answer file, scripts, the
-# image's ssh key and the template variables. Sourced by ~/.local/bin/pmm; functions only.
+# pmm library: reading an image definition — image.yml, the from: chain, the answer file, the
+# provision steps, the image's ssh key and the template variables. Sourced by ~/.local/bin/pmm; functions only.
 
 img_yml() { echo "$(img_dir "$1")/image.yml"; }
 
@@ -66,50 +66,44 @@ img_pick_arch() {
   echo "$want"
 }
 
-img_defaults() { echo "$PMM_LIB_DIR/defaults"; }
+# pmm's own part of a build: the finalize step, which no image can replace or skip
+img_finalize() { echo "$PMM_LIB_DIR/defaults/finalize.sh"; }
 
-# The answer file a root image installs with: its own, else pmm's default for the distro
-img_answer_file() {
-  local id="$1" distro file
-  distro=$(img_distro "$id")
-  case "$distro" in
-    debian) file=preseed.cfg ;;
-    fedora) file=kickstart.ks ;;
+# The file name of a distro's answer file; fails for a distro with no installer
+answer_name() {
+  case "$1" in
+    debian) echo preseed.cfg ;;
+    fedora) echo kickstart.ks ;;
     *) return 1 ;;
   esac
-  if [[ -f "$(img_dir "$id")/$file" ]]; then echo "$(img_dir "$id")/$file"
-  else echo "$(img_defaults)/$distro/$file"
-  fi
 }
 
-# The scripts a build runs, in order: the distro's defaults (root images only, unless
-# scripts.defaults is false) and the image's scripts/*.sh, an image script replacing a default of
-# the same name
+# The answer file <id>'s root image installs with: where it has to be, there or not. Fails for a
+# distro with no installer (a tart image has none)
+img_answer_file() {
+  local root file
+  root=$(img_root "$1")
+  file=$(answer_name "$(img_get "$root" .distro)") || return 1
+  echo "$(img_dir "$root")/$file"
+}
+
+# The steps a build of <id> runs, in name order: its own provision/*.sh. A child's build starts
+# from its parent's, so the parent's steps are not run again.
 img_scripts() {
-  local id="$1" dir distro f
-  dir=$(img_dir "$id")
-  {
-    if [[ -z "$(img_get "$id" .from)" && "$(img_get "$id" .scripts.defaults true)" != false ]]; then
-      distro=$(img_distro "$id")
-      for f in "$(img_defaults)/$distro/scripts"/*.sh; do
-        [[ -f "$f" && ! -f "$dir/scripts/$(basename "$f")" ]] && printf '%s\t%s\n' "$(basename "$f")" "$f"
-      done
-    fi
-    for f in "$dir/scripts"/*.sh; do
-      [[ -f "$f" ]] && printf '%s\t%s\n' "$(basename "$f")" "$f"
-    done
-  } | LC_ALL=C sort -t$'\t' -k1,1 | cut -f2
+  local f
+  for f in "$(img_dir "$1")/provision"/*.sh; do
+    if [[ -f "$f" ]]; then echo "$f"; fi
+  done | LC_ALL=C sort
 }
 
-# test.sh: the image's, else the nearest one up its chain, else the distro's default
+# test.sh: the image's, else the nearest one up its chain; nothing when there is none
 img_test_script() {
   local id f
   while IFS= read -r id; do
     f="$(img_dir "$id")/test.sh"
     [[ -f "$f" ]] && { echo "$f"; return 0; }
   done < <(img_chain "$1")
-  f="$(img_defaults)/$(img_distro "$1")/test.sh"
-  [[ -f "$f" ]] && echo "$f"
+  return 0
 }
 
 # The root image's ssh key (generated on first use); a child's build carries its parent's key
@@ -125,49 +119,35 @@ img_key() {
 }
 
 # --- template variables -------------------------------------------------------------------------
-# Parallel arrays (from before the bash floor was 5.2). A later tpl_set of a name wins.
+# TPL holds them by name. declare -g: the tests source this file from inside a function.
 
-TPL_NAMES=() TPL_VALUES=()
+declare -gA TPL=()
 
-tpl_set() {
-  local i
-  for i in ${TPL_NAMES[@]+"${!TPL_NAMES[@]}"}; do
-    [[ "${TPL_NAMES[$i]}" == "$1" ]] && { TPL_VALUES[$i]="$2"; return; }
-  done
-  TPL_NAMES+=("$1") TPL_VALUES+=("$2")
-}
+tpl_set() { TPL[$1]="$2"; }
 
 tpl_get() {
-  local i
-  for i in ${TPL_NAMES[@]+"${!TPL_NAMES[@]}"}; do
-    [[ "${TPL_NAMES[$i]}" == "$1" ]] && { printf '%s' "${TPL_VALUES[$i]}"; return 0; }
-  done
-  return 1
+  [[ -n "${TPL[$1]+x}" ]] || return 1
+  printf '%s' "${TPL[$1]}"
 }
 
-# Load the variables a root image's answer file renders with: defaults, then image.yml vars:,
-# then the built-ins (which vars: cannot override)
+# The vars: of <id>'s root image, as NAME=value lines (a null is an empty value)
+img_vars() {
+  yq -r '.vars // {} | to_entries | .[] | with(select(.value == null); .value = "") | .key + "=" + (.value | tostring)' \
+    "$(img_yml "$(img_root "$1")")" 2>/dev/null || true
+}
+
+# Load the variables a root image's answer file renders with: HOSTNAME (the image's name unless
+# vars: says), image.yml's vars:, then what an image cannot know, which vars: cannot override.
+# Nothing else has a default: a name the answer file uses and vars: does not set is an error.
 # Usage: tpl_load <id> <arch> <pubkey-file>
 tpl_load() {
   local id="$1" arch="$2" pubkey="$3" root user hash line
   root=$(img_root "$id")
-  TPL_NAMES=() TPL_VALUES=()
-  tpl_set LOCALE en_US.UTF-8
-  tpl_set KEYBOARD us
-  tpl_set TIMEZONE UTC
+  TPL=()
   tpl_set HOSTNAME "$(img_name "$id")"
-  tpl_set DOMAIN local
-  tpl_set MIRROR_HOST deb.debian.org
-  tpl_set MIRROR_PATH /debian
-  tpl_set HTTP_PROXY ""
-  tpl_set PARTITIONING_METHOD regular
-  tpl_set PARTITIONING_RECIPE atomic
-  tpl_set TASKSEL "standard, ssh-server"
-  tpl_set PACKAGES "openssh-server curl sudo qemu-guest-agent"
-  tpl_set GRUB_DEVICE default
   while IFS= read -r line; do
     [[ "$line" == *=* ]] && tpl_set "${line%%=*}" "${line#*=}"
-  done < <(yq -r '.vars // {} | to_entries | .[] | .key + "=" + (.value | tostring)' "$(img_yml "$root")" 2>/dev/null)
+  done < <(img_vars "$id")
 
   user=$(img_user "$id")
   hash=$(img_get "$root" .user.password_hash)

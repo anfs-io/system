@@ -203,7 +203,7 @@ also works on its own.
 | `podman`, `varlock`, `node` | what pcm and psm run on |
 | [`dev`](packages/dev/README.md) | tooling for working on anfs: disposable test machines and the git hooks that version packages |
 
-The repo's `skills/` holds the tools' own skills (`pcm-containers`); `packages/anfs/tests/` the
+The repo's `skills/` holds the tools' own skills (`pcm-containers`, `pmm-images`); `packages/anfs/tests/` the
 end-to-end round trip (see CLAUDE.md, Testing).
 
 ## Sources

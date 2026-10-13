@@ -1,5 +1,5 @@
 #!/bin/bash
-# pmm default (Fedora): the guest agent, cloud-init for wherever the image goes next
+# fedora-44: the guest agent, cloud-init for wherever the image goes next
 set -euo pipefail
 dnf install -y -q cloud-init cloud-utils-growpart qemu-guest-agent curl ca-certificates
 systemctl enable qemu-guest-agent || true

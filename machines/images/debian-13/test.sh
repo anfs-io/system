@@ -1,5 +1,5 @@
 #!/bin/bash
-# pmm default test (Debian): runs as root in a throwaway boot of the build
+# debian-13 and what is built on it: runs as root in a throwaway boot of the build
 set -euo pipefail
 test -f /etc/pmm-image && echo "ok  built by pmm: $(tr '\n' ' ' < /etc/pmm-image)"
 systemctl is-active --quiet ssh && echo "ok  ssh is running"

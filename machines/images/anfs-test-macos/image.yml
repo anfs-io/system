@@ -6,8 +6,9 @@ backend: tart
 distro: macos
 arch: [arm64]
 base: ghcr.io/cirruslabs/macos-tahoe-vanilla:latest
-cpus: 4
-memory: 8192
+build:
+  cpus: 4
+  memory: 8192
 user:
-  name: owner                                  # created by scripts/10-provision.sh
+  name: owner                                  # created by provision/10-provision.sh
   bootstrap: {name: admin, password: admin}    # the stock image's account

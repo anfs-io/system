@@ -4,9 +4,9 @@
 # Usage: packages/pmm/tests/e2e [debian|fedora]   (default: debian)
 #
 # Runs the working tree's pmm, with the working tree's lib/anfs, against an isolated HOME (a temp
-# dir for config, data and state) and this repo's machines/images/ as the local image source. Only the
-# ISO store is the real one, so an ISO downloads once. Each step is checked; the temp dir must be
-# empty of pmm's files at the end.
+# dir for config, data and state) with this repo as the source `core`: its machines/images/ and
+# the catalogue their ISOs are in (isos/isos.yml). Only the ISO store is the real one, so an ISO
+# downloads once. Each step is checked; the temp dir must be empty of pmm's files at the end.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,14 +18,18 @@ export HOME="$root/home"
 export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
 unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_STATE_HOME ANFS_CACHE_HOME
-mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs"
+mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources"
 ln -s "$here/../../anfs/home/.local/lib/anfs" "$HOME/.local/lib/anfs"
+# this repo is the source `core`, a local path: never pulled
+repo="$(cd "$here/../../.." && pwd)"
+ln -s "$repo" "$HOME/.local/share/anfs/sources/core"
+printf '%s  core\n' "$repo" > "$HOME/.config/anfs/user.list"
 export ANFS_LOG=off
 export PMM_LIB_DIR="$here/../home/.local/lib/pmm"
 export PMM_CONFIG_HOME="$root/pmm/config" PMM_DATA_HOME="$root/pmm/data" PMM_STATE_HOME="$root/pmm/state"
 export PMM_CACHE_HOME="$root/pmm/cache"
 export PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines"
-export PMM_IMAGES_HOME="$here/../../../machines/images"
+export PMM_IMAGES_HOME="$PMM_MACHINES_HOME/images"
 export PMM_SSH_PORT_BASE=2342
 # not the default: a pmm really running machines on this host has their sockets there, and the
 # implode below deletes the directory
@@ -37,6 +41,8 @@ case "${1:-debian}" in
   fedora) img=fedora-44 ;;
   *) echo "usage: e2e [debian|fedora]" >&2; exit 64 ;;
 esac
+
+arch=$(uname -m); [[ "$arch" == x86_64 ]] && arch=amd64; [[ "$arch" == aarch64 ]] && arch=arm64
 
 status=0
 step() {
@@ -54,11 +60,18 @@ printf 'small: {cpus: 1, memory: 1G}\n' > "$PMM_MACHINES_HOME/profiles.yml"
 
 echo "== $img: the image"
 step "image validate"                 pmm image validate "$img"
+step "image show: every file the build reads, and its ISO" bash -c "o=\$('$PMM' image show $img) && for f in 'answer .*/machines/images/$img/' 'provision .*/machines/images/$img/provision/10-base.sh' 'finalize .*(pmm) .*/defaults/finalize.sh' 'test .*/machines/images/$img/test.sh' 'iso $arch .*$img-$arch'; do grep -q \"\$f\" <<< \"\$o\" || { echo \"not shown: \$f\"; echo \"\$o\"; exit 1; }; done"
 step "image list: unbuilt"            bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0].state')\" = unbuilt ]"
 step "image build --test"             pmm image build --test "$img"
 step "rebuild is a cache hit"         bash -c "'$PMM' image build $img | grep -q 'is up to date'"
 step "image list: built and tested"   bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
 step "image export -c, a standalone qcow2" bash -c "'$PMM' image export -c -o '$root/out.qcow2' $img && qemu-img check -q '$root/out.qcow2' && ! qemu-img info '$root/out.qcow2' | grep -q 'backing file'"
+step "image new --from: a child, in the local source" bash -c "'$PMM' image new web --from $img && printf '#!/bin/bash\necho web > /etc/web-image\n' > '$PMM_IMAGES_HOME/web/provision/50-web.sh' && '$PMM' image validate web"
+step "the child builds on $img's build and passes its test.sh" bash -c "'$PMM' image build --test web | tee '$root/web.log' && grep -q '$img (.*) is up to date' '$root/web.log' && grep -q '== 50-web.sh' '$root/web.log' && ! grep -q '10-base.sh' '$root/web.log'"
+step "image show web: both images' steps; built and tested" bash -c "[ \"\$('$PMM' image show --json web | yq -p json -r '[.provision[].step] | join(\",\")')\" = 10-base.sh,50-web.sh,finalize ] && [ \"\$('$PMM' image list --json web | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
+step "a machine from the child has its step's work" bash -c "'$PMM' run web --rm >/dev/null && '$PMM' exec web -- cat /etc/web-image | grep -qx web && '$PMM' down web >/dev/null"
+step "image remove is refused while the child is built on it" bash -c "! '$PMM' image remove -y $img"
+step "image remove web"               pmm image remove -y web
 
 echo "== $img: machines"
 step "run --no-start: a, with a read-only share" pmm run "$img" --name a --no-start --profile small --share "$root/share:sh:ro"

@@ -51,6 +51,7 @@ _setup_home() {
   local f
   for f in "$lib"/*.sh; do source "$f"; done
   mkdir -p "$PMM_MACHINES_HOME" "$PMM_IMAGES_HOME" "$T/fw"
+  iso_catalog
   : > "$T/fw/code.fd"; : > "$T/fw/vars.fd"
   export PMM_FW_CODE="$T/fw/code.fd" PMM_FW_VARS="$T/fw/vars.fd"
 }
@@ -103,15 +104,29 @@ machine() {
   printf '%s\n' "$2" > "$1/machine.yml"
 }
 
-# image <dir> <yaml>: write machines/images/<name>/image.yml under a source dir (or $PMM_IMAGES_HOME)
+# image <dir> <yaml>: write machines/images/<name>/image.yml under a source dir (or
+# $PMM_IMAGES_HOME). A Debian root image gets the answer file it has to have, a one-line one
 image() {
   mkdir -p "$1"
   printf '%s\n' "$2" > "$1/image.yml"
+  [[ "$2" != *"distro: debian"* ]] || printf '%s\n' 'd-i passwd/username string ${USER}' 'd-i netcfg/get_hostname string ${HOSTNAME}' > "$1/preseed.cfg"
 }
 
+# The ISOs the test images name, in the person's own catalogue ($ANFS_CONFIG_HOME/isos.yml):
+# t-arm64 is a.iso and t-amd64 is b.iso, both pinned to $SHA
 SHA=6e93fa1759bd9d4b0fc11e938987de6967ee7de5297dac1be27c3a75cc17024b
+iso_catalog() {
+  printf -- '- {id: t-arm64, url: https://x/a.iso, checksum: "sha256:%s"}\n- {id: t-amd64, url: https://x/b.iso, checksum: "sha256:%s"}\n' \
+    "$SHA" "$SHA" > "$HOME/.config/anfs/isos.yml"
+}
 deb_yml() {
-  printf 'distro: debian\narch: [arm64, amd64]\niso:\n  arm64: {url: https://x/a.iso, sha256: %s}\n  amd64: {url: https://x/b.iso, sha256: %s}\n%s\n' "$SHA" "$SHA" "${1:-}"
+  printf 'distro: debian\narch: [arm64, amd64]\niso: {arm64: t-arm64, amd64: t-amd64}\n%s\n' "${1:-}"
+}
+
+# This repo as the source `core`: the shipped images, and the catalogue their ISOs are in
+core_source() {
+  ln -sfn "$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)" "$HOME/.local/share/anfs/sources/core"
+  printf '%s  core\n' "$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)" >> "$HOME/.config/anfs/user.list"
 }
 
 # An image <name> (a local definition) with a build <key> for arm64, as `pmm image build` leaves
@@ -120,7 +135,7 @@ deb_yml() {
 fake_build() {
   local name="$1" key="${2:-aaaaaaaaaaaaaaaa}" d="$PMM_DATA_HOME/images/$1/arm64"
   mkdir -p "$PMM_IMAGES_HOME/$name" "$d" "$PMM_DATA_HOME/keys/$name"
-  printf 'distro: debian\narch: [arm64]\niso:\n  arm64: {url: https://x/a.iso, sha256: %s}\n%s\n' "$SHA" "${3:-}" > "$PMM_IMAGES_HOME/$name/image.yml"
+  image "$PMM_IMAGES_HOME/$name" "$(printf 'distro: debian\narch: [arm64]\niso: {arm64: t-arm64}\n%s' "${3:-}")"
   : > "$d/$key.qcow2"; : > "$d/$key-efivars.fd"
   echo key > "$PMM_DATA_HOME/keys/$name/id_ed25519"
   printf 'id: local/%s\nname: %s\narch: arm64\nbackend: qemu\ncache_key: %s\ndisk: %s.qcow2\nuser: pmm\n' \

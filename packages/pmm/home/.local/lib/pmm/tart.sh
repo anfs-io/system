@@ -16,8 +16,8 @@
 #
 # Clones are APFS copy-on-write, so they cost seconds and almost no disk. The stock image's own
 # account (user.bootstrap, default admin/admin) is used once with its password to install the
-# image's key; scripts then run as root through its sudo. user.name is who `pmm shell` logs in as
-# (a script creates it and authorizes $PIM_SSH_PUBKEY when it is not the bootstrap account).
+# image's key; the provision steps then run as root through its sudo. user.name is who `pmm shell` logs in as
+# (a step creates it and authorizes $PIM_SSH_PUBKEY when it is not the bootstrap account).
 #
 # Shutting down is from inside the guest, then waiting for tart: `tart stop` can return while the
 # guest's last writes are still buffered, and a clone taken then has an older APFS checkpoint.
@@ -158,17 +158,17 @@ _tart_build_cleanup() {
 
 tart_build() {
   local id="$1" arch="$2" key="$3"
-  local name base vm built sshkey user ip pid start log s cpus mem disk
+  local name bname base vm built sshkey user ip pid start log s cpus mem disk
   [[ "$(host_os)" == darwin && "$(host_arch)" == arm64 ]] || die "tart images build only on Apple silicon macOS"
   command -v tart >/dev/null || die "tart is not installed (ppm install core/pmm)"
-  name=$(img_name "$id")
+  name=$(img_name "$id") bname=$(img_bname "$id")
   _tart_boot "$id"
   base=$(img_get "$(img_root "$id")" .base)
   sshkey=$(img_key "$id")
   user=$(img_user "$id")
   vm="pmm-image-$name-building"
   log="$PMM_STATE_HOME/logs/$name-$arch"
-  mkdir -p "$log" "$(meta_dir "$name" "$arch")"
+  mkdir -p "$log" "$(meta_dir "$bname" "$arch")"
   start=$(date +%s)
 
   echo "== build $id (tart) -> $key"
@@ -176,14 +176,14 @@ tart_build() {
   local parent
   parent=$(img_parent "$id") || parent=""
   if [[ -n "$parent" ]]; then
-    tart clone "$(tart_vm_build "$(img_name "$parent")" "$(meta_get "$(img_name "$parent")" "$arch" .cache_key)")" "$vm"
+    tart clone "$(tart_vm_build "$(img_name "$parent")" "$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)")" "$vm"
   else
     echo "Cloning $base (a first pull downloads the image, ~25GB for macOS)"
     tart clone "$base" "$vm" || die "tart clone $base failed"
   fi
-  cpus=$(img_setting "$id" .cpus 4)
-  mem=$(img_setting "$id" .memory 8192)
-  disk=$(img_setting "$id" .disk "")
+  cpus=$(img_setting "$id" .build.cpus 4)
+  mem=$(img_setting "$id" .build.memory 8192)
+  disk=$(img_setting "$id" .build.disk "")
   tart set "$vm" --cpu "$cpus" --memory "$mem" ${disk:+--disk-size "${disk%G}"}
 
   pid=$(_tart_run "$vm" "$log/boot.log")
@@ -206,7 +206,7 @@ tart_build() {
       PIM_IMAGE="$name" PIM_ARCH="$arch" PIM_USER="$user" PIM_SSH_PUBKEY="$(cat "$sshkey.pub")"
   done < <(img_scripts "$id")
 
-  # A reboot, so whatever the scripts set up for boot (synthetic.conf, launchd) is in place
+  # A reboot, so whatever the steps set up for boot (synthetic.conf, launchd) is in place
   echo "Rebooting"
   _tart_ssh "$sshkey" "$ip" "$BOOT_USER" "printf '%s\n' $(shq "$BOOT_PW") | sudo -S -p '' shutdown -r now" >/dev/null 2>&1 || true
   sleep 20
@@ -221,17 +221,21 @@ tart_build() {
   built=$(tart_vm_build "$name" "$key")
   tart delete "$built" >/dev/null 2>&1 || true
   tart rename "$vm" "$built"
-  # superseded builds: nothing is an overlay on a tart build (clones are independent)
-  _tart_names | grep -E "^pmm-image-$name-[0-9a-f]{16}\$" | grep -vx "$built" | while read -r s; do tart delete "$s" >/dev/null 2>&1 || true; done || true
+  # superseded builds: nothing is an overlay on a tart build (clones are independent). The build
+  # of a parent of the same name (from: its own name) is not one: it is that definition's current
+  local keep="$built"
+  [[ -z "$parent" || "$(img_name "$parent")" != "$name" ]] ||
+    keep+="|$(tart_vm_build "$name" "$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)")"
+  _tart_names | grep -E "^pmm-image-$name-[0-9a-f]{16}\$" | grep -vxE "$keep" | while read -r s; do tart delete "$s" >/dev/null 2>&1 || true; done || true
   meta_write_build "$id" "$arch" "$key" "$parent"
-  meta_set "$name" "$arch" '.disk = strenv(v)' "$built"
+  meta_set "$bname" "$arch" '.disk = strenv(v)' "$built"
   echo "Built $id (tart) in $(( $(date +%s) - start ))s: $built"
 }
 
 tart_test() {
   local id="$1" name key built vm script pid ip sshkey user log rc=0
   name=$(img_name "$id")
-  key=$(meta_get "$name" arm64 .cache_key)
+  key=$(meta_get "$(img_bname "$id")" arm64 .cache_key)
   built=$(tart_vm_build "$name" "$key")
   tart_exists "$built" || die "$id has no tart build (pmm image build $id)"
   script=$(img_test_script "$id") || true
@@ -258,7 +262,7 @@ tart_test() {
   wait_exit "$pid" 30 || kill -9 "$pid" 2>/dev/null || true
   tart delete "$vm" >/dev/null 2>&1 || true
   if [[ $rc -eq 0 ]]; then
-    meta_set "$name" arm64 '.tested_key = strenv(v)' "$key"
+    meta_set "$(img_bname "$id")" arm64 '.tested_key = strenv(v)' "$key"
     echo "Tested $id (tart)"
   else
     echo "The test of $id (tart) FAILED"

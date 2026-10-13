@@ -39,7 +39,7 @@ settings. `pmm help` documents the definitions; the shape:
 ```
 machines/<name>/machine.yml    image (or media), profile, cpus, memory, disk, shares, ports, user, arch
 machines/profiles.yml          name: {cpus, memory, disk}
-machines/images/<name>/        an image (image.yml)
+machines/images/<name>/        an image: image.yml and everything its build reads (Images, below)
 machines/networks/<name>/      a network (network.yml)
 ```
 
@@ -96,10 +96,9 @@ machines/networks/<name>/      a network (network.yml)
   the ISO catalogue. `pmm iso` is that catalogue and its store (`lib/anfs/iso.sh`, the same group
   as `anfs iso` and `ventoy iso`): `pmm iso pull` fetches ahead of time what a machine's
   `media:` or a build would otherwise fetch when it needs it, and `pmm iso remove` and
-  `pmm iso prune` are what deletes ISOs (`image prune` does not). A build still fetches the URL in
-  its `image.yml`, so core's `isos/isos.yml` repeats each image's ISO as `<image>-<arch>`
-  (`pmm iso pull debian-13-arm64`; pmm's `iso.bats` holds the two together): an ISO an image of
-  another source names only by URL is a stray to `prune` until images name ids. Media in the definition boot after the disk, so an empty disk falls through
+  `pmm iso prune` are what deletes ISOs (`image prune` does not). An image names its ISO by id
+  too (`iso: {arm64: debian-13-arm64}`), and core's `isos/isos.yml` holds the entries its images
+  name, so a build's ISO is never a stray to `prune`. Media in the definition boot after the disk, so an empty disk falls through
   to the installer and what it installs boots from then on; `pmm up --media` is for one run and
   boots first. A machine with media and no `image:` is blank: an empty disk (`disk:`, 20G), no
   build, no hold, no login, so `up` does not wait for ssh and `shell` refuses. `pmm up --display`
@@ -110,28 +109,63 @@ machines/networks/<name>/      a network (network.yml)
 
 ### Images
 
-`pmm image list|show|build|test|export|remove|prune|path|cd|validate`. An image is
+`pmm image list|show|new|build|test|export|remove|prune|path|cd|validate`. An image is
 `machines/images/<name>/` in any source, or in `~/.config/pmm/machines/images/` (the implicit
 `local` source, `PMM_IMAGES_HOME`). `pmm help` documents the definition; the shape:
 
 ```
 machines/images/<name>/
-  image.yml       backend (qemu|tart), distro, arch, iso.<arch>.{url,sha256} | from: <image> | base
-  preseed.cfg | kickstart.ks   optional answer file (${VAR} templated; defaults ship with pmm)
-  scripts/*.sh    run as root over ssh after the install, in name order
-  files/          copied to the guest for the scripts
+  image.yml       backend (qemu|tart), distro, arch, iso.<arch>: <catalogue id> | from: <image> | base,
+                  user, vars, build: {cpus, memory, disk}, machine:
+  preseed.cfg | kickstart.ks   a root image's answer file (${VAR} templated): required
+  provision/*.sh  the steps: run as root over ssh after the install, in name order
+  files/          copied to the guest for the steps
   test.sh         what `pmm image test` runs on a throwaway boot
+  README.md       what the image is for and what a machine gets
 ```
 
+- **The directory is complete.** Everything a build reads is in it, as in a pcm service
+  directory, except `lib/pmm/defaults/finalize.sh`, which is pmm's so that no image can skip it.
+  pmm ships no answer file, no step and no test: a root image has its own answer file or fails
+  `validate`, and a new root for a distro that has one starts as a copy of it (`image new
+  --copy`). `test.sh` is the image's, else the nearest up its `from:` chain; with none,
+  `image test` says so and succeeds.
+- **Every variable is in `image.yml`.** The answer file's `${VAR}`s are the root's `vars:`, plus
+  what an image cannot know and `vars:` cannot override (`tpl_load`: `USER`, `FULLNAME`,
+  `PASSWORD_HASH`, `KS_PASSWORD`, `SSH_PUBKEY`, `IMAGE`, `ARCH`), and `HOSTNAME`, the image's name
+  unless `vars:` sets it. Nothing else has a default, so a name `vars:` does not set fails
+  `validate` and the build. Comments in an answer file are rendered too.
+- **An ISO is a catalogue id** (`iso.<arch>`, `lib/pmm/iso.sh`), resolved the catalogue's own way
+  (`~/.config/anfs/isos.yml`, then the sources in order), so a person's catalogue can point an id
+  at a mirror. The entry must pin `checksum: sha256:<hex>`: the sum is in the build key, which is
+  what keeps a repointed id honest. `validate` refuses an id the catalogue lacks, an entry with
+  only a `checksum_url`, and the inline `{url, sha256}` map that ids replaced. Core has its own
+  `isos/isos.yml` because stack's catalogue is not below core in priority.
+- **`image show` prints what a build reads**: the answer file, the vars, each arch's ISO (its
+  file in the store, present or missing), every step with its path (for a child, its parents'
+  first, then its own), the anfs install, finalize, the test and the log directory. `--json` is
+  the same as one object. `_image_plan` (`registry.sh`) produces both.
+- **`image new <name> --from <image> | --copy <image> [--source <alias>]`** starts a definition
+  in `PMM_IMAGES_HOME`, or in a source's clone: a child (`image.yml`, an empty `provision/`, a
+  README), or a copy of an image's whole directory. It only creates: an existing directory is
+  73, neither option without a terminal is 64.
+- **The old shape is an error, not ignored**: a `scripts/` directory, a `scripts:` key, and
+  `cpus`, `memory` or `disk` at the top level (they are `build:`'s) each fail `validate` with
+  what replaced them.
 - **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
   and the rendered answer file (plus the image's public key) is appended to the initrd as one
   more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
   dependency on the host. The installer powers the VM off (`-no-reboot`), then pmm boots the disk.
 - **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
   dependency: to the same or a lower-priority source, so `lgat/machines/images/app` may build on
-  `core/machines/images/debian-13` but not the reverse. Naming its own name is the next layer down.
-- **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
-  sha256, the answer file, the scripts, `files/`, pmm's finalize step and the parent's key.
+  `core/machines/images/debian-13` but not the reverse. Naming its own name is the next layer down:
+  `user/debian-13` with `from: debian-13` is core's plus its own steps, and is what `debian-13`
+  then means. Both are built. A name is one build record (`meta.yml`), so the shadowed
+  definition's is `meta@<source>.yml` in the same directory, its disk beside the other's
+  (`img_bname`, `registry.sh`); `image prune` keeps the current build of each.
+- **Builds are cached by key**: a hash of `image.yml` (minus `description` and `machine`), the
+  arch, the ISO's pinned sha256, the answer file, the steps, `files/`, pmm's finalize step and the
+  parent's key. `README.md` is not in it.
   `pmm image build` is a no-op while the key is unchanged; `meta.yml` beside each build records
   it, with `tested_key` (the build `image test` last passed) and `exports`.
 - **Every build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first boot
@@ -158,8 +192,9 @@ machines/images/<name>/
   `shadowed`.
 - `machine:` in `image.yml` (`{profile: medium, min: {cpus, memory, disk}}`) is for the machines
   run from it and never read by a build, so it is left out of the cache key.
-- `cpus`, `memory` and `disk` in `image.yml` are the build's: what the installer runs with and the
-  size of the image's disk. What a machine gets is its own setting or its profile's.
+- `build: {cpus, memory, disk}` in `image.yml` is the build's: what the installer runs with and
+  the size of the image's disk. What a machine gets is its own setting or its profile's. The file
+  reads as two blocks: `build:` and `machine:`.
 - **Where things are**: builds in `$PMM_DATA_HOME/images/<name>/<arch>/`, keys in
   `$PMM_DATA_HOME/keys/<name>/`, exports in `$PMM_DATA_HOME/exports/`, build workspaces and logs
   in `$PMM_STATE_HOME/{build,logs}`, ISOs in anfs's store (`lib/anfs/iso.sh`). Settings that are
@@ -283,11 +318,13 @@ This repo (`core/`) contains:
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
 - `packages/dev` — dev/test tooling: containers, macOS VMs, `ppm user`, `ppm move`, the git hooks
-- `skills/` — the tools' own skills (`pcm-containers`), synced by psm like any source's
+- `skills/` — the tools' own skills (`pcm-containers`, `pmm-images`), synced by psm like any source's
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
-- `isos/isos.yml` — the ISOs the base images install from, in the catalogue (`pmm iso pull`)
+- `isos/isos.yml` — the ISOs the base images install from: the catalogue entries their `image.yml`
+  names by id, each with a pinned sha256 (`pmm iso pull`)
 - `machines/` — the macOS test box (`anfs-test-macos`) as a pmm machine, and in `machines/images/`
-  the base VM images (`debian-13`, `fedora-44`); other sources build on them with `from:`
+  the base VM images (`debian-13`, `fedora-44`), each with its answer file, steps, test and README;
+  other sources build on them with `from:`
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
@@ -593,6 +630,7 @@ cli_dispatch "$@"
 - `cli_usage_err "message"` is for what a declaration cannot say (`--to` is required). An unknown
   command exits 64 too.
 - One command runs another with `cli_call <command> <args...>`, which gives it its own options and
+  makes it the running command (its usage line is what `cli_usage_err` prints), and
   puts the caller's back. Tests run a command the same way.
 - `cli_before_command`, if the tool defines it, runs between the line being read and the command.
   ppm uses it (below).
@@ -1068,14 +1106,16 @@ pmm, for real (qemu, hvf/kvm; a few minutes for Debian on Apple silicon):
 
 ```
 packages/pmm/tests/e2e [debian|fedora]
-    # the image: validate, build --test, a cache-hit rebuild, export -c, qemu-img check; then two
+    # the image: validate, show (every file the build reads), build --test, a cache-hit rebuild,
+    # export -c, qemu-img check; a child (image new --from, one step) built on it and run; then two
     # machines from the one build (a profile, a share, run), exec, down, up again (the disk and
     # the settings persist), snapshot/reset, reset onto the build, the build kept while a machine
     # or a snapshot is on it (image remove is refused), prune, rm, implode
 ```
 
-It runs the working tree's pmm under a temp `HOME` with its own `PMM_SOCK_DIR`; only the ISO
-store is the real one.
+It runs the working tree's pmm under a temp `HOME` with its own `PMM_SOCK_DIR` and the repo as
+the source `core` (its images, and the catalogue their ISOs are in); only the ISO store is the
+real one.
 
 - `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
   `containers/anfs-test-<distro>/Containerfile`) with podman alone, so changing anfs — pcm
@@ -1105,7 +1145,7 @@ Both harnesses link the mounted sources into `~/.local/share/anfs/sources` and l
 and test the pushed repo instead of the mount.
 
 `ppm vm` differs from `ppm container` in four places, each forced by the platform rather than by
-taste (the first two live in the image, `machines/images/anfs-test-macos/scripts/10-provision.sh`; the
+taste (the first two live in the image, `machines/images/anfs-test-macos/provision/10-provision.sh`; the
 second two in the tart backend: pmm's `tart.sh`, and its machine and snapshot code over it):
 
 - **`/src` comes from `/etc/synthetic.conf`**, realized at boot. tart mounts shares under

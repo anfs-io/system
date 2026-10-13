@@ -1,5 +1,5 @@
-# pmm's default Fedora kickstart. Its variables come from pmm (`pmm help`): an image overrides them with
-# vars: in image.yml, or replaces this file with its own kickstart.ks.
+# Fedora 44's kickstart. Its variables are image.yml's vars:, and what pmm sets itself: USER,
+# FULLNAME, KS_PASSWORD, SSH_PUBKEY, IMAGE, ARCH (`pmm help`). A name that is neither is an error.
 text
 skipx
 firstboot --disable

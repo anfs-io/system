@@ -1,16 +1,21 @@
-# Fedora 44 Server from the netinst ISO, with pmm's default kickstart and scripts
+# Fedora 44 Server from the netinst ISO. Everything the build reads is in this directory:
+# kickstart.ks (rendered with vars: below), provision/, test.sh. `pmm image show fedora-44` lists it.
 description: Fedora 44 base image
 distro: fedora
 arch: [arm64, amd64]
+# ids in the ISO catalogue (isos/isos.yml; `pmm iso list`), which pins each one's sha256
 iso:
-  arm64:
-    url: https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/aarch64/iso/Fedora-Server-netinst-aarch64-44-1.7.iso
-    sha256: a93ebd0322cda5a439039710b727ac1899a06e1c11876cfdf7f27c25b8262cc3
-  amd64:
-    url: https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/iso/Fedora-Server-netinst-x86_64-44-1.7.iso
-    sha256: ae20c06bea746913cadea7d80463e13f4bf55bee4df2918111c921c674b70283
-memory: 4096
+  arm64: fedora-44-arm64
+  amd64: fedora-44-amd64
+# what the build runs with: Anaconda needs more than pmm's 2048 MB
+build:
+  memory: 4096
 timeouts:
   install: 3600
+# what kickstart.ks's ${VAR}s are replaced with. pmm adds USER, FULLNAME, KS_PASSWORD,
+# SSH_PUBKEY, IMAGE and ARCH; a name the file uses that is in neither fails the build
 vars:
   HOSTNAME: fedora
+  LOCALE: en_US.UTF-8
+  KEYBOARD: us
+  TIMEZONE: UTC

@@ -2,9 +2,27 @@
 # pmm library: checking image definitions; the image validate command. Sourced by ~/.local/bin/pmm;
 # functions only. _v_err and _v_warn, and their counters, are validate.sh's.
 
+# The ISO a root image names for <arch>: an id in the catalogue, whose entry pins a sha256
+_validate_iso() {
+  local id="$1" arch="$2" iso
+  if [[ "$(yq -r ".iso.$arch | tag" "$(img_yml "$id")" 2>/dev/null)" == "!!map" ]]; then
+    _v_err "iso.$arch: an inline url and sha256 are gone; name an id in the ISO catalogue (iso: {$arch: <id>}; pmm iso list, pmm iso add)"
+    return 0
+  fi
+  iso=$(img_iso_id "$id" "$arch")
+  if [[ -z "$iso" ]]; then
+    _v_err "iso.$arch is missing: an id in the ISO catalogue (pmm iso list)"
+  elif ! anfs_iso_known "$iso"; then
+    _v_err "iso.$arch: no ISO '$iso' in the catalogue (pmm iso list)"
+  elif [[ -z "$(iso_sha256 "$iso")" ]]; then
+    _v_err "iso.$arch: the catalogue entry '$iso' pins no sha256 (checksum: sha256:<hex>; a checksum_url is not enough: the sum is part of the build's key)"
+  fi
+  return 0
+}
+
 # Check one image, printing its problems; adds to V_ERRORS / V_WARNINGS
 validate_image() {
-  local id="$1" dir yml backend from distro arch a sha url f
+  local id="$1" dir yml backend from distro arch a f
   dir=$(img_dir "$id")
   yml="$dir/image.yml"
   yq -e '.' "$yml" >/dev/null 2>&1 || yq -e 'true' "$yml" >/dev/null 2>&1 || { _v_err "image.yml does not parse"; return; }
@@ -32,19 +50,17 @@ validate_image() {
         *) _v_err "distro '$distro' has no installer (debian or fedora)" ;;
       esac
       while IFS= read -r arch; do
-        url=$(img_list "$id" ".iso.$arch.url" | head -n1)
-        sha=$(img_get "$id" ".iso.$arch.sha256")
-        [[ -n "$url" ]] || _v_err "iso.$arch.url is missing"
-        [[ "$sha" =~ ^[0-9a-fA-F]{64}$ ]] || _v_err "iso.$arch.sha256 is missing or not a sha256"
+        _validate_iso "$id" "$arch"
       done < <(img_arches "$id")
-      if [[ "$distro" == debian || "$distro" == fedora ]]; then
-        f=$(img_answer_file "$id")
-        [[ -f "$f" ]] || _v_err "no answer file ($(basename "$f"))"
-        if [[ -f "$f" ]]; then
+      if f=$(answer_name "$distro"); then
+        if [[ ! -f "$dir/$f" ]]; then
+          _v_err "no answer file: a $distro image installs with its own $f (pmm image new --copy copies a shipped image's)"
+        else
           local pub="$PMM_STATE_HOME/.validate.pub"
           echo "ssh-ed25519 AAAA validate" > "$pub"
           tpl_load "$id" "$(img_arches "$id" | head -n1)" "$pub"
-          render "$f" > /dev/null 2>"$PMM_STATE_HOME/.render.err" || _v_err "$(sed 's/^pmm: //' "$PMM_STATE_HOME/.render.err")"
+          render "$dir/$f" > /dev/null 2>"$PMM_STATE_HOME/.render.err" ||
+            _v_err "$(sed 's/^pmm: //' "$PMM_STATE_HOME/.render.err") (image.yml's vars: sets none of that name)"
           rm -f "$pub"
         fi
       fi
@@ -55,12 +71,20 @@ validate_image() {
     fi
   fi
 
-  for f in "$dir"/scripts/*; do
-    [[ -e "$f" ]] || continue
-    [[ "$f" == *.sh ]] || { _v_warn "scripts/$(basename "$f") is not *.sh and is never run"; continue; }
-    [[ -s "$f" ]] || _v_warn "scripts/$(basename "$f") is empty"
+  [[ -z "$from" ]] || for f in preseed.cfg kickstart.ks; do
+    [[ ! -f "$dir/$f" ]] || _v_warn "$f is ignored on a from: image (its root's installed it)"
   done
-  case "$(img_get "$id" .scripts.defaults true)" in true|false) ;; *) _v_err "scripts.defaults must be true or false" ;; esac
+  for f in "$dir"/provision/*; do
+    [[ -e "$f" ]] || continue
+    [[ "$f" == *.sh ]] || { _v_warn "provision/$(basename "$f") is not *.sh and is never run"; continue; }
+    [[ -s "$f" ]] || _v_warn "provision/$(basename "$f") is empty"
+  done
+  # What the image directory used to be: said, not silently ignored
+  [[ ! -d "$dir/scripts" ]] || _v_err "scripts/ is never run: the steps are in provision/ now"
+  [[ "$(yq -r 'has("scripts")' "$yml")" != true ]] || _v_err "scripts: is gone: an image runs its own provision/ and nothing else"
+  for f in cpus memory disk; do
+    [[ -z "$(img_get "$id" ".$f")" ]] || _v_err "$f: is build.$f now (build: {cpus, memory, disk}: what the build runs with)"
+  done
   if img_has_anfs "$id"; then
     case "$(img_get "$id" .anfs.sources pushed)" in host|pushed) ;; *) _v_err "anfs.sources must be host or pushed" ;; esac
   fi

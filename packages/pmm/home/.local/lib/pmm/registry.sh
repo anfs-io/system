@@ -1,14 +1,30 @@
 #!/usr/bin/env bash
-# pmm library: what has been built — each build's meta.yml; the image list, show, remove and
-# prune commands, and what is on a build. Sourced by ~/.local/bin/pmm; functions only.
+# pmm library: what has been built — each build's meta.yml; the image list, show (with what a
+# build reads), remove and prune commands, and what is on a build. Sourced by ~/.local/bin/pmm;
+# functions only.
 #
 # There is no central registry file: $PMM_DATA_HOME/images/<name>/<arch>/meta.yml describes the
 # current build of one image for one arch, next to its disk (<key>.qcow2) and UEFI vars. Older
 # disks stay until `pmm image prune`, since another image's build, or a machine, may be an
 # overlay on them.
+#
+# A name is one image, and one meta.yml. A definition a higher-priority source shadows can still
+# be built: it is what an image whose from: is its own name is built on (user/debian-13 on
+# core/debian-13). Its record is meta@<source>.yml in the same directory, its disk beside the
+# other's, so the two builds do not replace each other. img_bname is the name such a record is
+# asked for by, and what meta_dir, meta_file and everything over them take.
 
-meta_dir()  { echo "$PMM_DATA_HOME/images/$1/$2"; }
-meta_file() { echo "$(meta_dir "$1" "$2")/meta.yml"; }
+img_bname() {
+  local name
+  name=$(img_name "$1")
+  if [[ "$(canon "$name" 2>/dev/null)" == "$1" ]]; then echo "$name"; else echo "$name@$(img_src "$1")"; fi
+}
+meta_dir()  { echo "$PMM_DATA_HOME/images/${1%@*}/$2"; }
+meta_file() {
+  local m=meta.yml
+  [[ "$1" != *@* ]] || m="meta@${1#*@}.yml"
+  echo "$(meta_dir "$1" "$2")/$m"
+}
 
 # A value from a build's meta.yml, or nothing
 # Usage: meta_get <name> <arch> <yq path>
@@ -30,7 +46,7 @@ build_disk() {
 # True when the build <key> of <name> <arch> exists: a qcow2, or for tart a VM in tart's store
 build_present() {
   case "$4" in
-    tart) tart_exists "$(tart_vm_build "$1" "$3")" ;;
+    tart) tart_exists "$(tart_vm_build "${1%@*}" "$3")" ;;
     *) [[ -f "$(meta_dir "$1" "$2")/$3.qcow2" ]] ;;
   esac
 }
@@ -67,14 +83,14 @@ build_read() {
 # Usage: meta_write_build <id> <arch> <key> <parent id|"">
 meta_write_build() {
   local id="$1" arch="$2" key="$3" parent="$4" name pdisk="" pkey=""
-  name=$(img_name "$id")
+  name=$(img_bname "$id")
   if [[ -n "$parent" ]]; then
-    pdisk=$(build_disk "$(img_name "$parent")" "$arch")
-    pkey=$(meta_get "$(img_name "$parent")" "$arch" .cache_key)
+    pdisk=$(build_disk "$(img_bname "$parent")" "$arch")
+    pkey=$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)
   fi
-  ID="$id" NAME="$name" ARCH="$arch" KEY="$key" BACKEND="$(img_backend "$id")" \
+  ID="$id" NAME="$(img_name "$id")" ARCH="$arch" KEY="$key" BACKEND="$(img_backend "$id")" \
   PARENT="$parent" PKEY="$pkey" PDISK="$pdisk" USER_="$(img_user "$id")" AT="$(now_iso)" \
-  ISO="$( [[ -z "$parent" && "$(img_backend "$id")" == qemu ]] && img_list "$id" ".iso.$arch.url" | head -n1)" \
+  ISO="$( [[ -z "$parent" && "$(img_backend "$id")" == qemu ]] && img_iso_id "$id" "$arch")" \
     yq -n '.id = strenv(ID) | .name = strenv(NAME) | .arch = strenv(ARCH) | .backend = strenv(BACKEND)
            | .cache_key = strenv(KEY) | .disk = strenv(KEY) + ".qcow2" | .user = strenv(USER_)
            | .built_at = strenv(AT)
@@ -95,7 +111,7 @@ meta_set() {
 built_names() {
   local d
   for d in "$PMM_DATA_HOME"/images/*/; do
-    ls "$d"*/meta.yml >/dev/null 2>&1 && basename "$d"
+    ls "$d"*/meta*.yml >/dev/null 2>&1 && basename "$d"
   done
   return 0
 }
@@ -103,7 +119,7 @@ built_names() {
 # Builds (name/arch) whose meta.yml names <disk> as their parent disk
 dependents_of_disk() {
   local f
-  for f in "$PMM_DATA_HOME"/images/*/*/meta.yml; do
+  for f in "$PMM_DATA_HOME"/images/*/*/meta*.yml; do
     [[ -f "$f" ]] || continue
     [[ "$(yq -r '.parent.disk // ""' "$f")" == "$1" ]] && echo "$(yq -r .name "$f")/$(yq -r .arch "$f")"
   done
@@ -195,10 +211,60 @@ cmd_image_list() {
       "name source arch state key disk backend user sshkey held[] built tested"
 }
 
+# What a build of <id> reads, one record per line, fields joined by $ANFS_US. `image show` prints
+# them and gives them as --json, so the two cannot differ:
+#   answer <file>                    the root's answer file (qemu), there or not
+#   var <name> <value>               the root's vars:
+#   iso <arch> <id> <file> <state>   the ISO each arch installs from: present | missing | unknown
+#   base <oci image>                 tart
+#   step <label> <image> <file>      the provision steps, the root's first, each image's anfs
+#                                    install (no file) after its own; then finalize, pmm's (no
+#                                    image; qemu)
+#   test <file>                      test.sh: the image's, or the nearest up its chain
+#   logs <dir>                       where a build's logs go, for the arch this host builds
+_image_plan() {
+  local id="$1" root cid f arch iso file state line i
+  local -a chain=()
+  mapfile -t chain < <(img_chain "$id" 2>/dev/null)
+  [[ ${#chain[@]} -gt 0 ]] || chain=("$id")
+  root="${chain[-1]}"
+  if [[ "$(img_backend "$root")" == tart ]]; then
+    anfs_row base "$(img_get "$root" .base)"
+  else
+    f=$(img_answer_file "$id") && anfs_row answer "$f"
+    while IFS= read -r line; do
+      [[ "$line" == *=* ]] && anfs_row var "${line%%=*}" "${line#*=}"
+    done < <(img_vars "$id")
+    while IFS= read -r arch; do
+      iso=$(img_iso_id "$id" "$arch") file="" state=unknown
+      if [[ -n "$iso" ]] && anfs_iso_known "$iso" && file=$(anfs_iso_file "$iso" 2>/dev/null); then
+        [[ -f "$file" ]] && state=present || state=missing
+      fi
+      anfs_row iso "$arch" "$iso" "$file" "$state"
+    done < <(img_arches "$id")
+  fi
+  for (( i = ${#chain[@]} - 1; i >= 0; i-- )); do
+    cid="${chain[$i]}"
+    while IFS= read -r f; do anfs_row step "$(basename "$f")" "$cid" "$f"; done < <(img_scripts "$cid")
+    ! img_has_anfs "$cid" || anfs_row step "anfs install ($(img_get "$cid" .anfs.sources pushed))" "$cid" ""
+  done
+  # a tart build ends with a reboot instead (tart_build)
+  [[ "$(img_backend "$root")" == tart ]] || anfs_row step finalize "" "$(img_finalize)"
+  f=$(img_test_script "$id" 2>/dev/null) || f=""
+  [[ -z "$f" ]] || anfs_row test "$f"
+  arch=$(host_arch)
+  grep -qx "$arch" <<< "$(img_arches "$id")" || arch=$(img_arches "$id" | head -n1)
+  anfs_row logs "$PMM_STATE_HOME/logs/$(img_bname "$id")-$arch/"
+}
+
+# `pmm image show <image>`: the definition, everything a build of it reads (with --json, the same
+# as one object), then its builds
 cmd_image_show() {
-  local id name arch chain f key held
+  local id name bname arch chain f key held current plan kind a b c d last=""
   id=$(img_canon_or_die "$1")
-  name=$(img_name "$id")
+  name=$(img_name "$id") bname=$(img_bname "$id")
+  plan=$(_image_plan "$id")
+  if anfs_json_on; then _image_show_json "$id" "$plan"; return; fi
   echo "$id"
   echo "  definition  $(tilde "$(img_dir "$id")")"
   chain=$(img_chain "$id" 2>/dev/null | paste -sd' ' - | sed 's/ / <- /g') || true
@@ -207,26 +273,78 @@ cmd_image_show() {
   echo "  distro      $(img_distro "$id")"
   echo "  arch        $(img_arches "$id" | paste -sd, -)"
   echo "  user        $(img_user "$id")"
+  # a label is printed once: the records of a kind follow each other
+  _plan_line() {  # <label> <text>
+    [[ "$1" == "$last" ]] && printf '  %-11s %s\n' "" "$2" || printf '  %-11s %s\n' "$1" "$2"
+    last="$1"
+  }
+  while IFS="$ANFS_US" read -r kind a b c d; do
+    case "$kind" in
+      answer) _plan_line answer "$(tilde "$a")$([[ -f "$a" ]] || echo "  (missing)")" ;;
+      var)    _plan_line vars "$a=$b" ;;
+      iso)    _plan_line "iso $a" "${b:-(none)}$([[ -z "$c" ]] || echo "  ($(tilde "$c"), $d)")$([[ -z "$b" || "$d" != unknown ]] || echo "  (not in the catalogue)")" ;;
+      base)   _plan_line base "$a" ;;
+      step)   if [[ -z "$b" ]]; then _plan_line provision "$(printf '%-16s (pmm) %s' "$a" "$(tilde "$c")")"
+              elif [[ -z "$c" ]]; then _plan_line provision "$(printf '%-16s (pmm) %s' "$a" "$b: image.yml anfs:")"
+              else _plan_line provision "$(printf '%-16s %s' "$a" "$(tilde "$c")")"
+              fi ;;
+      test)   _plan_line test "$(tilde "$a")" ;;
+      logs)   grep -q "^test$ANFS_US" <<< "$plan" || _plan_line test "(none: image test has nothing to run)"
+              _plan_line logs "$(tilde "$a")" ;;
+    esac
+  done <<< "$plan"
   for arch in arm64 amd64; do
-    f=$(meta_file "$name" "$arch")
+    f=$(meta_file "$bname" "$arch")
     [[ -f "$f" ]] || continue
-    key=$(meta_get "$name" "$arch" .cache_key)
+    key=$(meta_get "$bname" "$arch" .cache_key)
     echo "  build $arch"
-    echo "    key       $key$( [[ "$(meta_get "$name" "$arch" .id)" == "$id" ]] || echo " (built from $(meta_get "$name" "$arch" .id))")"
-    echo "    built     $(meta_get "$name" "$arch" .built_at)"
-    if [[ "$(meta_get "$name" "$arch" .backend)" == tart ]]; then
-      echo "    vm        $(meta_get "$name" "$arch" .disk) (tart)"
+    echo "    key       $key$( [[ "$(meta_get "$bname" "$arch" .id)" == "$id" ]] || echo " (built from $(meta_get "$bname" "$arch" .id))")"
+    echo "    built     $(meta_get "$bname" "$arch" .built_at)"
+    if [[ "$(meta_get "$bname" "$arch" .backend)" == tart ]]; then
+      echo "    vm        $(meta_get "$bname" "$arch" .disk) (tart)"
     else
-      echo "    disk      $(tilde "$(meta_dir "$name" "$arch")/$key.qcow2") ($(file_size "$(meta_dir "$name" "$arch")/$key.qcow2"))"
+      echo "    disk      $(tilde "$(meta_dir "$bname" "$arch")/$key.qcow2") ($(file_size "$(meta_dir "$bname" "$arch")/$key.qcow2"))"
     fi
-    [[ "$(meta_get "$name" "$arch" .tested_key)" == "$key" ]] && echo "    tested    yes" || echo "    tested    no"
-    [[ -n "$(meta_get "$name" "$arch" .parent.id)" ]] && echo "    parent    $(meta_get "$name" "$arch" .parent.id) ($(meta_get "$name" "$arch" .parent.cache_key))"
+    [[ "$(meta_get "$bname" "$arch" .tested_key)" == "$key" ]] && echo "    tested    yes" || echo "    tested    no"
+    [[ -n "$(meta_get "$bname" "$arch" .parent.id)" ]] && echo "    parent    $(meta_get "$bname" "$arch" .parent.id) ($(meta_get "$bname" "$arch" .parent.cache_key))"
     held=$(holders_of "$name" "$arch" | paste -sd' ' -)
     [[ -z "$held" ]] || echo "    held by   $held"
     if current=$(build_key "$id" "$arch" 2>/dev/null) && [[ "$current" != "$key" ]]; then
       echo "    stale     the definition changed since (pmm image build $name)"
     fi
   done
+  return 0
+}
+
+# The same as one JSON object. Values are strings, null for what is not there; lists are lists
+_image_show_json() {
+  local id="$1" plan="$2" name arch kind a b c d sep h
+  local answer=null base=null test=null logs=null vars="" isos="" steps="" builds="" chain="" arches=""
+  _js() { if [[ -n "$1" ]]; then _anfs_json_str "$1"; else printf 'null'; fi; }
+  name=$(img_name "$id")
+  while IFS="$ANFS_US" read -r kind a b c d; do
+    case "$kind" in
+      answer) answer=$(_js "$a") ;;
+      base)   base=$(_js "$a") ;;
+      test)   test=$(_js "$a") ;;
+      logs)   logs=$(_js "$a") ;;
+      var)    vars+="${vars:+,}$(_anfs_json_str "$a"):$(_anfs_json_str "$b")" ;;
+      iso)    isos+="${isos:+,}$(_anfs_json_str "$a"):{\"id\":$(_js "$b"),\"file\":$(_js "$c"),\"state\":$(_js "$d")}" ;;
+      step)   steps+="${steps:+,}{\"step\":$(_js "$a"),\"image\":$(_js "$b"),\"file\":$(_js "$c")}" ;;
+    esac
+  done <<< "$plan"
+  while IFS= read -r a; do chain+="${chain:+,}$(_anfs_json_str "$a")"; done < <(img_chain "$id" 2>/dev/null | tail -n +2)
+  while IFS= read -r a; do arches+="${arches:+,}$(_anfs_json_str "$a")"; done < <(img_arches "$id")
+  for arch in arm64 amd64; do
+    build_read "$(img_bname "$id")" "$arch" || continue
+    h="" sep=""
+    while IFS= read -r a; do [[ -z "$a" ]] || { h+="$sep$(_anfs_json_str "$a")"; sep=,; }; done < <(holders_of "$name" "$arch")
+    builds+="${builds:+,}{\"arch\":\"$arch\",\"state\":\"$(_build_state "$id" "$arch")\",\"key\":$(_js "$B_KEY"),\"disk\":$(_js "$B_DISK"),\"built\":$(_js "$B_AT"),\"tested\":\"$B_TESTED\",\"held\":[$h]}"
+  done
+  printf '{"id":%s,"definition":%s,"from":[%s],"backend":%s,"distro":%s,"arch":[%s],"user":%s,' \
+    "$(_js "$id")" "$(_js "$(img_dir "$id")")" "$chain" "$(_js "$(img_backend "$id")")" "$(_js "$(img_distro "$id")")" "$arches" "$(_js "$(img_user "$id")")"
+  printf '"answer":%s,"vars":{%s},"iso":{%s},"base":%s,"provision":[%s],"test":%s,"logs":%s,"builds":[%s]}\n' \
+    "$answer" "$vars" "$isos" "$base" "$steps" "$test" "$logs" "$builds"
 }
 
 # `pmm image remove [-y] [-f] <image>...`: delete every build; the definition stays. A build a
@@ -261,15 +379,20 @@ cmd_image_remove() {
 # `pmm image prune`: delete superseded build disks that no other build and no machine is on, and
 # stale build workspaces. The ISOs are not pmm's alone: `pmm iso remove`, `pmm iso prune`
 cmd_image_prune() {
-  local f dir key d d_key freed=0
-  for f in "$PMM_DATA_HOME"/images/*/*/meta.yml; do
-    [[ -f "$f" ]] || continue
-    dir=$(dirname "$f")
-    key=$(yq -r .cache_key "$f")
+  local f dir keys d d_key freed=0
+  for dir in "$PMM_DATA_HOME"/images/*/*/; do
+    dir="${dir%/}"
+    # the current build of each definition of the name: the effective one's, and a shadowed one's
+    keys=" "
+    for f in "$dir"/meta*.yml; do
+      [[ ! -f "$f" ]] || keys+="$(yq -r .cache_key "$f") "
+    done
+    [[ "$keys" != " " ]] || continue
     for d in "$dir"/*.qcow2 "$dir"/*.qcow2.part; do
-      [[ -f "$d" && "$(basename "$d")" != "$key.qcow2" ]] || continue
-      [[ -n "$(dependents_of_disk "$d")" ]] && continue
       d_key=$(basename "${d%%.qcow2*}")
+      [[ -f "$d" ]] || continue
+      [[ "$d" == *.part || "$keys" != *" $d_key "* ]] || continue
+      [[ -n "$(dependents_of_disk "$d")" ]] && continue
       [[ -n "$(holders_of "$(basename "$(dirname "$dir")")" "$(basename "$dir")" "$d_key")" ]] && continue
       echo "Deleting $(tilde "$d")"
       rm -f "$d" "${d%.qcow2}-efivars.fd"

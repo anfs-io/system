@@ -43,15 +43,19 @@ name, named for the time" --arg "machine" --arg "[snapshot]"
 cli_cmd "snapshot remove" "Delete a snapshot" --alias rm --opt "-y --yes: Do not ask" --arg "machine" --arg "snapshot"
 cli_group image "What machines run from: definitions and their builds"
 cli_cmd "image list" "Images, a row per built arch: NAME SOURCE ARCH STATE KEY ..." --alias ls --arg "[image...]"
-cli_cmd "image show" "Definition, its from: chain and builds" --arg "image"
+cli_cmd "image show" "Definition, its from: chain, every file a build reads, and its builds" --arg "image"
+cli_cmd "image new" "A new definition, in \$PMM_IMAGES_HOME: a child of an image (--from), or
+a copy of one to change, which is how a root image is started (--copy)" \
+  --opt "--from IMAGE: Built on that image" --opt "--copy IMAGE: A copy of that image's directory" \
+  --opt "--source SOURCE: In that source's machines/images/ instead" --arg "name"
 cli_cmd "image build" "Build an image (and its from: parents) unless the build is current" \
-  --opt "-f --force: Rebuild" --opt "-v --verbose: Show script output" \
+  --opt "-f --force: Rebuild" --opt "-v --verbose: Show the steps' output" \
   --opt "--arch ARCH: For that architecture" --opt "--console: Show the installer's console" \
   --opt "--test: Run test.sh on the result" --arg "image..."
 cli_cmd "image test" "Boot a throwaway copy of the build and run the image's test.sh" \
   --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image export" "Write the build as one standalone qcow2" \
-  --opt "-c --compress: Compressed" --opt "-o --output FILE: There (default: \$PMM_DATA_HOME/exports/)" \
+  --opt "-c --compress: Compressed" --opt "-o --output FILE: There (default: \$PMM_DATA_HOME/exports/<image>-<arch>-<key>.qcow2)" \
   --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image remove" "Delete every build of the image; the definition is kept" --alias rm \
   --opt "-y --yes: Do not ask" --opt "-f --force: Even if other builds or machines are on it" --arg "image..."

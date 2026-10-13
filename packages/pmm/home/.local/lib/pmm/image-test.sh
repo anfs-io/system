@@ -12,7 +12,7 @@ cmd_image_test() {
 # test.sh as root; records the build as tested when it passes
 test_one() {
   local id="$1" arch="$2" name disk key script user sshkey port sock w pid rc=0
-  name=$(img_name "$id")
+  name=$(img_bname "$id")
   [[ "$(img_backend "$id")" == tart ]] && { tart_test "$id"; return; }
   disk=$(build_disk "$name" "$arch") || die "$id has no $arch build (pmm image build $id)"
   key=$(meta_get "$name" "$arch" .cache_key)
@@ -26,14 +26,14 @@ test_one() {
   echo "$port" > "$w/port"
   sock="$(sock_dir)/.test-$name-$arch.qmp"
   [[ "$arch" == arm64 ]] && { cp "${disk%.qcow2}-efivars.fd" "$w/efivars.fd"; chmod u+w "$w/efivars.fd"; }
-  qemu_argv "$arch" "$(img_setting "$id" .cpus 2)" "$(img_setting "$id" .memory 2048)" "$disk" "$w/efivars.fd" "$port"
+  qemu_argv "$arch" "$(img_setting "$id" .build.cpus 2)" "$(img_setting "$id" .build.memory 2048)" "$disk" "$w/efivars.fd" "$port"
   QEMU_ARGV+=(-snapshot)
   qemu_argv_io false "$w/serial.log" "$sock"
   echo "== test $id ($arch, $key) with $(tilde "$script")"
   "${QEMU_ARGV[@]}" &
   pid=$!
   if wait_ssh "$sshkey" "$port" "$user" "$(img_get "$id" .timeouts.ssh "$PMM_IMAGE_SSH_TIMEOUT")" "$pid"; then
-    run_script "$sshkey" "$port" "$user" "$script" PIM_IMAGE="$name" PIM_ARCH="$arch" PIM_USER="$user" || rc=$?
+    run_script "$sshkey" "$port" "$user" "$script" PIM_IMAGE="$(img_name "$id")" PIM_ARCH="$arch" PIM_USER="$user" || rc=$?
   else
     rc=1
   fi

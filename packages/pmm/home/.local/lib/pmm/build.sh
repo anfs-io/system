@@ -5,7 +5,7 @@
 # the rendered answer file (and the image's public key) are appended to the initrd as one more
 # cpio archive — the kernel unpacks every archive it is given — and the installer runs unattended
 # until it powers the VM off. A child image (from:) starts as a qcow2 overlay on its parent's
-# build instead. Both then boot from disk, run their scripts over ssh, run pmm's finalize step,
+# build instead. Both then boot from disk, run their provision steps over ssh, run pmm's finalize step,
 # shut down, and are registered under a key hashing everything that went into them.
 
 PMM_IMAGE_BUILD_VERSION=pmm-image-build-v1
@@ -16,7 +16,7 @@ build_key() {
   dir=$(img_dir "$id")
   parent=$(img_parent "$id" 2>/dev/null) || parent=""
   if [[ -n "$parent" ]]; then
-    pkey=$(meta_get "$(img_name "$parent")" "$arch" .cache_key)
+    pkey=$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)
     [[ -n "$pkey" ]] || return 1
   fi
   {
@@ -24,8 +24,8 @@ build_key() {
     yq -o=json -I0 'del(.description, .machine) | sort_keys(..)' "$dir/image.yml"
     echo "arch $arch"
     if [[ -z "$parent" ]]; then
-      echo "iso $(img_get "$id" ".iso.$arch.sha256" | tr '[:upper:]' '[:lower:]')"
-      f=$(img_answer_file "$id") && echo "answer $(_sha256 < "$f")"
+      echo "iso $(iso_sha256 "$(img_iso_id "$id" "$arch")")"
+      f=$(img_answer_file "$id") && [[ -f "$f" ]] && echo "answer $(_sha256 < "$f")"
     else
       echo "parent $pkey"
     fi
@@ -33,7 +33,7 @@ build_key() {
     if [[ -d "$dir/files" ]]; then
       (cd "$dir/files" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do echo "file $f $(_sha256 < "$f")"; done)
     fi
-    echo "finalize $(_sha256 < "$(img_defaults)/finalize.sh")"
+    echo "finalize $(_sha256 < "$(img_finalize)")"
     if img_has_anfs "$id" && [[ "$(img_get "$id" .anfs.sources pushed)" == host ]]; then
       anfs_host_fingerprint
     fi
@@ -66,7 +66,9 @@ installer_append() {
   esac
 }
 
-# Settings of an image's VM: its own value, else its root's, else the default
+# What a build boots with, and its disk's size (image.yml's build:): its own value, else its
+# root's, else the default
+# Usage: img_setting <id> <.build.cpus|.build.memory|.build.disk> <default>
 img_setting() {
   local id="$1" path="$2" def="$3" v
   v=$(img_get "$id" "$path")
@@ -106,7 +108,7 @@ cmd_image_build() {
 build_one() {
   local id="$1" arch="$2" force="$3" console="$4"
   local name parent key dir
-  name=$(img_name "$id")
+  name=$(img_bname "$id")
   parent=$(img_parent "$id") || parent=""
   [[ -z "$parent" ]] || build_one "$parent" "$arch" false "$console"
 
@@ -127,21 +129,21 @@ build_one() {
 
 _build_qemu() {
   local id="$1" arch="$2" key="$3" parent="$4" console="$5"
-  local name user sshkey cpus mem size dir logs port sock vars start rc=0 distro iso s timeout
-  name=$(img_name "$id")
+  local name bname user sshkey cpus mem size dir logs port sock vars start rc=0 distro iso s timeout
+  name=$(img_name "$id") bname=$(img_bname "$id")
   user=$(img_user "$id")
   sshkey=$(img_key "$id")
-  cpus=$(img_setting "$id" .cpus 2)
-  mem=$(img_setting "$id" .memory 2048)
-  size=$(img_setting "$id" .disk 20G)
-  dir=$(meta_dir "$name" "$arch")
-  logs="$PMM_STATE_HOME/logs/$name-$arch"
+  cpus=$(img_setting "$id" .build.cpus 2)
+  mem=$(img_setting "$id" .build.memory 2048)
+  size=$(img_setting "$id" .build.disk 20G)
+  dir=$(meta_dir "$bname" "$arch")
+  logs="$PMM_STATE_HOME/logs/$bname-$arch"
   mkdir -p "$dir" "$logs" "$PMM_STATE_HOME/build"
 
-  BUILD_W="$PMM_STATE_HOME/build/$name-$arch"
+  BUILD_W="$PMM_STATE_HOME/build/$bname-$arch"
   if [[ -f "$BUILD_W/pid" ]] && pid_alive "$(cat "$BUILD_W/pid")"; then
     BUILD_W=""
-    die "$name ($arch) is already being built"
+    die "$id ($arch) is already being built"
   fi
   rm -rf "$BUILD_W"
   mkdir -p "$BUILD_W"
@@ -150,7 +152,7 @@ _build_qemu() {
   trap 'exit 130' INT TERM
   port=$(free_port)
   echo "$port" > "$BUILD_W/port"
-  sock="$(sock_dir)/.build-$name-$arch.qmp"
+  sock="$(sock_dir)/.build-$bname-$arch.qmp"
   vars="$BUILD_W/efivars.fd"
   start=$(date +%s)
 
@@ -188,7 +190,7 @@ _build_qemu() {
     echo "Installed in $(( $(date +%s) - start ))s"
   else
     local pdisk
-    pdisk=$(build_disk "$(img_name "$parent")" "$arch") || die "$parent has no $arch build"
+    pdisk=$(build_disk "$(img_bname "$parent")" "$arch") || die "$parent has no $arch build"
     disk_overlay "$BUILD_PART" "$pdisk"
     [[ "$arch" == arm64 ]] && { cp "${pdisk%.qcow2}-efivars.fd" "$vars"; chmod u+w "$vars"; }
   fi
@@ -221,7 +223,7 @@ _build_qemu() {
   if declare -F build_anfs_step >/dev/null; then
     build_anfs_step "$id" "$sshkey" "$port" "$user" "$logs/provision.log"
   fi
-  _provision "$logs/provision.log" finalize run_script "$sshkey" "$port" "$user" "$(img_defaults)/finalize.sh" \
+  _provision "$logs/provision.log" finalize run_script "$sshkey" "$port" "$user" "$(img_finalize)" \
     PIM_IMAGE="$name" PIM_ARCH="$arch"
 
   echo "Shutting down"

@@ -53,7 +53,8 @@ fi
 export PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME PMM_IMAGES_HOME
 
 # The implicit, highest-priority source: a person's own definitions on this host, machines in
-# $PMM_MACHINES_HOME and images in $PMM_IMAGES_HOME. No command writes one.
+# $PMM_MACHINES_HOME and images in $PMM_IMAGES_HOME. `pmm image new` is the one command that
+# writes there.
 PMM_LOCAL_SOURCE=local
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pmm/; the
@@ -127,33 +128,45 @@ A machine with no interfaces has qemu's user-mode network: ssh and any ports: ar
 An <image> is `name` or `source/name`, resolved like a machine: local ($PMM_IMAGES_HOME), then
 the anfs sources in order.
 
-Image: machines/images/<name>/ in a source
+Image: machines/images/<name>/ in a source, or in $PMM_IMAGES_HOME. The directory holds
+everything a build reads except pmm's finalize step; `pmm image show` lists it, `pmm image new`
+starts one
   image.yml      backend: qemu (default) | tart
                  distro: debian | fedora | macos     arch: [arm64, amd64]
-                 iso: {<arch>: {url: <url or list>, sha256: <hex>}}     (qemu, from an ISO)
+                 iso: {<arch>: <id>}     (qemu, from an ISO) an id in the ISO catalogue
+                                   (`pmm iso list`), whose entry pins a sha256
                  from: <image>     a qcow2 overlay on another image's build; resolves to the
-                                   same or a lower-priority source, like a dependency
+                                   same or a lower-priority source, like a dependency. Its own
+                                   name is the next layer down: an image built on the one it
+                                   overrides
                  base: <oci image>                                        (tart)
-                 disk: 20G  memory: 2048  cpus: 2     the disk's size; what a build boots with
+                 build: {cpus: 2, memory: 2048, disk: 20G}     what a build boots with, and
+                                   the size of the image's disk
                  machine: {profile: medium, min: {cpus: 2, memory: 4G, disk: 20G}}
                                    the profile its machines get, and their minimums
                  user: {name: pmm, password_hash: <crypt>, authorized_keys: [...]}
-                 vars: {HOSTNAME: x, ...}     ${VAR}s for the answer file
-                 scripts: {defaults: true}    false skips the distro's default scripts
+                 vars: {HOSTNAME: x, ...}     the answer file's ${VAR}s, all of them but
+                                   what pmm sets: USER FULLNAME PASSWORD_HASH KS_PASSWORD
+                                   SSH_PUBKEY IMAGE ARCH, and HOSTNAME (the image's name)
+                                   unless vars: sets it
                  timeouts: {install: 3600, ssh: 600}
                  anfs: {sources: pushed|host, repo: <url>, packages: [...]}   install the
                                    toolkit in the image (host: copy this machine's sources)
-  preseed.cfg | kickstart.ks   the answer file (default: pmm's own for the distro); ${VAR}
-                 is substituted, $${VAR} is a literal ${VAR}, an unknown name is an error
-  scripts/*.sh   run in order as root over ssh after the install (a name shared with a
-                 default script replaces it); env: PIM_IMAGE PIM_ARCH PIM_USER PIM_FILES
-  files/         copied to the guest for the scripts ($PIM_FILES)
-  test.sh        what `pmm image test` runs (default: the distro's)
+  preseed.cfg | kickstart.ks   the answer file a root image installs with (required; a from:
+                 image has none). ${VAR} is substituted, $${VAR} is a literal ${VAR}, a name
+                 neither vars: nor pmm sets is an error
+  provision/*.sh the steps, run in name order as root over ssh after the install. A from:
+                 image runs its own only: its parent's are in the build it starts from.
+                 env: PIM_IMAGE PIM_ARCH PIM_USER PIM_FILES
+  files/         copied to the guest for the steps ($PIM_FILES)
+  test.sh        what `pmm image test` runs: the image's, else the nearest up its from: chain
+  README.md      what the image is for; never read by a build
 
 Every build ends with pmm's finalize step (package caches, logs, ssh host keys regenerated on
-first boot, machine-id). Builds are cached by a hash of the definition, its scripts, the ISO
-and the parent's build; `image build` is a no-op while that hash is unchanged. A build a
-machine or a snapshot is on is kept: `image prune` leaves it, `image remove` refuses.
+first boot, machine-id). Builds are cached by a hash of image.yml (but description: and
+machine:), the answer file, the steps, files/, the ISO's sha256 and the parent's build; `image
+build` is a no-op while that hash is unchanged. A build a machine or a snapshot is on is kept:
+`image prune` leaves it, `image remove` refuses.
 
 Access: each root image gets its own ssh key ($PMM_DATA_HOME/keys/<image>); the user's
 password is locked unless user.password_hash is set.
@@ -168,7 +181,8 @@ cmd_cd() {
   return 1
 }
 
-# pmm's own libraries: every *.sh in PMM_LIB_DIR (defaults/ below it is data, not sourced). The
+# pmm's own libraries: every *.sh in PMM_LIB_DIR (defaults/ below it holds the finalize step:
+# data, not sourced). The
 # stowed dir is preferred; next to this script's real path is the fallback (unstowed, or tests)
 pmm_lib_dir() {
   local self="${BASH_SOURCE[0]}" dir link

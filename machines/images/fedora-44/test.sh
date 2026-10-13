@@ -1,5 +1,5 @@
 #!/bin/bash
-# pmm default test (Fedora): runs as root in a throwaway boot of the build
+# fedora-44 and what is built on it: runs as root in a throwaway boot of the build
 set -euo pipefail
 test -f /etc/pmm-image && echo "ok  built by pmm: $(tr '\n' ' ' < /etc/pmm-image)"
 systemctl is-active --quiet sshd && echo "ok  sshd is running"

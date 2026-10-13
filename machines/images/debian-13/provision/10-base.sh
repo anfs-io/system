@@ -1,5 +1,5 @@
 #!/bin/bash
-# pmm default (Debian): the guest agent, ACPI shutdown, cloud-init for wherever the image goes next
+# debian-13: the guest agent, ACPI shutdown, cloud-init for wherever the image goes next
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q

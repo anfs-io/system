@@ -30,29 +30,47 @@ setup() { setup_images; }
   [ ! -e "$T/pwned" ]
 }
 
-@test "tpl_load: defaults, then vars:, then built-ins that vars: cannot override" {
-  image "$PMM_IMAGES_HOME/d" "$(deb_yml 'vars: {HOSTNAME: box, TIMEZONE: Asia/Singapore, USER: evil}
+@test "tpl_load: vars:, then what pmm sets, which vars: cannot override; nothing else has a default" {
+  image "$PMM_IMAGES_HOME/d" "$(deb_yml 'vars: {HOSTNAME: box, TIMEZONE: Asia/Singapore, USER: evil, HTTP_PROXY: "", N: 3, EMPTY:}
 user: {name: dev}')"
+  image "$PMM_IMAGES_HOME/e" "$(deb_yml)"
   load_images
   echo "ssh-ed25519 AAAA k" > "$T/k.pub"
   tpl_load local/d arm64 "$T/k.pub"
   [ "$(tpl_get HOSTNAME)" = box ]
   [ "$(tpl_get TIMEZONE)" = Asia/Singapore ]
-  [ "$(tpl_get LOCALE)" = en_US.UTF-8 ]
+  [ "$(tpl_get N)" = 3 ]
+  tpl_get HTTP_PROXY && [ -z "$(tpl_get HTTP_PROXY)" ]
+  tpl_get EMPTY && [ -z "$(tpl_get EMPTY)" ]
+  ! tpl_get LOCALE
   [ "$(tpl_get USER)" = dev ]
   [ "$(tpl_get PASSWORD_HASH)" = '!' ]
   [ "$(tpl_get KS_PASSWORD)" = --lock ]
   [ "$(tpl_get SSH_PUBKEY)" = "ssh-ed25519 AAAA k" ]
+  [ "$(tpl_get IMAGE)" = d ] && [ "$(tpl_get ARCH)" = arm64 ]
+  # one image's variables are not the next one's; HOSTNAME is the image's name unless set
+  tpl_load local/e arm64 "$T/k.pub"
+  ! tpl_get TIMEZONE
+  [ "$(tpl_get HOSTNAME)" = e ]
 }
 
-@test "the default answer files render with the default variables" {
-  image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
+@test "the shipped answer files render with their own image's vars:, and with nothing from pmm's library" {
+  core_source
   load_images
   echo "ssh-ed25519 AAAA k" > "$T/k.pub"
-  tpl_load local/d arm64 "$T/k.pub"
-  render "$PMM_LIB_DIR/defaults/debian/preseed.cfg" > "$T/p"
+  tpl_load core/debian-13 arm64 "$T/k.pub"
+  render "$(img_answer_file core/debian-13)" > "$T/p"
   grep -q 'passwd/username string pmm' "$T/p"
-  render "$PMM_LIB_DIR/defaults/fedora/kickstart.ks" > "$T/k"
+  grep -q 'mirror/http/hostname string deb.debian.org' "$T/p"
+  grep -q 'mirror/http/proxy string $' "$T/p"
+  grep -q 'tasksel/first multiselect standard, ssh-server' "$T/p"
+  tpl_load core/fedora-44 arm64 "$T/k.pub"
+  render "$(img_answer_file core/fedora-44)" > "$T/k"
   grep -q 'sshkey --username=pmm "ssh-ed25519 AAAA k"' "$T/k"
   grep -q 'repo=fedora-$releasever&arch=$basearch' "$T/k"
+  grep -q -- '--hostname=fedora' "$T/k"
+  # a variable its image.yml does not set is an error, not a default: Debian's file, Fedora's vars
+  run render "$(img_answer_file core/debian-13)"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"unknown variable \${DOMAIN}"* ]]
 }

@@ -10,7 +10,7 @@
 #     packages: [stack/zsh]   installed after the toolkit
 #
 # It runs as the image's user (who has passwordless sudo, so install.sh's prompts don't block),
-# after the image's scripts and before finalize.
+# after the image's provision steps and before finalize.
 
 : "${PMM_IMAGE_ANFS_INSTALLER_URL:=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh}"
 

@@ -7,7 +7,7 @@ cmd_image_export() {
   local compress=${CLI_OPT[compress]:-false} out="${CLI_OPT[output]:-}" arch="${CLI_OPT[arch]:-}"
   local id name disk key
   id=$(img_canon_or_die "$1")
-  name=$(img_name "$id")
+  name=$(img_bname "$id")
   arch=$(img_pick_arch "$id" "$arch")
   [[ "$(img_backend "$id")" == qemu ]] || die "export writes qcow2; $id is a $(img_backend "$id") image"
   disk=$(build_disk "$name" "$arch") || die "$id has no $arch build (pmm image build $id)"

@@ -13,19 +13,80 @@ v() { load_images; run cmd_image_validate "$@"; }
   [[ "$output" == *"local/d ok"* ]]
 }
 
-@test "missing iso for a declared arch, a bad sha256, an unknown backend and arch" {
+@test "iso: an id per declared arch, in the catalogue, with a pinned sha256; inline url and sha256 are gone" {
+  printf -- '- {id: loose, url: https://x/l.iso, checksum_url: https://x/SHA256SUMS}\n' >> "$HOME/.config/anfs/isos.yml"
   image "$PMM_IMAGES_HOME/a" "distro: debian
 arch: [arm64, amd64]
-iso: {arm64: {url: https://x/a.iso, sha256: nothex}}"
+iso: {arm64: nosuch}"
+  image "$PMM_IMAGES_HOME/l" "distro: debian
+arch: [arm64]
+iso: {arm64: loose}"
+  image "$PMM_IMAGES_HOME/old" "distro: debian
+arch: [arm64]
+iso: {arm64: {url: https://x/a.iso, sha256: $SHA}}"
+  v a l old
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"iso.arm64: no ISO 'nosuch' in the catalogue"* ]]
+  [[ "$output" == *"iso.amd64 is missing"* ]]
+  [[ "$output" == *"iso.arm64: the catalogue entry 'loose' pins no sha256"* ]]
+  [[ "$output" == *"iso.arm64: an inline url and sha256 are gone; name an id in the ISO catalogue"* ]]
+  # and a build says the same instead of installing from an unpinned file
+  run cmd_image_build l
+  [ "$status" -ne 0 ]
+  ! grep -q qemu-system "$PMM_CALLS"
+}
+
+@test "a root image with no answer file fails; a from: image has none" {
+  image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
+  rm "$PMM_IMAGES_HOME/d/preseed.cfg"
+  image "$PMM_IMAGES_HOME/e" "$(deb_yml)"
+  image "$PMM_IMAGES_HOME/c" "from: e"
+  v d
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no answer file: a debian image installs with its own preseed.cfg"* ]]
+  v c e
+  [ "$status" -eq 0 ]
+  cp "$PMM_IMAGES_HOME/e/preseed.cfg" "$PMM_IMAGES_HOME/c/preseed.cfg"
+  v c
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"preseed.cfg is ignored on a from: image"* ]]
+}
+
+@test "an unknown backend and arch; the old shape is said, not ignored" {
   image "$PMM_IMAGES_HOME/b" "backend: vbox"
   image "$PMM_IMAGES_HOME/c" "distro: debian
 arch: [riscv]"
-  v a b c
+  image "$PMM_IMAGES_HOME/o" "$(deb_yml 'memory: 4096
+scripts: {defaults: false}')"
+  mkdir -p "$PMM_IMAGES_HOME/o/scripts" "$PMM_IMAGES_HOME/o/provision"
+  echo 'echo x' > "$PMM_IMAGES_HOME/o/scripts/10-x.sh"
+  : > "$PMM_IMAGES_HOME/o/provision/20-empty.sh"; echo x > "$PMM_IMAGES_HOME/o/provision/notes.txt"
+  v b c o
   [ "$status" -ne 0 ]
-  [[ "$output" == *"iso.arm64.sha256 is missing or not a sha256"* ]]
-  [[ "$output" == *"iso.amd64.url is missing"* ]]
   [[ "$output" == *"backend 'vbox'"* ]]
   [[ "$output" == *"arch 'riscv'"* ]]
+  [[ "$output" == *"memory: is build.memory now"* ]]
+  [[ "$output" == *"scripts/ is never run: the steps are in provision/ now"* ]]
+  [[ "$output" == *"scripts: is gone"* ]]
+  [[ "$output" == *"provision/20-empty.sh is empty"* ]]
+  [[ "$output" == *"provision/notes.txt is not *.sh and is never run"* ]]
+}
+
+@test "the shipped images validate: every file a build reads is in the image, every ISO in core's catalogue" {
+  core_source
+  v core/debian-13 core/fedora-44 core/anfs-dev core/anfs-test-macos
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"4 image(s): 0 error(s), 0 warning(s)"* ]]
+  [ "$(img_answer_file core/anfs-dev)" = "$(img_dir core/debian-13)/preseed.cfg" ]
+  [ "$(img_scripts core/fedora-44)" = "$(img_dir core/fedora-44)/provision/10-base.sh" ]
+  [ "$(img_test_script core/anfs-dev)" = "$(img_dir core/debian-13)/test.sh" ]
+  # the ids are core's own entries, each pinned
+  for i in debian-13 fedora-44; do for a in arm64 amd64; do
+    [ "$(img_iso_id "core/$i" "$a")" = "$i-$a" ]
+    [[ "$(iso_sha256 "$i-$a")" =~ ^[0-9a-f]{64}$ ]]
+    [ "$(yq -r ".[] | select(.id == \"$i-$a\") | .architecture" "$BATS_TEST_DIRNAME/../../../isos/isos.yml")" = "$a" ]
+  done; done
 }
 
 @test "an answer file with an unknown variable, and keys a from: image ignores" {

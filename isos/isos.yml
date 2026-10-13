@@ -1,10 +1,8 @@
-# The ISO catalogue of this source (lib/anfs/iso.sh): the ISOs core's images install from, so
-# `pmm iso pull debian-13-arm64` fetches ahead of time what `pmm image build debian-13` would, and
-# `iso prune` keeps them. The fields are documented in lib/anfs/iso.sh.
-#
-# Until an image names its ISO by id (unit machine-images, plan 02), the url and the sum here
-# repeat machines/images/<name>/image.yml's iso.<arch>: packages/pmm/tests/iso.bats holds the
-# two together.
+# The ISO catalogue of this source (lib/anfs/iso.sh): the ISOs core's images install from. An
+# image names one by id (image.yml's iso.<arch>), so `pmm iso pull debian-13-arm64` fetches ahead
+# of time what `pmm image build debian-13` would, and `iso prune` keeps them. An entry an image
+# names must pin its content (checksum: sha256:<hex>): the sum is part of the build's key. The
+# fields are documented in lib/anfs/iso.sh.
 ---
 - id: debian-13-arm64
   name: Debian 13.7.0 arm64 netinst

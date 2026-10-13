@@ -60,7 +60,7 @@ setup() {
   meta_set d arm64 '.tested_key = strenv(v)' "$KEY"
   ANFS_JSON=true run cli_call "image list" d
   [ "$(yq -p json -r '[.[] | .arch + ":" + .state + ":" + .tested] | join(" ")' <<< "$output")" = "arm64:built:true amd64:built:false" ]
-  mkdir -p "$PMM_IMAGES_HOME/d/scripts"; echo 'echo new' > "$PMM_IMAGES_HOME/d/scripts/50-new.sh"
+  mkdir -p "$PMM_IMAGES_HOME/d/provision"; echo 'echo new' > "$PMM_IMAGES_HOME/d/provision/50-new.sh"
   ANFS_JSON=true run cli_call "image list" d
   [ "$(yq -p json -r '[.[] | .state + ":" + .tested] | join(" ")' <<< "$output")" = "stale:true stale:false" ]
   run cli_call "image show" d
@@ -112,7 +112,7 @@ setup() {
 @test "prune: a superseded build stays while a machine is on it, and goes once the machine has" {
   on_build web1 "$KEY"
   old="$KEY"
-  mkdir -p "$PMM_IMAGES_HOME/d/scripts"; echo 'echo new' > "$PMM_IMAGES_HOME/d/scripts/50-new.sh"
+  mkdir -p "$PMM_IMAGES_HOME/d/provision"; echo 'echo new' > "$PMM_IMAGES_HOME/d/provision/50-new.sh"
   fake_build
   [ "$KEY" != "$old" ]
   run cli_call "image prune"

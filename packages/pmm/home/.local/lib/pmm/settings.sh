@@ -126,7 +126,8 @@ image_build() {
   B_NAME="" B_SOURCE="" B_KEY="" B_DISK="" B_BACKEND="" B_USER="" B_SSHKEY="" B_BOOT_USER="" B_BOOT_PW=""
   mapfile -t v < <(
     load_images
-    build_read "$(img_name "$(canon "$1" || echo "x/$1")")" "$2" 2>/dev/null || exit 0
+    id=$(canon "$1") && name=$(img_bname "$id") || name="${1#*/}"
+    build_read "$name" "$2" 2>/dev/null || exit 0
     printf '%s\n' "$B_NAME" "${B_ID%%/*}" "$B_KEY" "$B_DISK" "$B_BACKEND" "$B_USER" "$B_SSHKEY" "$B_BOOT_USER" "$B_BOOT_PW")
   [[ ${#v[@]} -ge 9 ]] || return 1
   B_NAME="${v[0]}" B_SOURCE="${v[1]}" B_KEY="${v[2]}" B_DISK="${v[3]}" B_BACKEND="${v[4]}" B_USER="${v[5]}"

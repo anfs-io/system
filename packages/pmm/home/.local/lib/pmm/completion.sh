@@ -56,6 +56,15 @@ complete_image() {
     printf '%s/%s\n' "${f##*/}" "$name"
   done | awk '!seen[$0]++'
 }
+# Every source there is a clone of (image new --source)
+complete_source() {
+  local d
+  for d in "$ANFS_SOURCES_HOME"/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}"
+    printf '%s\n' "${d##*/}"
+  done
+}
 # The names at the top level of each profiles.yml
 complete_profile() {
   local f line
