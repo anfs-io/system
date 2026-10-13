@@ -77,7 +77,7 @@ need_old_bash() {
 
 @test "every entry point sources the floor before anything else of lib/anfs" {
   local f first
-  for f in "$REPO"/packages/{anfs,ppm,pcm,pim,psm,wsm}/home/.local/bin/* \
+  for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm}/home/.local/bin/* \
            "$REPO"/packages/pcm/home/.local/lib/pcm/edges/{local,cloudflare-tunnel} \
            "$REPO"/packages/dev/home/.config/git/ppm-hooks/pre-commit; do
     first=$(grep -n 'lib/anfs/\|\$ANFS_LIB/' "$f" | grep 'source ' | head -1)
