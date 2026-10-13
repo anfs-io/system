@@ -36,6 +36,18 @@ iso: {arm64: {url: https://x/a.iso, sha256: $SHA}}"
   ! grep -q qemu-system "$PMM_CALLS"
 }
 
+@test "user.name is an account's name: it reaches a root shell in the guest as it is" {
+  image "$PMM_IMAGES_HOME/a" "$(deb_yml 'user: {name: "dev; id"}')"
+  image "$PMM_IMAGES_HOME/b" "$(deb_yml 'user: {name: Dev}')"
+  image "$PMM_IMAGES_HOME/c" "$(deb_yml 'user: {name: _dev-2}')"
+  v a b c
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"user.name 'dev; id' is not an account's name"* ]]
+  [[ "$output" == *"user.name 'Dev' is not an account's name"* ]]
+  [[ "$output" == *"local/c ok"* ]]
+  [[ "$output" == *"2 error(s)"* ]]
+}
+
 @test "a root image with no answer file fails; a from: image has none" {
   image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
   rm "$PMM_IMAGES_HOME/d/preseed.cfg"

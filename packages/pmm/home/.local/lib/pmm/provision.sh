@@ -7,8 +7,11 @@
 #   check                prints what is missing on the host (a binary, a version) and fails;
 #                        nothing printed is ready. Run by validate
 #   fingerprint <step>   prints, one per line, the files the step's result depends on, the step
-#                        first; a directory is the tree under it. pmm hashes them into the build
-#                        key. Failing fails validate and the build
+#                        first; a directory is the tree under it (a link there is its target's
+#                        name, not what it points at). pmm hashes them into the build key.
+#                        Failing, naming what is not there, or not naming the step first
+#                        fails validate and the build. The provisioner itself is not in the
+#                        key: one whose change is another build prints its own path too
 #   run <step>           runs the step against the guest. Its output is the step's log; a
 #                        non-zero exit fails the build
 # pmm ships sh and anfs. Every verb runs in the image's directory with what is being built:
@@ -78,44 +81,74 @@ prov_call() {
   return $rc
 }
 
-# Run <step> against the guest (PROV_ENV with the guest's part: guest_ssh); its output prefixed
+# Run <step> against the guest (PROV_ENV with the guest's part: guest_ssh); its output prefixed,
+# a line at a time (sed would hold it back in blocks from build -v)
 # Usage: prov_run <step>
 prov_run() {
-  prov_call run "$1" 2>&1 | sed 's/^/  | /'
+  local l
+  prov_call run "$1" 2>&1 | while IFS= read -r l || [[ -n "$l" ]]; do printf '  | %s\n' "$l"; done
   return "${PIPESTATUS[0]}"
 }
 
-# The build key's lines for <id>'s steps, in order: the step and its provisioner, then the sha256
-# of each file its fingerprint names (a directory: of each file under it, with its path there).
-# The names it printed are not in the key, so a file it wrote for the purpose may be anywhere.
-# Fails, saying why, for a step nothing provides or whose fingerprint fails.
+# The build key's lines for what <step>'s fingerprint names (PROV_ENV and PROV_DIR are set): the
+# sha256 of each file, and for a directory of each file under it with its path there (a link
+# there is its target's name, not followed). The names it printed are not in the key, so a file
+# it wrote for the purpose may be anywhere. Fails with the reason on stderr, the provisioner's
+# own when its fingerprint failed: it names what is not there, or not the step first. This is
+# all validate and the build know of a step, so both go through it.
+# Usage: key_step <provisioner> <step>
+key_step() {
+  local bin="$1" s="$2" work out p f first=true rc=0
+  work=$(mktemp -d "${TMPDIR:-/tmp}/pmm-step.XXXXXX")
+  if out=$(cd "$PROV_DIR" && env "${PROV_ENV[@]}" ANFS_IMAGE_WORK="$work" "$bin" fingerprint "$s" < /dev/null); then
+    while IFS= read -r p; do
+      [[ -n "$p" ]] || continue
+      [[ "$p" == /* ]] || p="$PROV_DIR/$p"
+      if $first && [[ ! "$p" -ef "$s" ]]; then
+        break
+      elif [[ -d "$p" ]]; then
+        (cd "$p" && find . \( -type f -o -type l \) | LC_ALL=C sort | while IFS= read -r f; do
+          if [[ -L "$f" ]]; then echo "$f -> $(readlink "$f")"; else echo "$f $(_sha256 < "$f")"; fi
+        done)
+      elif [[ -f "$p" ]]; then
+        _sha256 < "$p"
+      else
+        echo "its fingerprint names $p, which is not there" >&2; rc=2; break
+      fi
+      first=false
+    done <<< "$out"
+    if $first && [[ $rc -eq 0 ]]; then
+      echo "its fingerprint does not name the step first (the .$(prov_ext "$s") provisioner's)" >&2; rc=2
+    fi
+  else
+    rc=2
+  fi
+  rm -rf "$work"
+  return $rc
+}
+
+# The build key's lines for <id>'s steps, in order: the step and its provisioner, then what its
+# fingerprint names (key_step). The provisioner's own file is not in the key: one whose change is
+# another build names itself. Fails, saying why, for a step nothing provides or whose
+# fingerprint fails.
 # Usage: key_steps <id> <arch>
 key_steps() {
-  local id="$1" arch="$2" dir s bin work out p f rc=0
+  local id="$1" arch="$2" s bin lines err
   prov_image_env "$id" "$arch"
-  dir="$PROV_DIR"
+  err=$(mktemp "${TMPDIR:-/tmp}/pmm-step.XXXXXX")
   while IFS= read -r s; do
-    bin=$(prov_for "$s") || return 2
+    bin=$(prov_for "$s") || { rm -f "$err"; return 2; }
     echo "step $(basename "$s") $(prov_ext "$s")"
-    work=$(mktemp -d "${TMPDIR:-/tmp}/pmm-step.XXXXXX")
-    if out=$(cd "$dir" && env "${PROV_ENV[@]}" ANFS_IMAGE_WORK="$work" "$bin" fingerprint "$s" < /dev/null); then
-      while IFS= read -r p; do
-        [[ -n "$p" ]] || continue
-        [[ "$p" == /* ]] || p="$dir/$p"
-        if [[ -d "$p" ]]; then
-          (cd "$p" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do echo "$f $(_sha256 < "$f")"; done)
-        elif [[ -f "$p" ]]; then
-          _sha256 < "$p"
-        else
-          warn "provision/$(basename "$s"): its fingerprint names $p, which is not there"; rc=2; break
-        fi
-      done <<< "$out"
+    if lines=$(key_step "$bin" "$s" 2>"$err"); then
+      printf '%s\n' "$lines"
+      [[ ! -s "$err" ]] || cat "$err" >&2
     else
-      warn "provision/$(basename "$s"): the .$(prov_ext "$s") provisioner's fingerprint failed"; rc=2
+      warn "provision/$(basename "$s"): $(paste -sd' ' - < "$err" | grep . || echo "the .$(prov_ext "$s") provisioner's fingerprint failed")"
+      rm -f "$err"
+      return 2
     fi
-    rm -rf "$work"
-    [[ $rc -eq 0 ]] || return $rc
   done < <(img_steps "$id")
+  rm -f "$err"
   return 0
 }
 

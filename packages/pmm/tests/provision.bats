@@ -172,12 +172,28 @@ local_ssh() {
   # the names it printed are not in the key: the same content somewhere else is the same build
   cp "$T/dep" "$T/dep2"; printf '%s\nroles\n' "$T/dep2" > "$FIX/extra"
   [ "$(build_key local/d arm64)" = "${keys[5]}" ]
+  # a link in a tree it names is its target's name: added, retargeted, and never followed
+  k6=${keys[5]}
+  echo t > "$T/target"; ln -s "$T/target" "$d/roles/web/link"
+  k7=$(build_key local/d arm64); [ "$k7" != "$k6" ]
+  echo changed > "$T/target"
+  [ "$(build_key local/d arm64)" = "$k7" ]
+  ln -sfn /etc/hosts "$d/roles/web/link"
+  [ "$(build_key local/d arm64)" != "$k7" ]
+  rm "$d/roles/web/link"
+  [ "$(build_key local/d arm64)" = "$k6" ]
+  # files/ the same
+  mkdir -p "$d/files"; echo f > "$d/files/f"
+  k8=$(build_key local/d arm64)
+  ln -s f "$d/files/l"
+  [ "$(build_key local/d arm64)" != "$k8" ]
+  rm -r "$d/files"
   # a provisioner of the same name in pmm's place would be another step
   mv "$d/provision/20-x.fix" "$d/provision/20-y.fix"
   [ "$(build_key local/d arm64)" != "${keys[5]}" ]
 }
 
-@test "fingerprint: one that fails, or names a file that is not there, fails the key and the build" {
+@test "fingerprint: one that fails, names a file that is not there or not the step first, fails validate, the key and the build" {
   d="$PMM_IMAGES_HOME/d"
   echo step > "$d/provision/20-x.fix"
   load_images
@@ -185,17 +201,44 @@ local_ssh() {
   run build_key local/d arm64
   [ "$status" -eq 2 ]
   [[ "$output" == *"provision/20-x.fix: its fingerprint names $T/nosuch, which is not there"* ]]
+  # validate reads a fingerprint as the key does: what passes it has a key
   run cmd_image_validate d
-  [ "$status" -eq 0 ]   # the provisioner itself said nothing against the step
-  build_one() { build_key "$1" "$2" >/dev/null || die "$1: no build key"; }
-  run build_one local/d arm64
+  echo "$output"
   [ "$status" -ne 0 ]
-  unset -f build_one; source "$PMM_LIB_DIR/build.sh"
+  [[ "$output" == *"provision/20-x.fix: its fingerprint names $T/nosuch, which is not there"* ]]
+  run cmd_image_build d
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"does not validate"* ]]
+  ! grep -q qemu-system "$PMM_CALLS"
   rm "$FIX/extra"
+  run cmd_image_validate d
+  [ "$status" -eq 0 ]
+  # the step first: one that names nothing, or something else, would leave the step out of the key
+  for body in ':' 'echo "$ANFS_IMAGE_DIR/image.yml"'; do
+    printf '#!/bin/sh
+[ "$1" != fingerprint ] || %s
+' "$body" > "$PMM_CONFIG_HOME/provisioners/fix"
+    run build_key local/d arm64
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"provision/20-x.fix: its fingerprint does not name the step first"* ]]
+    run cmd_image_validate d
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"provision/20-x.fix: its fingerprint does not name the step first"* ]]
+  done
   printf '#!/bin/sh\n[ "$1" != fingerprint ] || { echo "bad step: no hosts" >&2; exit 1; }\n' > "$PMM_CONFIG_HOME/provisioners/fix"
   run build_key local/d arm64
   [ "$status" -eq 2 ]
-  [[ "$output" == *"bad step: no hosts"*"the .fix provisioner's fingerprint failed"* ]]
+  [[ "$output" == *"provision/20-x.fix: bad step: no hosts"* ]]
+  # one that fails and says nothing
+  printf '#!/bin/sh\n[ "$1" != fingerprint ] || exit 1\n' > "$T/silent"; chmod +x "$T/silent"
+  cp "$PMM_CONFIG_HOME/provisioners/fix" "$T/fix.bad"; cp "$T/silent" "$PMM_CONFIG_HOME/provisioners/fix"
+  run build_key local/d arm64
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"provision/20-x.fix: the .fix provisioner's fingerprint failed"* ]]
+  run cmd_image_validate d
+  [[ "$output" == *"provision/20-x.fix: its fingerprint failed"* ]]
+  cp "$T/fix.bad" "$PMM_CONFIG_HOME/provisioners/fix"
+  run build_key local/d arm64
   run cmd_image_validate d
   [ "$status" -ne 0 ]
   [[ "$output" == *"provision/20-x.fix: bad step: no hosts"* ]]
@@ -338,7 +381,7 @@ commit() { git -C "$T/srcs/$1" add -A && git -C "$T/srcs/$1" -c user.name=t -c u
 push $src /home/u/.local/share/anfs/sources/s1
 exec chown -R u: /home/u/.local
 exec su -l u -c bash -l -s" ]
-  grep -qx "bash ~/.local/share/anfs/sources/core/install.sh --repo 'git@x:me/dots.git' stack/zsh stack/git" "$FIX/script"
+  grep -qx "bash ~/.local/share/anfs/sources/core/install.sh --repo 'git@x:me/dots.git' 'stack/zsh' 'stack/git'" "$FIX/script"
   grep -qxF '$HOME/.local/share/anfs/sources/s1  s1' "$FIX/script"
   [ "$(head -n1 "$FIX/script")" = 'set -euo pipefail' ]
   grep -q 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' "$FIX/script"
@@ -350,6 +393,18 @@ exec su -l u -c bash -l -s" ]
   [ "$status" -eq 0 ]
   [ "$(cat "$FIX/guest")" = "exec su -l u -c bash -l -s" ]
   grep -qx "curl -fsSL 'https://x/install.sh' | bash -s --" "$FIX/script"
+  # every value of the step is quoted for the guest's shell
+  printf 'packages: [stack/zsh, "a; touch /tmp/x", "it'"'"'s"]\n' > "$T/50-kit.anfs"
+  run anfs run "$T/50-kit.anfs"
+  [ "$status" -eq 0 ]
+  grep -qxF "curl -fsSL 'https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh' | bash -s -- 'stack/zsh' 'a; touch /tmp/x' 'it'\''s'" "$FIX/script"
+  # a key that is not one is refused, by every verb: a misspelt sources: is not the default
+  printf 'source: host\nbogus: 1\n' > "$T/50-kit.anfs"
+  for v in fingerprint run; do
+    run anfs "$v" "$T/50-kit.anfs"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"50-kit.anfs: source bogus: not a key of an .anfs step (sources, repo, packages, installer)"* ]]
+  done
   # a guest without the user
   printf '%s\n' '#!/bin/sh' 'echo "~u"' > "$T/gexec"
   printf 'sources: host\n' > "$T/50-kit.anfs"
@@ -387,6 +442,48 @@ exec su -l u -c bash -l -s" ]
   grep -qx 'ANFS_IMAGE_FILES=/tmp/pmm-files' "$e"
   grep -qx 'ANFS_IMAGE_SSH_PUBKEY=ssh-ed25519 AAAAstub pmm' "$e"
   [ ! -e "$PMM_STATE_HOME/build/m-arm64" ]
+  # test.sh the same way, in a clone that is deleted with the helper in it
+  echo 'true' > "$m/test.sh"
+  : > "$PMM_CALLS"
+  run cmd_image_test m
+  echo "$output"; cat "$PMM_CALLS"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Tested local/m (tart)"* ]]
+  [ "$(meta_get m arm64 .tested_key)" = "$key" ]
+  grep -q "^ssh umask 077; cat > /tmp/pmm-askpass" "$PMM_CALLS"
+  t=$(grep "'bash' '-s'" "$PMM_CALLS")
+  [[ "$t" == "ssh SUDO_ASKPASS=/tmp/pmm-askpass sudo -A -- 'env' "*"'ANFS_IMAGE_BACKEND=tart'"*"'ANFS_IMAGE_FILES='"*"'ANFS_IMAGE_NAME=m'"*" 'bash' '-s'" ]]
+  [[ "$t" != *GUEST* ]]
+  grep -qx "tart delete pmm-image-m-test" "$PMM_CALLS"
+  [ ! -e "$TART_STUB/pmm-image-m-test" ] && [ -f "$TART_STUB/pmm-image-m-$key" ]
+  [ ! -e "$PMM_STATE_HOME/build/test-m-arm64" ]
+  ! grep -rq s3cret "$PMM_STATE_HOME"
+  # one that fails: not tested, and nothing of the test is left
+  yq -i 'del(.tested_key)' "$PMM_DATA_HOME/images/m/arm64/meta.yml"
+  export PMM_STUB_FAIL_SCRIPT=1; : > "$T/fail-next"
+  run cmd_image_test m
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"The test of local/m (tart) FAILED"* ]]
+  [ -z "$(meta_get m arm64 .tested_key)" ]
+  [ ! -e "$TART_STUB/pmm-image-m-test" ] && [ ! -e "$PMM_STATE_HOME/build/test-m-arm64" ]
+}
+
+@test "user.authorized_keys: appended as root through the guest's exec, before the first step" {
+  d="$PMM_IMAGES_HOME/d"
+  image "$d" "$(deb_yml 'user: {name: dev, authorized_keys: ["ssh-ed25519 AAAA one", "ssh-ed25519 BBBB two"]}')"
+  echo 'echo a' > "$d/provision/10-a.sh"
+  load_images
+  run cmd_image_build d
+  echo "$output"; cat "$PMM_CALLS"
+  [ "$status" -eq 0 ]
+  [ "$(grep -n "authorized_keys\|'bash' '-s'" "$PMM_CALLS" | head -n1 | sed 's/^[0-9]*://')" = "ssh sudo -n -- 'sh' '-c' 'cat >> ~dev/.ssh/authorized_keys'" ]
+  # a child's root already has them
+  image "$PMM_IMAGES_HOME/c" "from: d"
+  load_images
+  : > "$PMM_CALLS"
+  run cmd_image_build c
+  [ "$status" -eq 0 ]
+  ! grep -q authorized_keys "$PMM_CALLS"
 }
 
 @test "nothing in the repository names a PIM_ variable" {

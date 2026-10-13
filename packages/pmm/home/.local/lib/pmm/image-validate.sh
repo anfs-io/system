@@ -40,6 +40,8 @@ validate_image() {
     [[ "$(img_backend "$(img_root "$id")")" == "$backend" ]] || _v_err "backend $backend differs from its root's"
   else
     distro=$(img_get "$id" .distro)
+    # the name reaches a root shell in the guest as it is (~<user>): an account's name only
+    [[ "$(img_user "$id")" =~ ^[a-z_][a-z0-9_-]*$ ]] || _v_err "user.name '$(img_user "$id")' is not an account's name (a letter or _, then letters, digits, _ and -)"
     while IFS= read -r a; do
       case "$(arch_norm "$a")" in arm64|amd64) ;; *) _v_err "arch '$a' (arm64 or amd64)" ;; esac
     done < <(img_list "$id" .arch)
@@ -75,7 +77,8 @@ validate_image() {
     [[ ! -f "$dir/$f" ]] || _v_warn "$f is ignored on a from: image (its root's installed it)"
   done
   # Every file in provision/ is a step, and something has to run it: its provisioner is there,
-  # has what it needs on this host (check), and can say what the step depends on (fingerprint)
+  # has what it needs on this host (check), and can say what the step depends on (fingerprint),
+  # all of which is there
   local ext bin out seen=" "
   prov_image_env "$id" "$(img_arches "$id" 2>/dev/null | head -n1)"
   for f in "$dir"/provision/*; do
@@ -87,7 +90,8 @@ validate_image() {
       seen+="$ext "
       out=$(prov_call check "$f" 2>&1) && [[ -z "$out" ]] || { _v_err ".$ext steps: ${out:-its check failed}"; continue; }
     fi
-    out=$(prov_call fingerprint "$f" 2>&1 >/dev/null) || _v_err "provision/$(basename "$f"): ${out:-its fingerprint failed}"
+    # as the build key reads it: what it names is there too
+    out=$(key_step "$bin" "$f" 2>&1 >/dev/null) || _v_err "provision/$(basename "$f"): $(paste -sd' ' - <<< "${out:-its fingerprint failed}")"
   done
   # What the image directory used to be: said, not silently ignored
   [[ ! -d "$dir/scripts" ]] || _v_err "scripts/ is never run: the steps are in provision/ now"

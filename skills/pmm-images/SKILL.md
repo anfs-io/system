@@ -139,7 +139,12 @@ that runs it. pmm ships two:
                            # the guest fetches install.sh and clones them itself
   repo: git@github.com:me/dots.git    # optional: install.sh --repo
   packages: [stack/zsh]               # optional: installed after the toolkit
+  installer: https://example.org/install.sh   # optional, pushed: where install.sh is fetched
+                                              # from (default: anfs-io/system's main)
   ```
+
+  Those four keys are all there are: `validate` refuses any other (a misspelt `sources:` would
+  silently be `pushed`).
 
 A `.sh` step:
 
@@ -178,7 +183,7 @@ It is called with a verb, in the image's directory, with an empty stdin:
 | Verb | Does |
 | --- | --- |
 | `check` | Print what is missing on the host (a binary, a version) and exit non-zero; print nothing when ready. `validate` shows the text |
-| `fingerprint <step>` | Print, one per line, every file the step's result depends on, the step first. A directory is the whole tree under it; a path is absolute or from the image's directory. pmm hashes them into the build key, so leave one out and a change to it rebuilds nothing. Exit non-zero (with why on stderr) for a step you cannot run: `validate` reports it |
+| `fingerprint <step>` | Print, one per line, every file the step's result depends on, the step first. A directory is the whole tree under it (a symlink in it counts as its target's name: what it points at is not read); a path is absolute or from the image's directory. pmm hashes them into the build key, so leave one out and a change to it rebuilds nothing. A path that is not there, or a first line that is not the step, fails `validate` and the build. Exit non-zero (with why on stderr) for a step you cannot run: `validate` reports it |
 | `run <step>` | Run the step against the guest. stdout and stderr are the step's log; a non-zero exit fails the build |
 
 What it is told, in its environment:
@@ -216,6 +221,8 @@ esac
   the stock account, not the image's user.
 - **A provisioner that runs on the host** (ansible against the guest) lists its whole input tree
   in `fingerprint`: the playbook, `roles/`, the vars files.
+- **The provisioner's own file is not in the build key.** If a new version of it should rebuild
+  the images that use it, print `$0` in `fingerprint` too.
 - pmm keeps the order of the steps, `files/`, the log and finalize. Don't clean up the guest.
 - Test it with a throwaway child: `pmm image new t --from debian-13`, one step, `pmm image
   validate t`, `pmm image build -v t`.

@@ -38,7 +38,10 @@ build_key() {
     fi
     [[ -z "$steps" ]] || printf '%s\n' "$steps"
     if [[ -d "$dir/files" ]]; then
-      (cd "$dir/files" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do echo "file $f $(_sha256 < "$f")"; done)
+      # a link is copied as one (push is tar), so it is its target's name
+      (cd "$dir/files" && find . \( -type f -o -type l \) | LC_ALL=C sort | while IFS= read -r f; do
+        if [[ -L "$f" ]]; then echo "file $f -> $(readlink "$f")"; else echo "file $f $(_sha256 < "$f")"; fi
+      done)
     fi
     echo "finalize $(_sha256 < "$(img_finalize)")"
   } | _sha256 | cut -c1-16

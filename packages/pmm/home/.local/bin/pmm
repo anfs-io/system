@@ -171,7 +171,8 @@ anfs, and what another package stows). A step nothing provides fails `image vali
 called with a verb, in the image's directory:
   check                prints what is missing on the host and fails; nothing printed is ready
   fingerprint <step>   prints, one per line, the files the step's result depends on, the step
-                       first (a directory: the tree under it). They are hashed into the build key
+                       first (a directory: the tree under it). They are hashed into the build
+                       key; one that is not there fails `image validate`
   run <step>           runs the step against the guest; its output is the step's log, a
                        non-zero exit fails the build
 Every verb gets what is being built; run also gets the guest, as a way to run something in it

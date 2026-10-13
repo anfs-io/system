@@ -48,10 +48,13 @@ get() {
   [[ -n "$v" ]] && echo "$v" || echo "${2:-}"
 }
 
-# The step's sources:, which is all of it that can be wrong
+# The step's sources:, after refusing a key that is not one: a misspelt sources: would otherwise
+# be the default, silently
 mode() {
-  local m
+  local m k
   yq -p yaml -e 'tag == "!!map" or tag == "!!null"' "$step" >/dev/null 2>&1 || die "$(basename "$step") is not a YAML map"
+  k=$(yq -p yaml -r '(. // {}) | keys | .[]' "$step" 2>/dev/null | grep -vxE 'sources|repo|packages|installer' | paste -sd' ' -) || true
+  [[ -z "$k" ]] || die "$(basename "$step"): $k: not a key of an .anfs step (sources, repo, packages, installer)"
   m=$(get .sources pushed)
   case "$m" in host|pushed) echo "$m" ;; *) die "$(basename "$step"): sources must be host or pushed, not '$m'" ;; esac
 }
@@ -89,8 +92,10 @@ case "$verb" in
     m=$(mode)
     user="${ANFS_IMAGE_USER:?}"
     repo=$(get .repo)
-    pkgs=$(yq -p yaml -r '[.packages] | flatten | .[] | select(. != null)' "$step" 2>/dev/null | paste -sd' ' -)
-    args="${repo:+ --repo $(shq "$repo")}${pkgs:+ $pkgs}"
+    pkgs="" args="${repo:+ --repo $(shq "$repo")}"
+    while IFS= read -r p; do
+      [[ -z "$p" ]] || { pkgs+="${pkgs:+ }$p"; args+=" $(shq "$p")"; }
+    done < <(yq -p yaml -r '[.packages] | flatten | .[] | select(. != null)' "$step" 2>/dev/null)
     script="${ANFS_IMAGE_WORK:?}/install.sh"
     # What starts every install. su -l from a session that is already one gets no new login
     # session, and so no XDG_RUNTIME_DIR: without it a hook finds no systemd user session

@@ -242,7 +242,7 @@ ansible one would be a stack package stowing `~/.local/lib/pmm/provisioners/yml`
 | Verb | Does |
 | --- | --- |
 | `check` | Prints what is missing on the host (a binary, a version) and fails; nothing printed is ready. `validate` runs it once per provisioner an image uses |
-| `fingerprint <step>` | Prints, one per line, the files the step's result depends on, the step first. pmm hashes them into the build key (a directory is walked, sorted; a path is absolute or from the image's directory). One that fails, or names what is not there, fails `validate` and the build, so it is also where a provisioner refuses a step it cannot run |
+| `fingerprint <step>` | Prints, one per line, the files the step's result depends on, the step first. pmm hashes them into the build key (a directory is walked, sorted, and a link in it is its target's name, not followed; a path is absolute or from the image's directory). One that fails, names what is not there, or does not name the step first fails `validate` and the build (`key_step` is what both read it with), so it is also where a provisioner refuses a step it cannot run |
 | `run <step>` | Runs the step against the guest. stdout and stderr are the step's log; a non-zero exit fails the build |
 
 Every verb runs in the image's directory, with an empty stdin, and is told what is being built.
@@ -274,11 +274,20 @@ same provisioner works wherever the guest is:
   `files/`. A provisioner never sees the password and does not ask which backend it is on.
 - **pmm keeps** the order, pushing `files/`, the log (`_provision`: timing, `-v`, the tail on
   failure) and finalize. Between "waiting for ssh" and the shutdown, a build reaches the guest
-  only through those two scripts: finalize and `test.sh` are run by `sh` like any `.sh` step.
+  only through those two scripts: finalize and `test.sh` are run by `sh` like any `.sh` step
+  (so an `sh` of your own in `$PMM_CONFIG_HOME/provisioners` runs those too), and
+  `user.authorized_keys` is appended with `exec` itself, by no provisioner.
+- **The provisioner's own file is not in the build key**: a new `sh`, or a package upgrading its
+  provisioner, rebuilds nothing. One whose change is another build prints its own path in
+  `fingerprint`.
+- **The workspace's path cannot hold whitespace** (`guest_ssh` refuses it): the two scripts are
+  handed over as unquoted command lines. So `$PMM_STATE_HOME` cannot either, to build or test.
 - **`sh`** pipes the script to `bash -s` in the guest with every `ANFS_IMAGE_*` that means
   something there: not the `GUEST` ones, nor `DIR` and `WORK`, which are paths on the host.
 - **`anfs`** installs the toolkit: `sources: pushed` (the guest clones them; the default) or
-  `host` (this machine's source clones are copied in), `repo:`, `packages:`, `installer:`. It is
+  `host` (this machine's source clones are copied in), `repo:`, `packages:`, `installer:`; any
+  other key is refused by `fingerprint`, so by `validate` (a misspelt `sources:` would be the
+  default). Each value is quoted for the guest's shell. It is
   the proof that the seam carries a provisioner that runs on the host and has inputs outside
   the image directory: its `fingerprint` names a file it writes with each source's commit and a
   hash of its uncommitted changes' names. It runs `install.sh` as the image's user through
