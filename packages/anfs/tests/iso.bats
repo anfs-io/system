@@ -230,6 +230,9 @@ EOF
   [ "${#lines[@]}" -eq 4 ]
   [[ "${lines[3]}" == "-"$'\t'"-"$'\t'"-"$'\t'"stray.iso"$'\t'"unlisted"$'\t'6* ]]
 
+  # sizes are bytes in JSON
+  ANFS_TABLE="" ANFS_JSON=true run iso list --all
+  [[ "$output" == *'"file":"stray.iso","state":"unlisted","size":"6","catalog":null}]' ]]
   ANFS_TABLE="" ANFS_JSON=true run iso list
   [[ "$output" == '[{"id":"debian","name":"Debian 13","architecture":"amd64","file":"debian.iso","state":"missing","size":null,"catalog":"'"$HOME"'/.local/share/anfs/sources/hi/isos/isos.yml"},'* ]]
   [[ "$output" == *'{"id":"old",'*'/sources/lo/isos/isos.yml"}]' ]]
@@ -382,6 +385,101 @@ EOF
   [[ "$output" == *"Nothing to prune"* ]]
 }
 
+@test "iso prune: a catalogue that cannot be read, or no entry at all, deletes nothing" {
+  catalogue
+  iso pull debian
+  echo pve > "$STORE/proxmox.iso"; echo stray > "$STORE/stray.iso"
+  local good
+  good=$(cat "$T/sources/hi/isos/isos.yml")
+
+  # an unterminated quote, then a map where the list should be: its files are not strays
+  local bad
+  for bad in '- id: "debian' $'isos:\n  - id: debian\n    url: https://x/debian.iso' '- name: no id'; do
+    printf '%s\n' "$bad" > "$T/sources/hi/isos/isos.yml"
+    run iso prune -y
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"sources/hi/isos/isos.yml is not a list of entries"* ]]
+    [[ "$output" == *"not pruning"* ]]
+    [ -f "$STORE/debian.iso" ] && [ -f "$STORE/proxmox.iso" ] && [ -f "$STORE/stray.iso" ]
+    run iso list --all
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"is not a list of entries"* ]]
+    [[ "$output" != *unlisted* ]]
+    [[ "$output" == *old.iso* ]]
+  done
+
+  # no entries: an empty catalogue, then none
+  printf '# nothing yet\n' > "$T/sources/hi/isos/isos.yml"
+  rm "$T/sources/lo/isos/isos.yml"
+  run iso list
+  [ "$status" -eq 0 ]
+  run iso prune -y
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"the catalogue has no entries"* ]]
+  rm "$T/sources/hi/isos/isos.yml"
+  run iso prune -y
+  [ "$status" -eq 1 ]
+  [ -f "$STORE/debian.iso" ] && [ -f "$STORE/proxmox.iso" ] && [ -f "$STORE/stray.iso" ]
+
+  # readable again: only the stray goes, and --json answers with one object
+  printf '%s\n' "$good" > "$T/sources/hi/isos/isos.yml"
+  [ "$(ANFS_JSON=true iso prune -y 2>/dev/null)" = '{"deleted":"1"}' ]
+  [ -f "$STORE/debian.iso" ] && [ -f "$STORE/proxmox.iso" ] && [ ! -e "$STORE/stray.iso" ]
+}
+
+@test "a filename is a name in the store: one with a / is never read, written or deleted" {
+  echo keep > "$HOME/victim.txt"
+  mkdir -p "$STORE"
+  echo x > "$WEB/victim.txt"
+  cat > "$T/sources/hi/isos/isos.yml" <<'EOF'
+- id: evil
+  filename: ../../../victim.txt
+- id: evil-url
+  url: https://x/victim.txt
+  filename: ../../../victim.txt
+- id: nofile
+  name: neither a url nor a filename
+EOF
+  local id
+  for id in evil evil-url nofile; do
+    run iso remove -y "$id"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"names no file in the store"* ]]
+    run iso path "$id"
+    [ "$status" -eq 1 ]
+    run iso show "$id"
+    [ "$status" -eq 1 ]
+    run iso pull -f "$id"
+    [ "$status" -eq 1 ]
+  done
+  [ "$(cat "$HOME/victim.txt")" = keep ]
+  [ ! -s "$CURL_LOG" ]
+  run anfs_iso_fetch --name ../x.iso https://x/debian.iso
+  [ "$status" -eq 1 ]
+  [ ! -e "$HOME/.cache/anfs/x.iso" ]
+  run iso list
+  [[ "${lines[0]}" == "evil"$'\t'*$'\t'"invalid"$'\t'"-" ]]
+  [[ "${lines[2]}" == "nofile"$'\t'*$'\t'"-"$'\t'"invalid"$'\t'"-" ]]
+}
+
+@test "iso remove asks before a file with no url goes: it cannot be pulled again" {
+  echo mine > "$T/mine.iso"
+  iso add "$T/mine.iso"
+  iso add https://x/debian.iso
+  iso pull debian
+  run iso remove mine debian </dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"mine.iso"*"no url"* ]]
+  [[ "$output" == *"pass -y"* ]]
+  [ -f "$STORE/mine.iso" ] && [ -f "$STORE/debian.iso" ]
+  # one with a url is not asked about
+  run iso remove debian </dev/null
+  [ "$status" -eq 0 ]
+  run iso remove -y mine
+  [ "$status" -eq 0 ]
+  [ ! -e "$STORE/mine.iso" ]
+}
+
 @test "iso show and path: the entry and its file; an unknown id is 1" {
   catalogue
   iso pull debian
@@ -432,6 +530,11 @@ EOF
   [ "$output" = "mine"$'\n'"debian"$'\n'"pve"$'\n'"old" ]
   run "$PMM" __complete iso rm ""
   [ "$output" = "mine"$'\n'"debian"$'\n'"pve"$'\n'"old" ]
+  # an indented list, a quoted id, a comment after it
+  printf -- '  - id: "ind"   # the one\n    url: https://x/ind.iso\n  - name: later\n    id: late\n' > "$HOME/.config/anfs/isos.yml"
+  run "$ANFS" __complete iso pull ""
+  [ "${lines[0]}" = ind ]
+  [ "${#lines[@]}" -eq 4 ]
   [[ -n "${EPOCHREALTIME:-}" ]] || skip "no microsecond clock in this bash"
   local start end best=999999 i
   for i in 1 2 3; do

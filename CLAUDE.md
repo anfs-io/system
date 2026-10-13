@@ -94,9 +94,12 @@ machines/networks/<name>/      a network (network.yml)
 - **Media and blank machines** (`lib/pmm/media.sh`). `media:` lists what a person would plug in:
   an `.iso` is a CD, any other file a USB drive (a Ventoy stick's image), each a path or an id in
   the ISO catalogue. `pmm iso` is that catalogue and its store (`lib/anfs/iso.sh`, the same group
-  as `anfs iso` and `ventoy iso`): `pmm iso pull` fetches ahead of time what a build or a machine
-  would otherwise fetch when it needs it, and `pmm iso remove` and `pmm iso prune` are what
-  deletes ISOs (`image prune` does not). Media in the definition boot after the disk, so an empty disk falls through
+  as `anfs iso` and `ventoy iso`): `pmm iso pull` fetches ahead of time what a machine's
+  `media:` or a build would otherwise fetch when it needs it, and `pmm iso remove` and
+  `pmm iso prune` are what deletes ISOs (`image prune` does not). A build still fetches the URL in
+  its `image.yml`, so core's `isos/isos.yml` repeats each image's ISO as `<image>-<arch>`
+  (`pmm iso pull debian-13-arm64`; pmm's `iso.bats` holds the two together): an ISO an image of
+  another source names only by URL is a stray to `prune` until images name ids. Media in the definition boot after the disk, so an empty disk falls through
   to the installer and what it installs boots from then on; `pmm up --media` is for one run and
   boots first. A machine with media and no `image:` is blank: an empty disk (`disk:`, 20G), no
   build, no hold, no login, so `up` does not wait for ssh and `shell` refuses. `pmm up --display`
@@ -282,6 +285,7 @@ This repo (`core/`) contains:
 - `packages/dev` — dev/test tooling: containers, macOS VMs, `ppm user`, `ppm move`, the git hooks
 - `skills/` — the tools' own skills (`pcm-containers`), synced by psm like any source's
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
+- `isos/isos.yml` — the ISOs the base images install from, in the catalogue (`pmm iso pull`)
 - `machines/` — the macOS test box (`anfs-test-macos`) as a pmm machine, and in `machines/images/`
   the base VM images (`debian-13`, `fedora-44`); other sources build on them with `from:`
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
@@ -544,7 +548,7 @@ The keys, which are the interface:
 | `psm repo list` | `config`, `repo`, `note` |
 | `anfs callbacks` | `tool`, `listener`, `state`, `handler` |
 | `anfs src list` | `alias`, `url`, `list` (`user`, `system`), `status`, `provides` (a list) |
-| `anfs iso list`, `pmm iso list`, `ventoy iso list` | `id` (null: a file no entry names, with `--all`), `name`, `architecture`, `file`, `state` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`), `size`, `catalog` (the `isos.yml` that defines the entry) |
+| `anfs iso list`, `pmm iso list`, `ventoy iso list` | `id` (null: a file no entry names, with `--all`), `name`, `architecture`, `file`, `state` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm image list` | `name`, `source` (null: the definition is gone), `arch` (null: not built), `state` (`built`, `stale`, `unbuilt`, `shadowed`), `key`, `disk` (a tart build: its VM's name), `backend`, `user`, `sshkey`, `held` (a list: `web1`, `web1@s1`), `built` (when), `tested` (true when this build passed `image test`) |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
@@ -949,7 +953,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # pmm (its images pin a sha256; media:) and stack's ventoy use it.
                # anfs_iso_cli declares the `iso` group, written once here (cmd_iso_*, complete_iso):
                # list [--all], show, pull (alias get), add <url|file>, remove [--entry], path, prune.
-               # A tool adopts it with that one call beside its own declarations: anfs, pmm, ventoy
+               # A tool adopts it with that one call beside its own declarations: anfs, pmm, ventoy.
+               # prune is refused while a catalogue is not a list of entries (anfs_iso_bad_catalogs)
+               # or there is no entry at all: an unreadable catalogue is otherwise read as empty,
+               # and every file it names would be a stray. A filename with a / is never used
   table.sh     # anfs_row, anfs_table (aligned on a terminal, tab-separated piped, --json),
                # anfs_result, anfs_json_on
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),

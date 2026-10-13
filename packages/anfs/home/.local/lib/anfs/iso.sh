@@ -31,13 +31,17 @@
 #       url: https://...            a URL, or a list tried in order
 #       checksum_url: https://...   or  checksum: <sha256>   (a pinned sum)
 #       filename: debian-13.iso     optional; default the URL's last part
-#   An id in a higher-priority file replaces the same id below it.
+#   An id in a higher-priority file replaces the same id below it. A file name is a name in the
+#   store: one with a / in it (or none at all) is refused wherever it would be read or written.
 #
 #   anfs_iso_catalogs              the files that exist, in priority order
 #   anfs_iso_ids                   every id, once
 #   anfs_iso_get <id> <field>      a field ("" when unset; url: one per line)
 #   anfs_iso_known <id>            true when the catalogue has it
-#   anfs_iso_file <id>             where its file is in the store, there or not
+#   anfs_iso_file <id>             where its file is in the store, there or not (1: no usable name)
+#   anfs_iso_bad_catalogs          the files that are not a list of entries with an id (yq cannot
+#                                  read them, or they are a map). Read as empty by the rest, which
+#                                  is why `iso list` reports them and `iso prune` refuses to run
 #   anfs_iso_fetch_id [--force] <id>    anfs_iso_fetch for a catalogue entry. One with no url (a
 #                                       file `iso add` copied in) is its file, while it is there
 #
@@ -48,9 +52,11 @@
 #     <tool> iso show <id>         the entry, the catalogue file that defines it, its file and sum
 #     <tool> iso pull [-f] <id>... download and verify into the store (alias: get)
 #     <tool> iso add <url|file>    an entry of your own, in $ANFS_CONFIG_HOME/isos.yml
-#     <tool> iso remove <id>...    delete the file; --entry also drops an entry of your own
+#     <tool> iso remove <id>...    delete the file; --entry also drops an entry of your own. It
+#                                  asks (-y) for a file with no url to pull it from again
 #     <tool> iso path <id>         the file's path in the store, there or not
-#     <tool> iso prune [-y]        delete the files in the store no entry names
+#     <tool> iso prune [-y]        delete the files in the store no entry names. Refused while a
+#                                  catalogue cannot be read, or when there is no entry at all
 #   They are written here once (cmd_iso_*, complete_iso), so anfs, pmm and ventoy cannot differ.
 #
 # Requires paths.sh, log.sh and sources.sh (after anfs_gitsrc_env); the catalogue needs yq, the
@@ -111,6 +117,12 @@ _anfs_iso_download() {
   return 1
 }
 
+# A file name in the store: not empty, no directory part. A catalogue's `filename` is joined to
+# the store's path, and `iso remove` deletes what that names.
+_anfs_iso_name_ok() {
+  [[ -n "$1" && "$1" != */* && "$1" != . && "$1" != .. ]]
+}
+
 anfs_iso_fetch() {
   local sha="" sum_url="" name="" force=false url file part want
   while [[ $# -gt 0 ]]; do
@@ -123,11 +135,14 @@ anfs_iso_fetch() {
     esac
   done
   [[ $# -gt 0 ]] || { anfs_warn "anfs_iso_fetch: no url"; return 1; }
+  [[ -z "$name" ]] || _anfs_iso_name_ok "$name" || { anfs_warn "'$name' is not a file name in the store"; return 1; }
   mkdir -p "$ANFS_ISO_HOME"
 
   for url in "$@"; do
     [[ -n "$url" ]] || continue
-    file="$ANFS_ISO_HOME/${name:-$(basename "${url%%\?*}")}"
+    file="${name:-$(basename "${url%%\?*}")}"
+    _anfs_iso_name_ok "$file" || { anfs_warn "$url names no file"; continue; }
+    file="$ANFS_ISO_HOME/$file"
     part="$file.part"
     if [[ -f "$file" ]] && ! $force; then
       # What is there is taken as it is unless a pinned sum says otherwise
@@ -178,6 +193,15 @@ anfs_iso_catalogs() {
   done
 }
 
+anfs_iso_bad_catalogs() {
+  local f
+  while IFS= read -r f; do
+    # Empty, or comments only: a catalogue with no entries
+    grep -qvE '^[[:space:]]*(#.*|---)?$' "$f" 2>/dev/null || continue
+    yq -e 'tag == "!!seq" and all_c(tag == "!!map" and has("id"))' "$f" >/dev/null 2>&1 || echo "$f"
+  done < <(anfs_iso_catalogs)
+}
+
 # The catalogue file that defines <id>: the first, in priority order
 _anfs_iso_catalog_of() {
   local f
@@ -216,12 +240,21 @@ _anfs_iso_name() {
   name=$(anfs_iso_get "$1" filename)
   if [[ -z "$name" ]]; then
     url=$(anfs_iso_get "$1" url | head -n1)
-    name=$(basename "${url%%\?*}")
+    url="${url%%\?*}"
+    name="${url##*/}"
   fi
   echo "$name"
 }
 
-anfs_iso_file() { echo "$ANFS_ISO_HOME/$(_anfs_iso_name "$1")"; }
+anfs_iso_file() {
+  local name
+  name=$(_anfs_iso_name "$1")
+  if ! _anfs_iso_name_ok "$name"; then
+    anfs_warn "$1: its entry names no file in the store (filename: '$name'; a name, with no /)"
+    return 1
+  fi
+  echo "$ANFS_ISO_HOME/$name"
+}
 
 anfs_iso_fetch_id() {
   local force=() id sum sum_url file
@@ -233,7 +266,7 @@ anfs_iso_fetch_id() {
   sum=$(anfs_iso_get "$id" checksum)
   if [[ ${#urls[@]} -eq 0 || -z "${urls[0]}" ]]; then
     # An entry `iso add` made from a file: there is nowhere to download it from
-    file=$(anfs_iso_file "$id")
+    file=$(anfs_iso_file "$id") || return 1
     sum="${sum,,}"
     if [[ -f "$file" ]] && { [[ -z "$sum" ]] || _anfs_iso_verified "$file" "${sum#sha256:}"; }; then
       echo "$file"
@@ -243,7 +276,8 @@ anfs_iso_fetch_id() {
     return 1
   fi
   sum_url=$(anfs_iso_get "$id" checksum_url)
-  args=(--name "$(_anfs_iso_name "$id")")
+  file=$(anfs_iso_file "$id") || return 1
+  args=(--name "${file##*/}")
   [[ -z "$sum" ]] || args+=(--sha256 "$sum")
   [[ -z "$sum_url" ]] || args+=(--checksum-url "$sum_url")
   anfs_iso_fetch "${force[@]}" "${args[@]}" "${urls[@]}"
@@ -267,10 +301,13 @@ its sha256. The id is the file's name without its extension unless given" \
     --opt "--id ID: Its id" --opt "--name TEXT: A description" --opt "--arch ARCH: amd64 or arm64" \
     --opt "--sha256 HEX: Pin the content" --opt "--checksum-url URL: The publisher's checksum file" \
     --opt "-f --force: Replace the entry of that id" --arg "url|file"
-  cli_cmd "iso remove" "Delete ISOs from the store; the entry stays and can be pulled again" --alias rm \
-    --opt "--entry: Drop the entry too (one of your own; never a source's)" --arg "iso..."
+  cli_cmd "iso remove" "Delete ISOs from the store. The entry stays: pull fetches it again when it has
+a url. One with none (a file iso add copied in) is asked about first" --alias rm \
+    --opt "--entry: Drop the entry too (one of your own; never a source's)" \
+    --opt "-y --yes: Do not ask" --arg "iso..."
   cli_cmd "iso path" "Print the file's path in the store, there or not" --arg "iso"
-  cli_cmd "iso prune" "Delete the files in the store no catalogue entry names" --opt "-y --yes: Do not ask"
+  cli_cmd "iso prune" "Delete the files in the store no catalogue entry names. Refused while a
+catalogue cannot be read, or when there are no entries at all" --opt "-y --yes: Do not ask"
 }
 
 _anfs_iso_need() {
@@ -279,6 +316,21 @@ _anfs_iso_need() {
 
 _anfs_iso_unknown() {
   anfs_die "no ISO '$1' in the catalogue (list them with: $CLI_TOOL iso list)"
+}
+
+# Warn about each catalogue file that cannot be read; true when there is one
+_anfs_iso_warn_bad() {
+  local f bad=1
+  while IFS= read -r f; do
+    anfs_warn "$(anfs_display "$f") is not a list of entries with an id (see: yq . $(anfs_display "$f")); nothing in it is read"
+    bad=0
+  done < <(anfs_iso_bad_catalogs)
+  return "$bad"
+}
+
+# The size of a file in bytes ("" when it is not there)
+_anfs_iso_bytes() {
+  [[ ! -f "$1" ]] || { wc -c < "$1" | tr -d ' '; }
 }
 
 # Every entry that counts (an id's first, in priority order), one row each: id, name,
@@ -330,29 +382,39 @@ _anfs_iso_strays() {
 }
 
 cmd_iso_list() {
-  local id name arch fname sum sum_url catalog f
+  local id name arch fname sum sum_url catalog f state size bad=false
   _anfs_iso_need
+  # Before the rows: what an unreadable catalogue names would be listed as unlisted
+  ! _anfs_iso_warn_bad || bad=true
+  size=_anfs_iso_size
+  ! anfs_json_on || size=_anfs_iso_bytes
   {
     while IFS="$ANFS_US" read -r id name arch fname sum sum_url catalog; do
       f="$ANFS_ISO_HOME/$fname"
-      anfs_row "$id" "$name" "$arch" "$fname" "$(_anfs_iso_state "$f")" "$(_anfs_iso_size "$f")" "$catalog"
+      # An entry with no file name, or one that is not a name in the store, has no file
+      if _anfs_iso_name_ok "$fname"; then
+        anfs_row "$id" "$name" "$arch" "$fname" "$(_anfs_iso_state "$f")" "$($size "$f")" "$catalog"
+      else
+        anfs_row "$id" "$name" "$arch" "$fname" invalid "" "$catalog"
+      fi
     done < <(_anfs_iso_entries)
-    if ${CLI_OPT[all]:-false}; then
+    if ${CLI_OPT[all]:-false} && ! $bad; then
       while IFS= read -r f; do
         [[ "$f" != *.sha256 ]] || continue
-        anfs_row "" "" "" "${f##*/}" unlisted "$(_anfs_iso_size "$f")" ""
+        anfs_row "" "" "" "${f##*/}" unlisted "$($size "$f")" ""
       done < <(_anfs_iso_strays)
     fi
   } | anfs_table "ID NAME ARCH FILE STATE SIZE" "id name architecture file state size catalog"
   [[ -n "$(anfs_iso_catalogs)" ]] || anfs_json_on ||
     anfs_warn "no ISO catalogue: isos/isos.yml in a source, or $(anfs_display "$ANFS_ISO_LOCAL_CATALOG") ($CLI_TOOL iso add)"
+  ! $bad
 }
 
 cmd_iso_show() {
   local id="$1" catalog file field value recorded="" size
   _anfs_iso_need
   catalog=$(_anfs_iso_catalog_of "$id") || _anfs_iso_unknown "$id"
-  file=$(anfs_iso_file "$id")
+  file=$(anfs_iso_file "$id") || return 1
   [[ ! -f "$file.sha256" ]] || recorded=$(cat "$file.sha256")
   size=$(_anfs_iso_size "$file")
   echo "id:            $id"
@@ -413,6 +475,7 @@ cmd_iso_add() {
     url="$src"
     fname="${src%%\?*}"
     fname="${fname##*/}"
+    [[ -n "$fname" ]] || anfs_die "$src names no file"
   else
     [[ -f "$src" ]] || anfs_die "$src is not a URL or a file"
     [[ -z "$sum_url" ]] || cli_usage_err "--checksum-url is for a URL; a file is hashed"
@@ -459,16 +522,23 @@ cmd_iso_add() {
 
 cmd_iso_remove() {
   local entry=${CLI_OPT[entry]:-false} id catalog file
+  local -a files=() lost=()
   _anfs_iso_need
   # Every id is checked before anything is deleted
   for id in "$@"; do
     catalog=$(_anfs_iso_catalog_of "$id") || _anfs_iso_unknown "$id"
     ! $entry || [[ "$catalog" == "$ANFS_ISO_LOCAL_CATALOG" ]] ||
       anfs_die "$id is defined in $(anfs_display "$catalog"): --entry drops an entry of $(anfs_display "$ANFS_ISO_LOCAL_CATALOG") only; a source's catalogue is changed in the source"
+    file=$(anfs_iso_file "$id") || return 1
+    files+=("$file")
+    [[ ! -f "$file" || -n "$(anfs_iso_get "$id" url)" ]] || lost+=("${file##*/}")
   done
+  [[ ${#lost[@]} -eq 0 ]] ||
+    anfs_confirm "this deletes ${lost[*]} from $(anfs_display "$ANFS_ISO_HOME"): no url in the catalogue to pull it from again" "Delete?"
   for id in "$@"; do
-    file=$(anfs_iso_file "$id")
-    if [[ "$file" != */ ]] && [[ -e "$file" || -e "$file.sha256" || -e "$file.part" ]]; then
+    file="${files[0]}"
+    files=("${files[@]:1}")
+    if [[ -e "$file" || -e "$file.sha256" || -e "$file.part" ]]; then
       rm -f "$file" "$file.sha256" "$file.part"
       anfs_json_on || anfs_info "Deleted $(anfs_display "$file")"
     else
@@ -485,36 +555,44 @@ cmd_iso_remove() {
 cmd_iso_path() {
   _anfs_iso_need
   anfs_iso_known "$1" || _anfs_iso_unknown "$1"
-  anfs_iso_file "$1"
+  anfs_iso_file "$1" || return 1
 }
 
 cmd_iso_prune() {
   local f
   local -a strays=()
   _anfs_iso_need
+  # A catalogue that cannot be read names nothing, and with no entries every file is a stray:
+  # neither is a reason to empty the store
+  ! _anfs_iso_warn_bad || anfs_die "not pruning: the files that catalogue names cannot be told from the strays"
+  [[ -n "$(_anfs_iso_entries)" ]] ||
+    anfs_die "not pruning: the catalogue has no entries, so every file in $(anfs_display "$ANFS_ISO_HOME") would go"
   mapfile -t strays < <(_anfs_iso_strays)
   if [[ ${#strays[@]} -eq 0 ]]; then
-    anfs_info "Nothing to prune in $(anfs_display "$ANFS_ISO_HOME")"
+    anfs_json_on || anfs_info "Nothing to prune in $(anfs_display "$ANFS_ISO_HOME")"
+    anfs_result deleted 0
     return 0
   fi
   for f in "${strays[@]}"; do
     printf '  %-6s %s\n' "$(_anfs_iso_size "$f")" "${f##*/}"
-  done
+  done >&2
   anfs_confirm "this deletes ${#strays[@]} files no catalogue entry names from $(anfs_display "$ANFS_ISO_HOME")" "Delete them?"
   rm -f "${strays[@]}"
-  anfs_info "Deleted ${#strays[@]} files"
+  anfs_json_on || anfs_info "Deleted ${#strays[@]} files"
+  anfs_result deleted "${#strays[@]}"
 }
 
 # What cli.sh asks for on a tab press: the ids, read off the catalogue files' `- id:` lines. No
-# yq, no source list: a tab press has a budget (registry.bats).
+# yq, no source list (so every clone's catalogue, listed or not): a tab press has a budget
+# (iso.bats). An entry whose id is not its first key is not offered.
 complete_iso() {
   local f line
   local -A seen=()
   for f in "$ANFS_ISO_LOCAL_CATALOG" "$ANFS_SOURCES_HOME"/*/isos/isos.yml; do
     [[ -f "$f" ]] || continue
     while IFS= read -r line; do
-      [[ "$line" == "- id:"* ]] || continue
-      line="${line#- id:}"
+      [[ "$line" =~ ^[[:space:]]*-[[:space:]]+id:(.*)$ ]] || continue
+      line="${BASH_REMATCH[1]%%[[:space:]]#*}"
       line="${line//[[:space:]\"\']/}"
       [[ -z "$line" || -n "${seen[$line]:-}" ]] || { seen[$line]=1; printf '%s\n' "$line"; }
     done < "$f"
