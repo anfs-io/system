@@ -171,7 +171,7 @@ remote() {
 @test "provides: the GITSRC_DIRS a source has, shown by list" {
   mkdir -p "$T/repos/a/packages" "$T/repos/a/spaces" "$T/repos/b"
   printf 'file:///x/a.git  a\nfile:///x/b.git  b\n' > "$GITSRC_USER_LIST"
-  GITSRC_DIRS="packages containers images skills spaces"
+  GITSRC_DIRS="packages containers machines skills spaces"
   gitsrc_collect
   [ "$(gitsrc_provides a)" = "packages spaces" ]
   [ -z "$(gitsrc_provides b)" ]
@@ -183,6 +183,10 @@ remote() {
   run yq -p json -r '.[] | .alias + ":" + (.provides | join("+")) + ":" + (.provides | length | tostring)' <<< "$output"
   [ "${lines[0]}" = "a:packages+spaces:2" ]
   [ "${lines[1]}" = "b::0" ]
+  # One directory per tool: images and networks are below machines/, so a source with either
+  # provides machines, and a top-level images/ is nobody's
+  mkdir -p "$T/repos/b/machines/images/x" "$T/repos/b/images"
+  [ "$(gitsrc_provides b)" = "machines" ]
 }
 
 @test "ssh: rewrites user-list https entries; system-list ones are reported with the hint" {

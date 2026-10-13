@@ -137,7 +137,7 @@ machine_create() {
 cmd_create() {
   local name="$1" image="${CLI_OPT[image]:-}" id made=false k
   local -a args=()
-  name_ok "$name" || die "machine names are lowercase letters, digits, . _ -"
+  mach_name_ok "$name" || die "machine names are $PMM_NAME_RULE"
   if id=$(canon "$name"); then
     for k in image media profile cpus memory disk share publish user arch; do
       [[ -z "${CLI_OPT[$k]:-}" ]] || anfs_fail 73 "$name is already defined ($id); its settings are in $(tilde "$(mach_yml "$id")")"
@@ -184,7 +184,7 @@ cmd_up() {
     [[ ${#specs[@]} -le 1 ]] || cli_usage_err "--image takes one machine"
     [[ ${#specs[@]} -eq 1 ]] || specs=("${image#*/}")
     if ! canon "${specs[0]}" >/dev/null && ! mach_exists "${specs[0]}"; then
-      name_ok "${specs[0]}" || die "machine names are lowercase letters, digits, . _ -"
+      mach_name_ok "${specs[0]}" || die "machine names are $PMM_NAME_RULE"
       def_write "${specs[0]}" image "$image"
       load_machines
     fi

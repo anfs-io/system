@@ -4,8 +4,7 @@
 # anfs owns what the tools share: the sources. Each source is a repo that may hold
 #   packages/    ppm   software and dotfiles
 #   containers/  pcm   podman compose services
-#   images/      pim   VM images (qemu, tart)
-#   machines/    pmm   machines run from those images
+#   machines/    pmm   machines, the images they run from and the networks they are on
 #   skills/      psm   agent skills
 #   spaces/      wsm   workspaces
 # and the tools each read their own directory of every source. anfs adds the commands that span
@@ -55,7 +54,7 @@ cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "
 cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
 never pulled)" --arg "[source...]"
 cli_cmd install "Install everything a source holds: its packages (ppm),
-containers (pcm), images (pim), machines (pmm), skills (psm)
+containers (pcm), machines (pmm), skills (psm)
 and spaces (wsm), in that order. To pick single resources use the
 tool itself." --opt "-y --yes: Do not ask" --arg "source..."
 # A step's options are declared by the package that owns it (package.yml onboard.options), so
@@ -181,9 +180,8 @@ cmd_install() {
     dir=$(gitsrc_dir "$src")
     [[ -d "$dir" ]] || die "source '$src' is not cloned yet (anfs src update $src)"
     for t in $ANFS_TOOLS; do
-      for tld in $(anfs_tool_dirs "$t"); do
-        [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
-      done
+      tld=$(anfs_tool_dir "$t")
+      [[ -d "$dir/$tld" ]] && plan="$plan  $src: $tld ($t)"$'\n'
     done
   done
   [[ -n "$plan" ]] || die "nothing to install: ${srcs[*]} hold none of: $GITSRC_DIRS"
@@ -196,10 +194,9 @@ cmd_install() {
   local rc=0
   for t in $ANFS_TOOLS; do
     local -a specs=()
+    tld=$(anfs_tool_dir "$t")
     for src in "${srcs[@]}"; do
-      for tld in $(anfs_tool_dirs "$t"); do
-        [[ -d "$(gitsrc_dir "$src")/$tld" ]] && { specs+=("$src/"); break; }
-      done
+      [[ -d "$(gitsrc_dir "$src")/$tld" ]] && specs+=("$src/")
     done
     [[ ${#specs[@]} -gt 0 ]] || continue
     echo "== $t install ${specs[*]}"

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
-# cloned once under ~/.local/share/anfs/sources; pmm reads the images/, networks/ and machines/
-# directories of each
+# cloned once under ~/.local/share/anfs/sources; pmm reads the machines/
+# directory of each (machines, and below it images/ and networks/)
 ANFS_LIB="$HOME/.local/lib/anfs"
 if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
   echo "pmm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
@@ -37,7 +37,7 @@ anfs_gitsrc_env
 : "${PMM_IMAGE_SSH_TIMEOUT:=600}"
 # Networks: local definitions, libvirt, and what qemu's bridge helper needs (pmm-network sets
 # the last two up). The backend is libvirt on Linux; there is none elsewhere yet
-: "${PMM_NETWORKS_HOME:=$PMM_CONFIG_HOME/networks}"
+: "${PMM_NETWORKS_HOME:=$PMM_MACHINES_HOME/networks}"
 : "${PMM_LIBVIRT_URI:=qemu:///system}"
 : "${PMM_BRIDGE_CONF:=/etc/qemu/pmm-bridge.conf}"
 if [[ -z "${PMM_BRIDGE_HELPER:-}" ]]; then
@@ -103,7 +103,7 @@ Files: a machine in $PMM_DATA_HOME/machines/<name>/, its snapshots in
 $PMM_DATA_HOME/snapshots/<name>/, runtime state in $PMM_STATE_HOME/run/<name>/. macOS guests
 (tart) are in tart's own store as pmm-<name>.
 
-Network: networks/<name>/network.yml in a source (`pmm network create` writes a local one)
+Network: machines/networks/<name>/network.yml in a source (`pmm network create` writes a local one)
   kind: nat                 nat (out through the host), isolated (machines and the host only),
                             bridged (onto a bridge the host already has)
   subnet: 10.20.0.0/24      nat and isolated: required. The host is .1, DHCP hands out the upper
@@ -118,7 +118,7 @@ A machine with no interfaces has qemu's user-mode network: ssh and any ports: ar
 An <image> is `name` or `source/name`, resolved like a machine: local ($PMM_IMAGES_HOME), then
 the anfs sources in order.
 
-Image: images/<name>/ in a source
+Image: machines/images/<name>/ in a source
   image.yml      backend: qemu (default) | tart
                  distro: debian | fedora | macos     arch: [arm64, amd64]
                  iso: {<arch>: {url: <url or list>, sha256: <hex>}}     (qemu, from an ISO)

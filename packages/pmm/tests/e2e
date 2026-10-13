@@ -4,7 +4,7 @@
 # Usage: packages/pmm/tests/e2e [debian|fedora]   (default: debian)
 #
 # Runs the working tree's pmm, with the working tree's lib/anfs, against an isolated HOME (a temp
-# dir for config, data and state) and this repo's images/ as the local image source. Only the
+# dir for config, data and state) and this repo's machines/images/ as the local image source. Only the
 # ISO store is the real one, so an ISO downloads once. Each step is checked; the temp dir must be
 # empty of pmm's files at the end.
 set -euo pipefail
@@ -25,7 +25,7 @@ export PMM_LIB_DIR="$here/../home/.local/lib/pmm"
 export PMM_CONFIG_HOME="$root/pmm/config" PMM_DATA_HOME="$root/pmm/data" PMM_STATE_HOME="$root/pmm/state"
 export PMM_CACHE_HOME="$root/pmm/cache"
 export PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines"
-export PMM_IMAGES_HOME="$here/../../../images"
+export PMM_IMAGES_HOME="$here/../../../machines/images"
 export PMM_SSH_PORT_BASE=2342
 # not the default: a pmm really running machines on this host has their sockets there, and the
 # implode below deletes the directory

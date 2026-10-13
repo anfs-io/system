@@ -43,7 +43,7 @@ _setup_home() {
   PMM_SSH_TIMEOUT=5 PMM_INSTALL=up PMM_MACOS_LIMIT=2
   PMM_IMAGES_HOME="$PMM_MACHINES_HOME/images" PMM_IMAGE_INSTALL_TIMEOUT=60 PMM_IMAGE_SSH_TIMEOUT=5
   # Networks: no backend, as on macOS, until a suite asks for libvirt (setup_net)
-  PMM_NETWORKS_HOME="$PMM_CONFIG_HOME/networks" PMM_NET_BACKEND=none PMM_NET_CHECK=true
+  PMM_NETWORKS_HOME="$PMM_MACHINES_HOME/networks" PMM_NET_BACKEND=none PMM_NET_CHECK=true
   PMM_LIBVIRT_URI=qemu:///system PMM_BRIDGE_CONF="$T/etc/pmm-bridge.conf" PMM_BRIDGE_HELPER="$T/etc/helper"
   PMM_SYS_NET="$T/sys" PMM_SSH_CONFIG="$HOME/.ssh/config.d/05-pmm.conf"
   export VIRSH_STUB="$T/virsh"
@@ -84,15 +84,15 @@ setup_net() {
 }
 host_bridge() { mkdir -p "$PMM_SYS_NET/$1/bridge"; }
 
-# network <dir> <yaml>: write networks/<name>/network.yml under a source dir (or $PMM_NETWORKS_HOME)
+# network <dir> <yaml>: write machines/networks/<name>/network.yml under a source dir (or $PMM_NETWORKS_HOME)
 network() {
   mkdir -p "$1"
   printf '%s\n' "$2" > "$1/network.yml"
 }
 
-# An anfs source <alias> holding machines/ and images/, listed and linked like `anfs src update` does
+# An anfs source <alias> holding machines/ (and machines/images/), listed and linked like `anfs src update` does
 add_source() {
-  mkdir -p "$T/srcs/$1/machines" "$T/srcs/$1/images"
+  mkdir -p "$T/srcs/$1/machines/images"
   ln -sfn "$T/srcs/$1" "$HOME/.local/share/anfs/sources/$1"
   printf '%s  %s\n' "$T/srcs/$1" "$1" >> "$HOME/.config/anfs/user.list"
 }
@@ -103,7 +103,7 @@ machine() {
   printf '%s\n' "$2" > "$1/machine.yml"
 }
 
-# image <dir> <yaml>: write images/<name>/image.yml under a source dir (or $PMM_IMAGES_HOME)
+# image <dir> <yaml>: write machines/images/<name>/image.yml under a source dir (or $PMM_IMAGES_HOME)
 image() {
   mkdir -p "$1"
   printf '%s\n' "$2" > "$1/image.yml"

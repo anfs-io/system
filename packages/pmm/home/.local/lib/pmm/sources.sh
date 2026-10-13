@@ -8,6 +8,8 @@
 
 # Finding definitions is anfs's (lib/anfs/catalog.sh); these are pmm's names for it. A machine is
 # a directory with a machine.yml, in a source's machines/ or in $PMM_MACHINES_HOME, which is first.
+# machines/ also holds images/ and networks/ (image-sources.sh, network.sh), which have no
+# machine.yml and so are never taken for machines.
 # canon, all_ids and effective_ids answer for the catalogue loaded last: this one, or the images'
 # (image-sources.sh).
 load_machines() { catalog_load machines machine.yml "$PMM_LOCAL_SOURCE" "$PMM_MACHINES_HOME"; load_networks; }
@@ -19,6 +21,9 @@ all_ids()       { catalog_all_ids; }
 effective_ids() { catalog_effective_ids; }
 
 name_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]*$ ]]; }
+# A machine's name: not `images` or `networks`, which are the directories beside the machines
+mach_name_ok() { name_ok "$1" && [[ "$1" != images && "$1" != networks ]]; }
+PMM_NAME_RULE="lowercase letters, digits, . _ - (not 'images' or 'networks': those are machines/'s own directories)"
 
 # Resolve a machine spec. Sets M_NAME, and M_ID to its definition's id, or to nothing for a
 # machine whose definition is gone (it can still be stopped, reached and removed). Dies when
@@ -90,7 +95,7 @@ cmd_path() {
 # validate: only validate). source/ is everything that source defines, in the order one needs
 # the other: its images are built, its networks installed, then its machines made.
 cmd_install() {
-  local arg id src found
+  local arg id src
   local -a machines=()
   case "$PMM_INSTALL" in
     up|create|validate) ;;
@@ -98,20 +103,18 @@ cmd_install() {
   esac
   for arg in "$@"; do
     if [[ "$arg" == */ ]]; then
-      src="${arg%/}" found=false
+      src="${arg%/}"
+      # images and networks are directories of the source's machines/: without it, there are none
+      catalog_source_dir "$src" >/dev/null || die "'$src' is not a source with machines/ (see: anfs src list)"
       # in a subshell: the images' catalogue is loaded there, the machines' stays loaded here
       if ( load_images; source_dir "$src" >/dev/null ); then
-        found=true
         # not in an || list: errexit must stay on inside a build
         ( load_images; images_install "$src" )
         [[ $? -eq 0 ]] || return 1
       fi
       if net_source_dir "$src" >/dev/null; then
-        found=true
         cli_call "network install" "$arg"
       fi
-      catalog_source_dir "$src" >/dev/null || $found || die "'$src' is not a source with images, networks or machines (see: anfs src list)"
-      catalog_source_dir "$src" >/dev/null || continue
       for id in $(all_ids); do
         [[ "$(mach_src "$id")" == "$src" ]] && machines+=("$id")
       done

@@ -248,12 +248,12 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
 
 @test "install source/: its networks, then its machines; a source with only networks" {
   add_source acme
-  network "$T/srcs/acme/networks/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0/24')"
+  network "$T/srcs/acme/machines/networks/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0/24')"
   machine "$T/srcs/acme/machines/web" "$(printf 'image: deb\ninterfaces: [{network: lab}]')"
-  mkdir -p "$T/srcs/nets/networks"
+  mkdir -p "$T/srcs/nets/machines/networks"
   ln -sfn "$T/srcs/nets" "$HOME/.local/share/anfs/sources/nets"
   printf '%s  %s\n' "$T/srcs/nets" nets >> "$HOME/.config/anfs/user.list"
-  network "$T/srcs/nets/networks/iso" "$(printf 'kind: isolated\nsubnet: 10.30.0.0/24')"
+  network "$T/srcs/nets/machines/networks/iso" "$(printf 'kind: isolated\nsubnet: 10.30.0.0/24')"
   load_machines
   PMM_INSTALL=validate run cli_call install acme/ nets/
   echo "$output"

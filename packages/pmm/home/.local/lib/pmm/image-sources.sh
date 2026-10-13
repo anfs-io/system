@@ -6,14 +6,14 @@
 # directories and the ssh key.
 
 # Finding definitions across the sources is anfs's (lib/anfs/catalog.sh). An image is a directory
-# with an image.yml, in a source's images/ or in $PMM_IMAGES_HOME, which comes first.
+# with an image.yml, in a source's machines/images/ or in $PMM_IMAGES_HOME, which comes first.
 #
 # There is one catalogue per process, and machines are the other kind (sources.sh): canon,
 # all_ids and effective_ids answer for whichever was loaded last. The `image` commands run with
 # this one loaded. What a machine needs to know about its image is asked in a subshell that
 # loads it (image_def_dir, image_build and image_ensure_built in settings.sh), so the machines'
 # catalogue is still there afterwards.
-load_images()   { catalog_load images image.yml "$PMM_LOCAL_SOURCE" "$PMM_IMAGES_HOME"; }
+load_images()   { catalog_load machines/images image.yml "$PMM_LOCAL_SOURCE" "$PMM_IMAGES_HOME"; }
 source_dir()    { catalog_source_dir "$1"; }
 source_index()  { catalog_source_index "$1"; }
 img_name()      { echo "${1#*/}"; }

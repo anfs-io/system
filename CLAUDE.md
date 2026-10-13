@@ -9,9 +9,7 @@ A source is a git repo (or a local directory) that may hold any of:
 | --- | --- | --- |
 | `packages/` | `ppm` | software and dotfiles: GNU Stow plus install hooks (most of this file) |
 | `containers/` | `pcm` | podman compose services (`containers/<name>/compose.yml`) |
-| `images/` | `pim` | VM images: built, verified, published (`images/<name>/image.yml`; see pim) |
-| `machines/` | `pmm` | machines run from those images (`machines/<name>/machine.yml`; see pmm) |
-| `networks/` | `pmm` | networks those machines are on (`networks/<name>/network.yml`; see pmm) |
+| `machines/` | `pmm` | machines (`machines/<name>/machine.yml`), the VM images they run from (`machines/images/<name>/image.yml`) and the networks they are on (`machines/networks/<name>/network.yml`); see pmm |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
 | `spaces/` | `wsm` | workspaces of spaces (`spaces/<ws>/<space>/space.yml`; see wsm) |
 
@@ -21,18 +19,24 @@ implode` runs every tool's `implode` in reverse, then deletes the sources. Picki
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
 `psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
 
+**One tool, one top-level directory** (`anfs_tool_dir <tool>` in `paths.sh`); `isos/` is anfs's,
+shared. What a tool keeps below its directory is its own: pmm has `machines/images/` and
+`machines/networks/` beside the machines, and `pmm install source/` does images, networks,
+machines in that order itself. `anfs src list`'s `provides` therefore says `machines` for a
+source with any of the three.
+
 What the tools share lives in `lib/anfs/` and nothing else does: paths (`paths.sh`), the
 source lists and clones (`sources.sh`), and finding resources plus ordering them by dependency
 (`resolve.sh`). What `install` *does* stays in each tool.
 
 ## pim: VM images
 
-pim builds, verifies and publishes VM images defined in `images/<name>/` of any source (or
-`~/.config/pim/images/`, the implicit `local` source). `pim help` documents the definition;
+pim builds, verifies and publishes VM images defined in `machines/images/<name>/` of any source (or
+`~/.config/pmm/machines/images/`, the implicit `local` source). `pim help` documents the definition;
 the shape:
 
 ```
-images/<name>/
+machines/images/<name>/
   image.yml       backend (qemu|tart), distro, arch, iso.<arch>.{url,sha256} | from: <image> | base
   preseed.cfg | kickstart.ks   optional answer file (${VAR} templated; defaults ship with pim)
   scripts/*.sh    run as root over ssh after the install, in name order
@@ -45,8 +49,8 @@ images/<name>/
   more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
   dependency on the host. The installer powers the VM off (`-no-reboot`), then pim boots the disk.
 - **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
-  dependency: to the same or a lower-priority source, so `lgat/images/app` may build on
-  `core/images/debian-13` but not the reverse. Naming its own name is the next layer down.
+  dependency: to the same or a lower-priority source, so `lgat/machines/images/app` may build on
+  `core/machines/images/debian-13` but not the reverse. Naming its own name is the next layer down.
 - **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
   sha256, the answer file, the scripts, `files/`, pim's finalize step and the parent's key.
   `pim build` is a no-op while the key is unchanged; `meta.yml` beside each build records it.
@@ -84,11 +88,15 @@ each with its own name, disk and settings. `pmm help` documents the definition; 
 ```
 machines/<name>/machine.yml    image (or media), profile, cpus, memory, disk, shares, ports, user, arch
 machines/profiles.yml          name: {cpus, memory, disk}
+machines/images/<name>/        an image (image.yml)
+machines/networks/<name>/      a network (network.yml)
 ```
 
 - **A name is one machine.** A definition is `source/name`; the name alone is the disk, the
   snapshots and the runtime record, so the machine `web1` is the highest-priority source's `web1`.
   A definition a higher one shadows is listed and nothing else.
+  `images` and `networks` are not machine names: they are the directories beside the machines,
+  and `validate`, `create` and `up --image` refuse them.
 - **Every machine has a definition.** `pmm create web1 --image debian-13 --cpus 4` writes
   `~/.config/pmm/machines/web1/machine.yml`, the implicit `local` source, and makes the machine
   from it. `pmm up --image debian-13` does that with the image's name. `pmm remove` deletes a
@@ -131,8 +139,8 @@ machines/profiles.yml          name: {cpus, memory, disk}
 
 ### Networks (Linux)
 
-`networks/<name>/network.yml` is a kind of its own, pmm's second directory in a source
-(`anfs_tool_dirs pmm` is `networks machines`, in install order). `pmm help` documents it; the shape:
+`machines/networks/<name>/network.yml` is a kind of its own, below pmm's directory in a source
+(and `~/.config/pmm/machines/networks/` locally). `pmm help` documents it; the shape:
 
 ```yaml
 kind: nat                 # nat | isolated | bridged
@@ -241,8 +249,8 @@ This repo (`core/`) contains:
 - `packages/dev` — dev/test tooling: containers, macOS VMs, `ppm user`, `ppm move`, the git hooks
 - `skills/` — the tools' own skills (`pcm-containers`), synced by psm like any source's
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
-- `images/` — base VM images (`debian-13`, `fedora-44`) for pim; other sources build on them with `from:`
-- `machines/` — the macOS test box (`anfs-test-macos`) as a pmm machine
+- `machines/` — the macOS test box (`anfs-test-macos`) as a pmm machine, and in `machines/images/`
+  the base VM images (`debian-13`, `fedora-44`); other sources build on them with `from:`
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
@@ -1046,7 +1054,7 @@ Both harnesses link the mounted sources into `~/.local/share/anfs/sources` and l
 and test the pushed repo instead of the mount.
 
 `ppm vm` differs from `ppm container` in four places, each forced by the platform rather than by
-taste (the first two live in the image, `images/anfs-test-macos/scripts/10-provision.sh`; the
+taste (the first two live in the image, `machines/images/anfs-test-macos/scripts/10-provision.sh`; the
 second two in the tart backend: pim's `tart.sh`, and pmm's machine and snapshot code over it):
 
 - **`/src` comes from `/etc/synthetic.conf`**, realized at boot. tart mounts shares under

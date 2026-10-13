@@ -481,7 +481,7 @@ anfs_gitsrc_env() {
   GITSRC_LINK_LOCAL=false
   local t
   GITSRC_DIRS=""
-  for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dirs "$t")"; done
+  for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dir "$t")"; done
   GITSRC_DIRS="${GITSRC_DIRS# }"
   GITSRC_SYSTEM_LIST_HINT="run 'ppm file protect ~/.config/anfs/system.list' to edit it here"
 }

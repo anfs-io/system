@@ -2,7 +2,7 @@
 # pmm library: networks — definitions across the sources, and the `network` commands.
 # Sourced by ~/.local/bin/pmm; functions only.
 #
-# A network is networks/<name>/network.yml in a source, or in $PMM_NETWORKS_HOME (made on the
+# A network is machines/networks/<name>/network.yml in a source, or in $PMM_NETWORKS_HOME (made on the
 # spot, and first). Its id is `source/name`; the name alone is the network, as with machines.
 #
 # On Linux a nat or isolated network is a libvirt network, pmm-<name>, on a bridge of the same
@@ -21,14 +21,14 @@ PMM_NET_KINDS="nat isolated bridged"
 
 NET_SRC_NAMES=() NET_SRC_DIRS=()
 
-# The sources holding networks/, in priority order, the local one first. Reads the source list
+# The sources holding machines/networks/, in priority order, the local one first. Reads the source list
 # catalog_load collected (load_machines calls this).
 load_networks() {
   local i dir
   NET_SRC_NAMES=("$PMM_LOCAL_SOURCE") NET_SRC_DIRS=("$PMM_NETWORKS_HOME")
   for i in "${!GITSRC_NAMES[@]}"; do
     [[ "${GITSRC_NAMES[$i]}" != "$PMM_LOCAL_SOURCE" ]] || continue
-    dir="$(gitsrc_dir "${GITSRC_NAMES[$i]}")/networks"
+    dir="$(gitsrc_dir "${GITSRC_NAMES[$i]}")/machines/networks"
     [[ -d "$dir" ]] || continue
     NET_SRC_NAMES+=("${GITSRC_NAMES[$i]}") NET_SRC_DIRS+=("$dir")
   done

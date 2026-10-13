@@ -15,7 +15,7 @@ EOF2
 }
 
 post_install() {
-  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pmm/machines/images"
+  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pmm/machines/"{images,networks}
 }
 
 # Refuse removal while machines run (override with ppm remove -f)

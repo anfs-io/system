@@ -13,7 +13,7 @@ validate_machine() {
   yml=$(mach_yml "$id")
   yq -e 'true' "$yml" >/dev/null 2>&1 || { _v_err "machine.yml does not parse"; return; }
   [[ "$(yq -r 'tag' "$yml")" == "!!map" ]] || { _v_err "machine.yml is not a map"; return; }
-  name_ok "$(mach_name "$id")" || _v_err "the name '$(mach_name "$id")': lowercase letters, digits, . _ -"
+  mach_name_ok "$(mach_name "$id")" || _v_err "the name '$(mach_name "$id")': $PMM_NAME_RULE"
 
   while IFS= read -r k; do
     [[ " $PMM_KEYS " == *" $k "* ]] || _v_err "$k: is not a machine setting ($PMM_KEYS)"

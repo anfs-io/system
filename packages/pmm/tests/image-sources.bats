@@ -6,8 +6,8 @@ setup() { setup_images; }
 
 @test "list and path: local shadows a source; source/name picks one" {
   add_source acme
-  image "$T/srcs/acme/images/web" "$(deb_yml)"
-  image "$T/srcs/acme/images/db" "$(deb_yml)"
+  image "$T/srcs/acme/machines/images/web" "$(deb_yml)"
+  image "$T/srcs/acme/machines/images/db" "$(deb_yml)"
   image "$PMM_IMAGES_HOME/web" "$(deb_yml)"
   load_images
   [ "$(canon web)" = local/web ]
@@ -20,7 +20,7 @@ setup() { setup_images; }
   run yq -p json -r '.[] | select(.state == "shadowed") | .name + "@" + .source' <<< "$output"
   [ "$output" = "web@acme" ]
   run cli_call "image path" acme/db
-  [ "$output" = "$HOME/.local/share/anfs/sources/acme/images/db" ]
+  [ "$output" = "$HOME/.local/share/anfs/sources/acme/machines/images/db" ]
   run cli_call "image list" --names
   [ "$status" -eq 64 ]
   [[ "$output" == *"pmm: unknown option '--names'"* ]]
@@ -30,10 +30,10 @@ setup() { setup_images; }
 @test "from: resolves in the same or a lower-priority source, never a higher one" {
   add_source hi
   add_source lo
-  image "$T/srcs/lo/images/base" "$(deb_yml)"
-  image "$T/srcs/lo/images/app" "from: top"
-  image "$T/srcs/hi/images/top" "$(deb_yml)"
-  image "$T/srcs/hi/images/svc" "from: base"
+  image "$T/srcs/lo/machines/images/base" "$(deb_yml)"
+  image "$T/srcs/lo/machines/images/app" "from: top"
+  image "$T/srcs/hi/machines/images/top" "$(deb_yml)"
+  image "$T/srcs/hi/machines/images/svc" "from: base"
   load_images
   [ "$(img_chain hi/svc | paste -sd' ' -)" = "hi/svc lo/base" ]
   run img_chain lo/app
@@ -44,10 +44,10 @@ setup() { setup_images; }
 @test "from: naming its own name is the next layer down; cycles are refused" {
   add_source hi
   add_source lo
-  image "$T/srcs/lo/images/base" "$(deb_yml)"
-  image "$T/srcs/hi/images/base" "from: base"
-  image "$T/srcs/hi/images/a" "from: b"
-  image "$T/srcs/hi/images/b" "from: a"
+  image "$T/srcs/lo/machines/images/base" "$(deb_yml)"
+  image "$T/srcs/hi/machines/images/base" "from: base"
+  image "$T/srcs/hi/machines/images/a" "from: b"
+  image "$T/srcs/hi/machines/images/b" "from: a"
   load_images
   [ "$(img_root hi/base)" = lo/base ]
   [ "$(img_distro hi/base)" = debian ]
@@ -74,8 +74,8 @@ setup() { setup_images; }
 
 @test "install source/: its images first; validate-only with PMM_INSTALL=validate, built otherwise" {
   add_source acme
-  image "$T/srcs/acme/images/web" "$(deb_yml)"
-  image "$T/srcs/acme/images/bad" "distro: plan9"
+  image "$T/srcs/acme/machines/images/web" "$(deb_yml)"
+  image "$T/srcs/acme/machines/images/bad" "distro: plan9"
   machine "$T/srcs/acme/machines/m1" "image: web"
   load_machines     # install is a machine command: it loads the images' catalogue itself
   PMM_INSTALL=validate run cli_call install acme/
@@ -83,7 +83,7 @@ setup() { setup_images; }
   [[ "$output" == *"acme/web ok"* ]]
   [[ "$output" == *"distro 'plan9' has no installer"* ]]
   [[ "$output" != *"acme/m1"* ]]     # the images did not validate: it stops there
-  rm -rf "$T/srcs/acme/images/bad"
+  rm -rf "$T/srcs/acme/machines/images/bad"
   cmd_image_build() { echo "build $*"; }
   PMM_INSTALL=validate run cli_call install acme/
   [ "$status" -eq 0 ]
@@ -96,7 +96,7 @@ setup() { setup_images; }
 
 @test "completion: the image group's sub-commands, and images by file name" {
   add_source acme
-  image "$T/srcs/acme/images/web" "$(deb_yml)"
+  image "$T/srcs/acme/machines/images/web" "$(deb_yml)"
   image "$PMM_IMAGES_HOME/mine" "$(deb_yml)"
   run "$PMM" __complete image ""
   [[ "$output" == *"build"$'\t'*"test"$'\t'*"export"$'\t'*"prune"$'\t'* ]]

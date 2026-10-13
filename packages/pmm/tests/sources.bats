@@ -119,4 +119,46 @@ setup() {
   [ "$output" = deb ]
   run complete_profile
   [ "$output" = "$(printf 'small\nlarge')" ]
+  # images and networks are below machines/, in a source and in the local mirror
+  image "$T/srcs/acme/machines/images/app" "from: deb"
+  network "$T/srcs/acme/machines/networks/lab" "kind: nat"
+  network "$PMM_NETWORKS_HOME/mine" "kind: nat"
+  [ "$PMM_NETWORKS_HOME" = "$PMM_MACHINES_HOME/networks" ]
+  run complete_image
+  [ "$output" = "$(printf 'deb\napp\nacme/app')" ]
+  run complete_network
+  [ "$output" = "$(printf 'mine\nlab\nacme/lab')" ]
+  run complete_network_spec
+  [[ "$output" == *"acme/"* ]]
+  run complete_machine
+  [ "$output" = "$(printf 'mine\nweb\nacme/web')" ]
+}
+
+@test "images and networks are machines/'s directories, never machine names" {
+  add_source acme
+  image "$T/srcs/acme/machines/images/app" "from: deb"
+  network "$T/srcs/acme/machines/networks/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0/24')"
+  machine "$T/srcs/acme/machines/web" "image: app"
+  load_machines
+  # neither directory is listed as a machine, and the image and the network are found in them
+  [ "$(all_ids | tr '\n' ' ')" = "acme/web " ]
+  [ "$(net_canon lab)" = acme/lab ]
+  [ "$(image_def_dir app)" = "$HOME/.local/share/anfs/sources/acme/machines/images/app" ]
+  # a machine.yml in one of them is refused by validate, and create refuses the name
+  machine "$T/srcs/acme/machines/images" "image: deb"
+  run cmd_validate acme/images
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the name 'images'"* ]]
+  run cli_call create images
+  [ "$status" -ne 0 ]
+  ! mach_exists images
+  rm "$T/srcs/acme/machines/images/machine.yml"
+  load_machines
+  run cli_call create networks --image deb
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not 'images' or 'networks'"* ]]
+  [ ! -e "$PMM_MACHINES_HOME/networks/machine.yml" ]
+  run cli_call up --image deb images
+  [ "$status" -ne 0 ]
+  ! mach_exists images
 }

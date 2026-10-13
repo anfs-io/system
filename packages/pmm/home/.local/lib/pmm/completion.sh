@@ -26,7 +26,7 @@ complete_machine() {
 complete_machine_spec() {
   local d
   complete_machine
-  for d in "$ANFS_SOURCES_HOME"/*/machines "$ANFS_SOURCES_HOME"/*/networks "$ANFS_SOURCES_HOME"/*/images; do
+  for d in "$ANFS_SOURCES_HOME"/*/machines; do
     [[ -d "$d" ]] || continue
     d="${d%/*}"
     printf '%s/\n' "${d##*/}"
@@ -35,13 +35,13 @@ complete_machine_spec() {
 # Every image: its name, and source/name
 complete_image() {
   local f name
-  for f in "$PMM_IMAGES_HOME"/*/image.yml "$ANFS_SOURCES_HOME"/*/images/*/image.yml; do
+  for f in "$PMM_IMAGES_HOME"/*/image.yml "$ANFS_SOURCES_HOME"/*/machines/images/*/image.yml; do
     [[ -f "$f" ]] || continue
     f="${f%/image.yml}"
     name="${f##*/}"
     printf '%s\n' "$name"
     [[ "$f" == "$PMM_IMAGES_HOME"/* ]] && continue
-    f="${f%/images/*}"
+    f="${f%/machines/images/*}"
     printf '%s/%s\n' "${f##*/}" "$name"
   done | awk '!seen[$0]++'
 }
@@ -60,13 +60,13 @@ complete_arch() { printf '%s\n' arm64 amd64; }
 complete_network() {
   local f name
   {
-    for f in "$PMM_NETWORKS_HOME"/*/network.yml "$ANFS_SOURCES_HOME"/*/networks/*/network.yml; do
+    for f in "$PMM_NETWORKS_HOME"/*/network.yml "$ANFS_SOURCES_HOME"/*/machines/networks/*/network.yml; do
       [[ -f "$f" ]] || continue
       f="${f%/network.yml}"
       name="${f##*/}"
       printf '%s\n' "$name"
       [[ "$f" == "$PMM_NETWORKS_HOME"/* ]] && continue
-      f="${f%/networks/*}"
+      f="${f%/machines/networks/*}"
       printf '%s/%s\n' "${f##*/}" "$name"
     done
     for f in "$PMM_DATA_HOME"/networks/*/state.yml; do
@@ -79,9 +79,9 @@ complete_network() {
 complete_network_spec() {
   local d
   complete_network
-  for d in "$ANFS_SOURCES_HOME"/*/networks; do
+  for d in "$ANFS_SOURCES_HOME"/*/machines/networks; do
     [[ -d "$d" ]] || continue
-    d="${d%/networks}"
+    d="${d%/machines/networks}"
     printf '%s/\n' "${d##*/}"
   done
 }
