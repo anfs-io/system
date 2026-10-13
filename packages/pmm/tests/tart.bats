@@ -48,15 +48,23 @@ teardown() {
   echo stopped > "$TART_STUB/someone-elses"
   run cli_call up m3
   [ "$status" -eq 0 ]
+  # run is refused the same way, before it makes anything
+  echo running > "$TART_STUB/someone-elses"
+  run cli_call run mac --name m4
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"macOS guests at once"* ]]
+  ! mach_exists m4
 }
 
 @test "snapshot, reset and remove: clones in tart's store, gone with the machine" {
-  cli_call create m1 --image mac >/dev/null
-  load_machines
-  cli_call snapshot m1 s1 >/dev/null
+  cli_call run mac --name m1 --no-start >/dev/null
+  cli_call "snapshot create" m1 s1 >/dev/null
+  cli_call "snapshot create" m1 s2 >/dev/null
   [ -f "$TART_STUB/pmm-m1-snap-s1" ]
-  run cli_call snapshot m1
-  [ "$output" = s1 ]
+  cli_call "snapshot remove" -y m1 s2 >/dev/null
+  [ ! -f "$TART_STUB/pmm-m1-snap-s2" ]
+  ANFS_JSON=true run cli_call "snapshot list" m1
+  [ "$(yq -p json -r '.[].name' <<< "$output")" = s1 ]
   run cli_call reset -y m1 s1
   [ "$status" -eq 0 ]
   grep -qx "tart clone pmm-m1-snap-s1 pmm-m1" "$PMM_CALLS"

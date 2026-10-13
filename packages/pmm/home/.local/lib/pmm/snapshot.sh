@@ -23,16 +23,24 @@ mach_snapshots() {
   return 0
 }
 
-# `pmm snapshot <machine> [name]`: save the machine's disk (shut down first, restarted after); no
-# name lists the snapshots
-cmd_snapshot() {
+# `pmm snapshot list <machine>`: NAME BUILD (the build the snapshot is on; a tart one has none)
+cmd_snapshot_list() {
+  local name snap
+  mach_find "$1"
+  name="$M_NAME"
+  while IFS= read -r snap; do
+    [[ -n "$snap" ]] || continue
+    anfs_row "$snap" "$(state_get "$name" .key "$(snap_dir "$name")/$snap/state.yml")"
+  done < <(mach_snapshots "$name") | anfs_table "NAME BUILD" "name build"
+}
+
+# `pmm snapshot create <machine> [name]`: save the machine's disk (shut down first, restarted
+# after). With no name it is named for the time.
+cmd_snapshot_create() {
   local name snap="${2:-}" was=false d s vm
   mach_find "$1"
   name="$M_NAME"
-  if [[ -z "$snap" ]]; then
-    mach_snapshots "$name"
-    return 0
-  fi
+  [[ -n "$snap" ]] || snap=$(date +%Y%m%d-%H%M%S)
   snap_ok "$snap" || die "snapshot names are lowercase letters, digits, . _ -"
   mach_exists "$name" || die "$name is not made yet (pmm up $name)"
   mach_running "$name" && { was=true; mach_stop "$name"; }
@@ -57,13 +65,30 @@ cmd_snapshot() {
   ! $was || cli_call up "$name"
 }
 
+# `pmm snapshot remove [-y] <machine> <snapshot>`: delete one; with it goes what it kept of its
+# image's build
+cmd_snapshot_remove() {
+  local name snap="$2"
+  mach_find "$1"
+  name="$M_NAME"
+  grep -qx "$snap" <<< "$(mach_snapshots "$name")" || die "$name has no snapshot '$snap' (pmm snapshot list $name)"
+  confirm "remove deletes the snapshot" "Delete $name's snapshot $snap?"
+  if [[ "$(state_get "$name" .backend)" == tart ]]; then
+    tart delete "$(tart_vm "$name")-snap-$snap" >/dev/null 2>&1 || true
+  else
+    rm -rf "$(snap_dir "$name")/$snap"
+    rmdir "$(snap_dir "$name")" 2>/dev/null || true
+  fi
+  echo "Removed snapshot $snap of $name"
+}
+
 # `pmm reset [-y] <machine> [snapshot]`: recreate the machine from a snapshot, or from its
 # image's current build
 cmd_reset() {
   local name id snap="${2:-}" was=false d s vm
   mach_find "$1"
   name="$M_NAME" id="$M_ID"
-  [[ -z "$snap" ]] || grep -qx "$snap" <<< "$(mach_snapshots "$name")" || die "$name has no snapshot '$snap' (pmm snapshot $name)"
+  [[ -z "$snap" ]] || grep -qx "$snap" <<< "$(mach_snapshots "$name")" || die "$name has no snapshot '$snap' (pmm snapshot list $name)"
   [[ -n "$snap" || -n "$id" ]] || die "$name's definition is gone: it can only be reset to a snapshot"
   confirm "reset replaces the machine's disk" "Reset $name${snap:+ to $snap}?"
   mach_running "$name" && { was=true; mach_stop "$name"; }

@@ -102,6 +102,7 @@ setup() { setup_images; }
   [[ "$output" == *"build"$'\t'*"test"$'\t'*"export"$'\t'*"prune"$'\t'* ]]
   run "$PMM" __complete image build ""
   [ "$(sort <<< "$output" | paste -sd' ' -)" = "acme/web mine web" ]
-  run "$PMM" __complete up --image ""
-  [[ "$output" == *"mine"* ]]
+  # what `pmm run` takes
+  run "$PMM" __complete run ""
+  [ "$(sort <<< "$output" | paste -sd' ' -)" = "acme/web mine web" ]
 }

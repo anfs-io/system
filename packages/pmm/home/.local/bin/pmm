@@ -52,8 +52,8 @@ if [[ -z "${PMM_NET_BACKEND:-}" ]]; then
 fi
 export PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME PMM_IMAGES_HOME
 
-# The implicit, highest-priority source: machines made on the spot in $PMM_MACHINES_HOME, and
-# hand-made image definitions in $PMM_IMAGES_HOME
+# The implicit, highest-priority source: a person's own definitions on this host, machines in
+# $PMM_MACHINES_HOME and images in $PMM_IMAGES_HOME. No command writes one.
 PMM_LOCAL_SOURCE=local
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pmm/; the
@@ -67,15 +67,21 @@ CLI_TOOL=pmm
 
 cli_help_epilogue() {
   cat <<'EOF'
+A machine is defined, or was run from an image. `pmm run debian-13` makes one from the image
+and starts it: its settings are the command line's, kept with its disk until `pmm remove`, and
+no definition is written. `pmm up web1` starts a machine that is defined (making it first), or
+one an earlier `run` made. `pmm show` prints a machine's settings as the YAML a definition
+holds: keeping one that was run is a copy into machines/<name>/machine.yml.
+
 A <machine> is `name` or `source/name`. A plain name resolves to the highest-priority source
 that defines it: local ($PMM_MACHINES_HOME), then the anfs sources in order. The name alone is
 the machine: its disk, its snapshots, what `up` and `shell` act on.
 
 A machine runs from an image's build, the way an instance runs from an AMI: any number per
 image, each on the build it was created from until `pmm reset` moves it onto the current one.
-`pmm image` manages the images: `pmm image build debian-13`, then `pmm up --image debian-13`.
+`pmm image` manages the images: `pmm image build debian-13`, then `pmm run debian-13`.
 
-Definition: machines/<name>/machine.yml in a source (`pmm create` writes a local one)
+Definition: machines/<name>/machine.yml in a source, or in $PMM_MACHINES_HOME
   image: debian-13          an image, name or source/name; required unless media: is given
   media: [proxmox]          ISOs (a CD) and disk images (a USB drive) to boot from when the disk
                             does not: a file, or an id in the ISO catalogue (isos/isos.yml in a
@@ -99,11 +105,13 @@ Profiles: machines/profiles.yml in a source, a map of name to {cpus, memory, dis
 higher-priority source wins by name. A setting is the first of: the machine's own, its
 profile's, the profile its image names (image.yml machine.profile), then 2 cpus and 2048 MB.
 
-Files: a machine in $PMM_DATA_HOME/machines/<name>/, its snapshots in
+Files: a machine in $PMM_DATA_HOME/machines/<name>/ (its disk, and state.yml: the build it is
+on, and for one that was run from an image its settings), its snapshots in
 $PMM_DATA_HOME/snapshots/<name>/, runtime state in $PMM_STATE_HOME/run/<name>/. macOS guests
 (tart) are in tart's own store as pmm-<name>.
 
-Network: machines/networks/<name>/network.yml in a source (`pmm network create` writes a local one)
+Network: machines/networks/<name>/network.yml in a source, or in $PMM_NETWORKS_HOME.
+`pmm network create` makes one with no definition (`pmm network show` prints it as one)
   kind: nat                 nat (out through the host), isolated (machines and the host only),
                             bridged (onto a bridge the host already has)
   subnet: 10.20.0.0/24      nat and isolated: required. The host is .1, DHCP hands out the upper

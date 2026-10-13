@@ -4,10 +4,11 @@
 
 # A definition is its id, `source/name`. The name alone is the machine: its disk, its snapshots,
 # its runtime record. So a name is one machine, defined by the highest-priority source that has
-# it; a definition a higher one shadows is listed and nothing else.
+# it; a definition a higher one shadows is listed and nothing else. A machine `pmm run` made from
+# an image has a name and no definition (settings.sh).
 
 # Finding definitions is anfs's (lib/anfs/catalog.sh); these are pmm's names for it. A machine is
-# a directory with a machine.yml, in a source's machines/ or in $PMM_MACHINES_HOME, which is first.
+# a directory with a machine.yml, in a source's machines/ or in $PMM_MACHINES_HOME (a person's own, on this host), which is first.
 # machines/ also holds images/ and networks/ (image-sources.sh, network.sh), which have no
 # machine.yml and so are never taken for machines.
 # canon, all_ids and effective_ids answer for the catalogue loaded last: this one, or the images'
@@ -25,9 +26,10 @@ name_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]*$ ]]; }
 mach_name_ok() { name_ok "$1" && [[ "$1" != images && "$1" != networks ]]; }
 PMM_NAME_RULE="lowercase letters, digits, . _ - (not 'images' or 'networks': those are machines/'s own directories)"
 
-# Resolve a machine spec. Sets M_NAME, and M_ID to its definition's id, or to nothing for a
-# machine whose definition is gone (it can still be stopped, reached and removed). Dies when
-# there is neither, or when the spec names a definition a higher-priority source shadows.
+# Resolve a machine spec. Sets M_NAME, and M_ID to where its settings are: its definition's id,
+# `-/<name>` for a machine run from an image (its record has them), or nothing for a machine
+# whose definition is gone (it can still be stopped, reached and removed). Dies when there is no
+# such machine, or when the spec names a definition a higher-priority source shadows.
 mach_find() {
   local spec="$1" id
   M_ID="" M_NAME="${spec#*/}"
@@ -36,33 +38,13 @@ mach_find() {
     [[ "$M_ID" == "$id" ]] || die "$id is shadowed by $M_ID: the machine $M_NAME is $M_ID's"
     return 0
   fi
-  [[ "$spec" != */* ]] && mach_exists "$spec" && return 0
-  die "machine '$spec' not found (see: pmm list)"
-}
-
-# Write a local definition: def_write <name> <key> <value>... (a key ending in [] takes its value
-# as one item of a list; an empty value is left out)
-def_write() {
-  local name="$1" dir k v
-  shift
-  dir="$PMM_MACHINES_HOME/$name"
-  mkdir -p "$dir"
-  : > "$dir/machine.yml.tmp"
-  while [[ $# -ge 2 ]]; do
-    k="$1" v="$2"
-    shift 2
-    [[ -n "$v" ]] || continue
-    if [[ "$k" == *"[]" ]]; then K="${k%\[\]}" V="$v" yq -i '.[strenv(K)] += [strenv(V)]' "$dir/machine.yml.tmp"
-    elif [[ "$v" =~ ^[0-9]+$ ]]; then K="$k" V="$v" yq -i '.[strenv(K)] = (strenv(V) | tonumber)' "$dir/machine.yml.tmp"
-    else K="$k" V="$v" yq -i '.[strenv(K)] = strenv(V)' "$dir/machine.yml.tmp"
-    fi
-  done
-  mv "$dir/machine.yml.tmp" "$dir/machine.yml"
+  [[ "$spec" != */* ]] && mach_exists "$spec" || die "machine '$spec' not found (see: pmm list)"
+  [[ "$(state_get "$spec" '.settings | tag')" != '!!map' ]] || M_ID="$PMM_RUN_SOURCE/$spec"
 }
 
 # `pmm list`: NAME SOURCE IMAGE STATE ADDRESS. STATE: running, stopped, defined (not made yet),
-# shadowed (a higher-priority source defines the name). A machine whose definition is gone has no
-# source. A tool that wants the names reads `pmm list --json` (lib/anfs/table.sh).
+# shadowed (a higher-priority source defines the name). A machine run from an image, or one
+# whose definition is gone, has no source. A tool that wants the names reads `pmm list --json` (lib/anfs/table.sh).
 cmd_list() {
   local id name d
   local -A seen=()
@@ -87,6 +69,7 @@ cmd_list() {
 
 cmd_path() {
   mach_find "$1"
+  ! mach_is_run "$M_ID" || die "$M_NAME has no definition: it was run from an image (pmm show $M_NAME prints its settings)"
   [[ -n "$M_ID" ]] || die "$M_NAME has no definition any more"
   mach_def_dir "$M_ID"
 }
@@ -128,7 +111,7 @@ cmd_install() {
     create)
       for arg in "${machines[@]}"; do
         mach_find "$arg"
-        if ! mach_exists "$M_NAME"; then cli_call create "$M_NAME"; fi
+        mach_exists "$M_NAME" || machine_make "$M_NAME" "$M_ID"
       done ;;
     up) cli_call up "${machines[@]}" ;;
   esac

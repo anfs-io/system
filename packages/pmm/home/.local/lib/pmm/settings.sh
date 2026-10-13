@@ -1,24 +1,64 @@
 #!/usr/bin/env bash
-# pmm library: what a machine is made of — its machine.yml, profiles, what it needs to know of its
+# pmm library: what a machine is made of — its settings, profiles, what it needs to know of its
 # image, and the record of what it was created from. Sourced by ~/.local/bin/pmm; functions only.
 
-# --- the definition -----------------------------------------------------------------------------
+# --- the settings -------------------------------------------------------------------------------
+# A machine's settings are its definition's machine.yml. A machine `pmm run` made from an image
+# has no definition: what the command line said is `settings:` in its record (state.yml), the
+# same keys, and its id is `-/<name>`, the source that is no source. Everything below reads either
+# through mach_q, so nothing else knows which it is.
 
 PMM_KEYS="image media profile cpus memory disk shares ports interfaces user arch description"
+PMM_RUN_SOURCE=-
 
-mach_yml() { echo "$(mach_def_dir "$1")/machine.yml"; }
+# True for the id of a machine that was run from an image
+mach_is_run() { [[ "$1" == "$PMM_RUN_SOURCE/"* ]]; }
 
-# A scalar from machine.yml, or <default> when it is missing or null
+# The file a machine's settings are read from. MACH_DRAFT is where `run` keeps them until the
+# machine is made and has a record.
+mach_yml() {
+  if mach_is_run "$1"; then echo "${MACH_DRAFT:-$(state_file "${1#*/}")}"
+  else echo "$(mach_def_dir "$1")/machine.yml"
+  fi
+}
+
+# A yq expression over a machine's settings
+# Usage: mach_q <id> <yq expression>
+mach_q() {
+  if mach_is_run "$1"; then yq -r "(.settings // {}) | ($2)" "$(mach_yml "$1")"
+  else yq -r "$2" "$(mach_yml "$1")"
+  fi
+}
+
+# A scalar setting, or <default> when it is missing or null
 # Usage: mach_get <id> <yq path> [default]
 mach_get() {
   local v
-  v=$(yq -r "($2) | select(. != null)" "$(mach_yml "$1")" 2>/dev/null) || v=""
+  v=$(mach_q "$1" "($2) | select(. != null)" 2>/dev/null) || v=""
   [[ -n "$v" ]] && echo "$v" || echo "${3:-}"
 }
 
-# A list from machine.yml, one item per line (a scalar is a one-item list)
+# A list setting, one item per line (a scalar is a one-item list)
 mach_list() {
-  yq -r "[($2)] | flatten | .[] | select(. != null)" "$(mach_yml "$1")" 2>/dev/null || true
+  mach_q "$1" "[($2)] | flatten | .[] | select(. != null)" 2>/dev/null || true
+}
+
+# Write settings as YAML: settings_write <file> <key> <value>... (a key ending in [] takes its
+# value as one item of a list; an empty value is left out)
+settings_write() {
+  local f="$1" k v
+  shift
+  mkdir -p "$(dirname "$f")"
+  : > "$f"
+  while [[ $# -ge 2 ]]; do
+    k="$1" v="$2"
+    shift 2
+    [[ -n "$v" ]] || continue
+    if [[ "$k" == *"[]" ]]; then K="${k%\[\]}" V="$v" yq -i '.[strenv(K)] += [strenv(V)]' "$f"
+    elif [[ "$v" =~ ^[0-9]+$ ]]; then K="$k" V="$v" yq -i '.[strenv(K)] = (strenv(V) | tonumber)' "$f"
+    else K="$k" V="$v" yq -i '.[strenv(K)] = strenv(V)' "$f"
+    fi
+  done
 }
 
 # A share as written, with ~ and ${ANFS_SOURCES_HOME} expanded
@@ -122,7 +162,8 @@ mach_setting() {
 
 # --- the machine --------------------------------------------------------------------------------
 # state.yml is what a machine was created from. Everything after create reads it, so a machine
-# does not depend on its image's definition, or its own, still being there.
+# does not depend on its image's definition, or its own, still being there. For a machine run from
+# an image it also holds `settings:` (above), and `rm: true` when it goes at its shutdown.
 
 mdir()       { echo "$PMM_DATA_HOME/machines/$1"; }
 state_file() { echo "$(mdir "$1")/state.yml"; }

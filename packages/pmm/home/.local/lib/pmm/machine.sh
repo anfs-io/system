@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pmm library: a machine's life — create, up, shell, down, ps, show, remove.
+# pmm library: a machine's life — run, up, shell, exec, down, ps, show, remove.
 # Sourced by ~/.local/bin/pmm; functions only.
 #
 # A qemu machine's disk is a qcow2 overlay on the build it was created from
@@ -88,10 +88,19 @@ min_problems() {
   done
 }
 
-# Make <name> from its definition <id>: its disk on the image's current build, and its record.
+# What a machine run from an image keeps when its record is written again: its settings, which
+# are nowhere else, and whether it goes at its shutdown
+# Usage: _state_keep <name> <yaml>
+_state_keep() {
+  [[ -z "$2" ]] || KEEP="$2" yq -i '. * (strenv(KEEP) | from_yaml)' "$(state_file "$1")"
+}
+
+# Make <name> from its settings <id>: its disk on the image's current build, and its record.
 # The image is built first unless its build is current (image build is a no-op then).
 machine_create() {
-  local name="$1" id="$2" image arch disk cpus mem d old old_mac
+  local name="$1" id="$2" image arch disk cpus mem user d old old_mac keep=""
+  ! mach_is_run "$id" || keep=$(yq 'pick(["settings", "rm"])' "$(mach_yml "$id")")
+  user=$(mach_get "$id" .user)
   image=$(mach_get "$id" .image)
   arch=$(arch_norm "$(mach_get "$id" .arch "$(host_arch)")")
   d=$(mdir "$name")
@@ -105,7 +114,8 @@ machine_create() {
     mkdir -p "$d"
     disk_create "$d/disk.qcow2" "${disk:-$PMM_BLANK_DISK}"
     efivars_new "$arch" "$d/efivars.fd"
-    state_write "$(state_file "$name")" "" "$arch" qemu "" "" "$(mach_get "$id" .user)" ""
+    state_write "$(state_file "$name")" "" "$arch" qemu "" "" "$user" ""
+    _state_keep "$name" "$keep"
     ifaces_record "$name" "$id" "$old" "$old_mac"
     return 0
   fi
@@ -129,50 +139,85 @@ machine_create() {
     [[ -z "$disk" ]] || qemu-img resize -q "$d/disk.qcow2" "$disk" || die "could not grow $name's disk to $disk"
   fi
   state_write "$(state_file "$name")" "$B_SOURCE/$B_NAME" "$arch" "$B_BACKEND" "$B_KEY" "$B_DISK" "$B_USER" "$B_SSHKEY" "$B_BOOT_USER" "$B_BOOT_PW"
+  _state_keep "$name" "$keep"
   [[ "$B_BACKEND" == tart ]] || ifaces_record "$name" "$id" "$old" "$old_mac"
 }
 
-# `pmm create <machine> [--image I ...]`: with --image and a name nothing defines, write the
-# definition ($PMM_MACHINES_HOME) first; then make the machine, without starting it
-cmd_create() {
-  local name="$1" image="${CLI_OPT[image]:-}" id made=false k
-  local -a args=()
-  mach_name_ok "$name" || die "machine names are $PMM_NAME_RULE"
-  if id=$(canon "$name"); then
-    for k in image media profile cpus memory disk share publish user arch; do
-      [[ -z "${CLI_OPT[$k]:-}" ]] || anfs_fail 73 "$name is already defined ($id); its settings are in $(tilde "$(mach_yml "$id")")"
-    done
-  else
-    [[ -n "$image${CLI_OPT[media]:-}" ]] || cli_usage_err "$name is not defined: --image is required (or --media, for a blank machine)"
-    args=(image "$image" profile "${CLI_OPT[profile]:-}" cpus "${CLI_OPT[cpus]:-}" memory "${CLI_OPT[memory]:-}"
-          disk "${CLI_OPT[disk]:-}" user "${CLI_OPT[user]:-}" arch "${CLI_OPT[arch]:-}")
-    while IFS= read -r k; do [[ -z "$k" ]] || args+=("shares[]" "$k"); done <<< "${CLI_OPT[share]:-}"
-    while IFS= read -r k; do [[ -z "$k" ]] || args+=("ports[]" "$k"); done <<< "${CLI_OPT[publish]:-}"
-    while IFS= read -r k; do [[ -z "$k" ]] || args+=("media[]" "$k"); done <<< "${CLI_OPT[media]:-}"
-    def_write "$name" "${args[@]}"
-    made=true
-    load_machines
-    id=$(canon "$name")
-  fi
-  mach_exists "$name" && anfs_fail 73 "$name already exists (pmm show $name)"
-  if ! validate_quiet "$id"; then
-    $made && rm -rf "${PMM_MACHINES_HOME:?}/$name"
-    die "$id does not validate"
-  fi
+# Make <name> from its settings <id> without starting it, and say so. What `pmm install` does
+# with PMM_INSTALL=create, and the first half of `pmm run`.
+machine_make() {
+  local name="$1" id="$2"
+  validate_quiet "$id" || die "$name does not validate"
   machine_create "$name" "$id"
   if [[ -z "$(state_get "$name" .image)" ]]; then
     echo "Created $name, blank ($(mach_setting "$id" disk | grep . || echo "$PMM_BLANK_DISK") disk); pmm up --display $name"
   else
     echo "Created $name from $(state_get "$name" .image) ($(state_get "$name" .key)); pmm up $name"
   fi
+}
+
+# --- run ----------------------------------------------------------------------------------------
+
+# `pmm run [image] [--name N] [--rm] [--no-start] [settings...]`: a machine from an image, started.
+# No definition is written: the settings given here go into the machine's record, and live as
+# long as its disk. Without --name it is the image's name, then <image>-2, <image>-3: a second
+# run is a second machine. With --media and no image, a blank machine.
+cmd_run() {
+  local image="${1:-}" name="${CLI_OPT[name]:-}" start=true rm=${CLI_OPT[rm]:-false} id n k
+  local -a args=()
+  ! ${CLI_OPT[no-start]:-false} || start=false
+  [[ -n "$image${CLI_OPT[media]:-}" ]] || cli_usage_err "an image (pmm image list), or --media for a blank machine"
+  $start || ! $rm || cli_usage_err "--rm removes a machine when it is shut down: not with --no-start"
+  if [[ -z "$name" ]]; then
+    [[ -n "$image" ]] || cli_usage_err "--name is required for a blank machine"
+    name="${image#*/}" n=1
+    while canon "$name" >/dev/null || mach_exists "$name"; do
+      n=$((n + 1))
+      name="${image#*/}-$n"
+    done
+  fi
+  mach_name_ok "$name" || die "machine names are $PMM_NAME_RULE"
+  ! id=$(canon "$name") || anfs_fail 73 "$name is defined ($id): pmm up $name"
+  ! mach_exists "$name" || anfs_fail 73 "$name already exists (pmm show $name)"
+
+  args=(image "$image" profile "${CLI_OPT[profile]:-}" cpus "${CLI_OPT[cpus]:-}" memory "${CLI_OPT[memory]:-}"
+        disk "${CLI_OPT[disk]:-}" user "${CLI_OPT[user]:-}" arch "${CLI_OPT[arch]:-}")
+  while IFS= read -r k; do [[ -z "$k" ]] || args+=("shares[]" "$k"); done <<< "${CLI_OPT[share]:-}"
+  while IFS= read -r k; do [[ -z "$k" ]] || args+=("ports[]" "$k"); done <<< "${CLI_OPT[publish]:-}"
+  while IFS= read -r k; do [[ -z "$k" ]] || args+=("media[]" "$k"); done <<< "${CLI_OPT[media]:-}"
+  # the settings wait in a draft until the machine has a record to hold them (mach_yml)
+  id="$PMM_RUN_SOURCE/$name"
+  MACH_DRAFT="$PMM_STATE_HOME/draft/$name.yml"
+  settings_write "$MACH_DRAFT" "${args[@]}"
+  yq -i '{"settings": .}' "$MACH_DRAFT"
+  ! $rm || yq -i '.rm = true' "$MACH_DRAFT"
+  if ! validate_quiet "$id"; then
+    rm -f "$MACH_DRAFT"
+    MACH_DRAFT=""
+    die "$name was not made: its settings do not validate"
+  fi
+  # the limit is checked before anything is cloned
+  ! $start || [[ "$(_def_backend "$id")" != tart ]] || macos_limit "$name"
+  machine_make "$name" "$id"
+  rm -f "$MACH_DRAFT"
+  MACH_DRAFT=""
+  if $start; then cli_call up "$name"; fi
   anfs_result name "$name" image "$(state_get "$name" .image)" key "$(state_get "$name" .key)"
+}
+
+# A machine `run --rm` made goes when it is shut down
+mach_gone_if_rm() {
+  [[ "$(state_get "$1" .rm)" == true ]] || return 0
+  mach_delete "$1"
+  echo "Removed $1 (it was run with --rm)"
 }
 
 # --- up -----------------------------------------------------------------------------------------
 
-# `pmm up [--image I] [--console] [--share P]... [-p H:G]... [machine...]`
+# `pmm up [--console] [--display] [--media M] [--share P]... [-p H:G]... [machine...]`: start
+# machines that are defined, or that an earlier `run` made. A defined one is made first.
 cmd_up() {
-  local image="${CLI_OPT[image]:-}" console=${CLI_OPT[console]:-false} spec
+  local console=${CLI_OPT[console]:-false} spec
   local -a specs=("$@") shares=() ports=()
   # what _up_qemu reads for this run: the media to boot first, and whether to show a screen
   UP_MEDIA=() UP_DISPLAY=${CLI_OPT[display]:-false}
@@ -180,16 +225,7 @@ cmd_up() {
   ! $UP_DISPLAY || ! $console || cli_usage_err "--console or --display, not both"
   [[ -z "${CLI_OPT[share]:-}" ]] || mapfile -t shares <<< "${CLI_OPT[share]}"
   [[ -z "${CLI_OPT[publish]:-}" ]] || mapfile -t ports <<< "${CLI_OPT[publish]}"
-  if [[ -n "$image" ]]; then
-    [[ ${#specs[@]} -le 1 ]] || cli_usage_err "--image takes one machine"
-    [[ ${#specs[@]} -eq 1 ]] || specs=("${image#*/}")
-    if ! canon "${specs[0]}" >/dev/null && ! mach_exists "${specs[0]}"; then
-      mach_name_ok "${specs[0]}" || die "machine names are $PMM_NAME_RULE"
-      def_write "${specs[0]}" image "$image"
-      load_machines
-    fi
-  fi
-  [[ ${#specs[@]} -gt 0 ]] || cli_usage_err "a machine, or --image"
+  [[ ${#specs[@]} -gt 0 ]] || cli_usage_err "a machine (pmm list); pmm run <image> makes one from an image"
   ! $console || [[ ${#specs[@]} -eq 1 ]] || cli_usage_err "--console takes one machine"
   [[ ${#UP_MEDIA[@]} -eq 0 ]] || [[ ${#specs[@]} -eq 1 ]] || cli_usage_err "--media takes one machine"
   ! $UP_DISPLAY || [[ ${#specs[@]} -eq 1 ]] || cli_usage_err "--display takes one machine"
@@ -286,6 +322,7 @@ _up_qemu() {
     echo $! > "$r/pid"
     wait "$(cat "$r/pid")" || true
     rm -rf "$r"
+    mach_gone_if_rm "$name"
     return 0
   fi
   qemu_argv_io false "$r/serial.log" "$sock"
@@ -296,6 +333,7 @@ _up_qemu() {
     echo $! > "$r/pid"
     wait "$(cat "$r/pid")" || true
     rm -rf "$r"
+    mach_gone_if_rm "$name"
     return 0
   fi
   "${QEMU_ARGV[@]}" -daemonize -pidfile "$r/pid" || { rm -rf "$r"; die "qemu failed to start"; }
@@ -351,19 +389,18 @@ _up_tart() {
 
 # --- shell, down, ps ----------------------------------------------------------------------------
 
-cmd_shell() {
-  local name r user cmd="" ip
-  mach_find "$1"
-  name="$M_NAME"
+# Log in to a running machine, or run a command in it when there are words
+# Usage: _mach_ssh <name> [word...]
+_mach_ssh() {
+  local name="$1" r user cmd="" ip
   shift
   mach_running "$name" || die "$name is not running (pmm up $name)"
   r=$(run_dir "$name")
   [[ -n "$(cat "$r/key" 2>/dev/null)" ]] || die "$name has no image, so pmm has no login for it: use its screen (pmm up --display) or its own ssh"
   user=$(cat "$r/user")
   [[ -z "${CLI_OPT[user]:-}" ]] || user="${CLI_OPT[user]}"
-  [[ "${1:-}" == "--" ]] && shift
   # Like ssh itself: the words are joined and the guest's shell parses them, so both
-  # `pmm shell x -- ls -l /tmp` and `pmm shell x -- 'cd /tmp && ls'` work
+  # `pmm exec x -- ls -l /tmp` and `pmm exec x -- 'cd /tmp && ls'` work
   cmd="$*"
   if [[ "$(cat "$r/backend")" == tart ]]; then
     ip=$(tart ip "$(tart_vm "$name")" --wait 30 2>/dev/null) || die "$name has no address"
@@ -384,6 +421,23 @@ cmd_shell() {
   fi
 }
 
+# `pmm shell <machine>`: log in. With `-- cmd...` it is `pmm exec`.
+cmd_shell() {
+  mach_find "$1"
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  _mach_ssh "$M_NAME" "$@"
+}
+
+# `pmm exec <machine> -- <cmd>...`: run a command in it
+cmd_exec() {
+  mach_find "$1"
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  [[ $# -gt 0 ]] || cli_usage_err "a command to run: pmm exec $M_NAME -- <cmd>... (pmm shell $M_NAME logs in)"
+  _mach_ssh "$M_NAME" "$@"
+}
+
 cmd_down() {
   local spec
   for spec in "$@"; do
@@ -394,6 +448,7 @@ cmd_down() {
     else
       echo "$M_NAME is not running"
     fi
+    mach_gone_if_rm "$M_NAME"
   done
 }
 
@@ -409,13 +464,17 @@ cmd_ps() {
 
 # --- show, remove -------------------------------------------------------------------------------
 
+# `pmm show <machine>`: its settings and where they are from, the build it is on, its snapshots
 cmd_show() {
   local name id v key image snaps backend
   mach_find "$1"
   name="$M_NAME" id="$M_ID"
   echo "$name"
+  if mach_is_run "$id"; then echo "  definition  none: it was run from an image, and its settings are in its record"
+  elif [[ -n "$id" ]]; then echo "  definition  $(tilde "$(mach_def_dir "$id")") ($(mach_src "$id"))"
+  else echo "  definition  gone"
+  fi
   if [[ -n "$id" ]]; then
-    echo "  definition  $(tilde "$(mach_def_dir "$id")") ($(mach_src "$id"))"
     v=$(mach_profile "$id"); [[ -z "$v" ]] || echo "  profile     $v$(profile_file "$v" >/dev/null || echo " (not found)")"
     # With nothing set a qemu machine gets 2 cpus and 2048 MB, a tart one what its build has
     backend=$(state_get "$name" .backend); [[ -n "$backend" ]] || backend=$(_def_backend "$id")
@@ -425,15 +484,13 @@ cmd_show() {
     v=$(mach_list "$id" .shares | paste -sd' ' -); [[ -z "$v" ]] || echo "  shares      $v"
     v=$(mach_list "$id" .ports | paste -sd' ' -); [[ -z "$v" ]] || echo "  ports       $v"
     v=$(mach_list "$id" .media | paste -sd' ' -); [[ -z "$v" ]] || echo "  media       $v"
-    mach_exists "$name" || { v=$(yq -r '[.interfaces[]?.network] | join(" ")' "$(mach_yml "$id")" 2>/dev/null) || v=""
+    mach_exists "$name" || { v=$(mach_q "$id" '[.interfaces[]?.network] | join(" ")' 2>/dev/null) || v=""
                              [[ -z "$v" ]] || echo "  networks    $v"; }
-  else
-    echo "  definition  gone"
   fi
   image=$(mach_image "$name" "$id")
   echo "  image       ${image:-none (a blank machine: what its media install)}"
   echo "  state       $(mach_state "$name")$(mach_running "$name" && echo " (ssh $(mach_address "$name"))")"
-  mach_exists "$name" || return 0
+  mach_exists "$name" || { _show_settings "$name" "$id"; return 0; }
   key=$(state_get "$name" .key)
   v=""
   if [[ -n "$image" ]] && image_build "${image#*/}" "$(state_get "$name" .arch)" && [[ "$B_KEY" != "$key" ]]; then
@@ -451,6 +508,16 @@ cmd_show() {
   echo "  created     $(state_get "$name" .created_at)"
   snaps=$(mach_snapshots "$name" | paste -sd' ' -)
   [[ -z "$snaps" ]] || echo "  snapshots   $snaps"
+  _show_settings "$name" "$id"
+}
+
+# The settings as the YAML a definition holds, so that keeping a machine that was run from an
+# image is a copy into machines/<name>/machine.yml
+_show_settings() {
+  [[ -n "$2" ]] || return 0
+  echo
+  echo "# machines/$1/machine.yml"
+  mach_q "$2" .
 }
 
 # Delete what pmm made for <name>: its disk or tart VM, its snapshots, its record. With them goes
@@ -468,8 +535,8 @@ mach_delete() {
   rm -rf "$(mdir "$name")" "$(snap_dir "$name")" "$(run_dir "$name")"
 }
 
-# `pmm rm [-y] <machine>...`: stop and delete machines and their snapshots. A local definition
-# is the machine's own and goes with it; a source's stays, and `pmm up` makes the machine again.
+# `pmm rm [-y] <machine>...`: stop and delete machines and their snapshots. A definition is never
+# touched: it is a person's, and `pmm up` makes the machine again from it.
 cmd_remove() {
   local spec
   local -a names=() ids=()
@@ -482,10 +549,7 @@ cmd_remove() {
   for i in "${!names[@]}"; do
     name="${names[$i]}" id="${ids[$i]}"
     mach_exists "$name" && mach_delete "$name"
-    if [[ "$id" == "$PMM_LOCAL_SOURCE/"* ]]; then
-      rm -rf "${PMM_MACHINES_HOME:?}/$name"
-      echo "Removed $name"
-    elif [[ -n "$id" ]]; then
+    if [[ -n "$id" ]] && ! mach_is_run "$id"; then
       echo "Removed $name (still defined by $(mach_src "$id"))"
     else
       echo "Removed $name"

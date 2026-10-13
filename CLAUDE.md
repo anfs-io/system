@@ -96,25 +96,36 @@ machines/networks/<name>/      a network (network.yml)
   snapshots and the runtime record, so the machine `web1` is the highest-priority source's `web1`.
   A definition a higher one shadows is listed and nothing else.
   `images` and `networks` are not machine names: they are the directories beside the machines,
-  and `validate`, `create` and `up --image` refuse them.
-- **Every machine has a definition.** `pmm create web1 --image debian-13 --cpus 4` writes
-  `~/.config/pmm/machines/web1/machine.yml`, the implicit `local` source, and makes the machine
-  from it. `pmm up --image debian-13` does that with the image's name. `pmm remove` deletes a
-  local definition with its machine and keeps a source's.
+  and `validate` and `run --name` refuse them.
+- **A machine is defined or was run from an image.** `pmm run debian-13 --cpus 4` makes a machine
+  from the image and starts it: named for the image, then `debian-13-2`, or `--name`. It writes
+  no definition. The settings from the command line are `settings:` in the machine's own
+  `state.yml`, beside its disk, and go with `pmm remove`; `up`, `down`, `reset`, `shell` and
+  `show` read them there. In the code such a machine's id is `-/<name>` and every read of a
+  setting goes through `mach_q` (`settings.sh`), so nothing else knows which kind it has.
+  `run --no-start` only makes it; `run --rm` removes it at its `pmm down`. `pmm up` starts
+  machines that are defined (making one first) or that a `run` made, and takes no `--image`.
+- **No command writes a machine or network definition.** `~/.config/pmm/machines/` (the implicit
+  `local` source) holds what a person wrote, like a source's `machines/`, and `pmm remove` and
+  `pmm network remove` never delete one. `pmm show` and `pmm network show` end with the settings
+  as the YAML a definition holds, so keeping something made on the fly is a copy.
+- **`shell` logs in, `exec` runs a command** (`pmm exec web1 -- uname -a`); `shell web1 -- cmd`
+  is `exec`. **Snapshots are a group**: `pmm snapshot list|create|remove`; `pmm reset <machine>
+  [snapshot]` goes back to one.
 - **A machine stays on the build it was created from.** `state.yml` beside its disk records the
-  image, arch, backend, build key, user and ssh key, and everything after `create` reads that, so
+  image, arch, backend, build key, user and ssh key, and everything after it is made reads that, so
   a machine does not need its image's definition, or its own, to be stopped, reached or removed.
   `pmm reset` moves it onto the image's current build; `pmm show` says when there is a newer one.
 - **A qemu machine is a qcow2 overlay on the build**, so it holds it (`pmm:<machine>`; each
   snapshot holds the build it was taken on, `pmm:<machine>@<snapshot>`). **A tart machine is a
   clone**, `pmm-<name>` in tart's store, and holds nothing.
-- **`create` builds the image first** when its build is not current (`pim build`), as `pim up`
-  did. Several minutes the first time.
+- **Making a machine builds its image first** when its build is not current (`pmm image build`).
+  Several minutes the first time.
 - **Profiles** are found like every other resource: the first source in priority order whose
   `machines/profiles.yml` has the name is the whole profile. `stack` ships `small`, `medium`,
   `large` and `xlarge`. A setting is the first of: the machine's own, its profile's, the profile
   its image names (`machine.profile`), then 2 cpus and 2048 MB (a tart machine: what its build
-  has). An image's `machine.min` fails `validate` and `create`.
+  has). An image's `machine.min` fails `validate`, `run` and `up`.
 - **What pmm takes from pim.** Metadata by command: `pim builds --json` and `pim path`, read at
   `create` and `reset`. Machinery by sourcing: `core.sh`, `qemu.sh`, `ssh.sh` and `tart.sh` from
   `~/.local/lib/pim`, since building an image means booting one. **Those four files must not
@@ -122,7 +133,7 @@ machines/networks/<name>/      a network (network.yml)
   and stopping a VM takes names and directories, never an image id. pim knows nothing about pmm.
 - **Apple allows two macOS guests running at once.** `pmm up` counts tart's running macOS guests,
   whoever started them, and refuses a third before it clones or boots anything.
-- `pmm install` (what `anfs install` runs) creates and starts; `PMM_INSTALL=create` only creates
+- `pmm install` (what `anfs install` runs) makes and starts defined machines; `PMM_INSTALL=create` only makes them
   and `PMM_INSTALL=validate` only validates, which is what the round trips use.
 - `pmm migrate` (run by the package's `post_install`) takes over the VMs pim ran before machines
   were pmm's: disks are moved, tart VMs renamed, a running one is shut down first.
@@ -172,6 +183,10 @@ domain: lab               # optional
 - **A machine's networks are installed with it**, as its image is built with it; `pmm install
   source/` installs the source's networks first. `pmm network remove` is refused while machines
   are on the network.
+- **`pmm network create <name> --kind K ...` makes a network with no definition**, as `podman
+  network create` does: its record (`$PMM_DATA_HOME/networks/<name>/state.yml`, which every
+  installed network has) is all of it, and a machine's `interfaces:` names it like any other
+  (`net_known`, `net_setting` in network.sh). It is listed with no source.
 - **`~/.ssh/config.d/05-pmm.conf`** holds a `Host` entry per running machine (any backend),
   rewritten by up and down: `ssh web1` works where the config includes that directory (stack/ssh).
 - `PMM_NET_BACKEND` is `libvirt` on Linux and `none` elsewhere, where a machine with interfaces
@@ -508,13 +523,14 @@ The keys, which are the interface:
 | `pcm list` | `name`, `source`, `status` |
 | `pim list` | `name`, `source`, `status` |
 | `pim builds` | `name`, `source`, `arch`, `backend`, `key`, `disk` (a tart build: its VM's name), `user`, `sshkey`, `held` (a list), `boot_user`, `boot_password` (tart: the stock image's account) |
-| `pmm list` | `name`, `source` (null: the definition is gone), `image`, `state` (`running`, `stopped`, `defined`, `shadowed`), `address` |
+| `pmm list` | `name`, `source` (null: run from an image, or the definition is gone), `image`, `state` (`running`, `stopped`, `defined`, `shadowed`), `address` |
 | `psm skills list` | `status`, `config`, `skill`, `repo` |
 | `psm repo list` | `config`, `repo`, `note` |
 | `anfs callbacks` | `tool`, `listener`, `state`, `handler` |
 | `anfs src list` | `alias`, `url`, `list` (`user`, `system`), `status`, `provides` (a list) |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
-| `pmm network list` | `name`, `source` (null: the definition is gone), `kind`, `subnet` (a bridged network: its bridge), `state` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `machines` (comma-separated) |
+| `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
+| `pmm network list` | `name`, `source` (null: made with `network create`, or the definition is gone), `kind`, `subnet` (a bridged network: its bridge), `state` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `machines` (comma-separated) |
 
 ### The Command Line (lib/anfs/cli.sh)
 
@@ -570,7 +586,7 @@ cli_dispatch "$@"
 **The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
 `show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm skills list`,
 `pvm link remove`, `ppm container remove`). pcm and pmm keep `up`/`down`/`ps`, the names of what
-they wrap, with `run`/`stop`/`ssh` as aliases; wsm's `status` is a different question from `ps`.
+they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image); wsm's `status` is a different question from `ps`.
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
 says what would happen.
 
@@ -990,7 +1006,7 @@ bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
 bats packages/pim/tests      # pim: sources, templates, validate, qemu argv, build (qemu/ssh stubbed), builds and holds
-bats packages/pmm/tests      # pmm: sources, profiles, validate, create/up/snapshot/reset/remove, the macOS
+bats packages/pmm/tests      # pmm: sources, profiles, validate, run/up/exec/snapshots/reset/remove, the macOS
                              # limit, migrate, networks and interfaces (qemu, ssh, tart and virsh
                              # stubbed; pim is the real one)
 ```
@@ -1021,7 +1037,7 @@ pim and pmm, for real (qemu, hvf/kvm; about 3 minutes each for Debian on Apple s
 packages/pim/tests/e2e [debian|fedora|all]
     # validate, build --verify, a cache-hit rebuild, publish -c, qemu-img check, rm, implode
 packages/pmm/tests/e2e [debian|fedora]
-    # pim build; two machines from the one image (a profile, a share, up --image), shell, down,
+    # pim build; two machines from the one image (a profile, a share, run), exec, down,
     # up again (the disk persists), snapshot/reset, reset onto the build, the hold (pim rm is
     # refused), rm, implode
 ```

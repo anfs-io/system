@@ -2,15 +2,16 @@
 # pmm library: networks — definitions across the sources, and the `network` commands.
 # Sourced by ~/.local/bin/pmm; functions only.
 #
-# A network is machines/networks/<name>/network.yml in a source, or in $PMM_NETWORKS_HOME (made on the
-# spot, and first). Its id is `source/name`; the name alone is the network, as with machines.
+# A network is machines/networks/<name>/network.yml in a source, or in $PMM_NETWORKS_HOME (a
+# person's own, on this host, and first). Its id is `source/name`; the name alone is the network,
+# as with machines. One made with `pmm network create` has no definition: its record is all of it.
 #
 # On Linux a nat or isolated network is a libvirt network, pmm-<name>, on a bridge of the same
 # name: libvirt makes the bridge and runs dnsmasq on it for DHCP and DNS. A bridged network is a
 # bridge the host already has; pmm defines nothing for it. Either way the bridge is added to the
 # list qemu's bridge helper is allowed ($PMM_BRIDGE_CONF), since pmm starts qemu itself.
 # What was installed is recorded in $PMM_DATA_HOME/networks/<name>/state.yml, so a network can be
-# listed and removed after its definition has gone.
+# listed, used and removed with no definition: one that has gone, or one there never was.
 #
 # What the host needs for any of this (libvirt, the helper's setuid bit, the allow list) is the
 # pmm-network package's to set up, once and as root. PMM_NET_BACKEND is libvirt on Linux and none
@@ -97,6 +98,20 @@ net_find() {
   fi
   [[ "$spec" != */* ]] && net_installed "$spec" && return 0
   die "network '$spec' not found (see: pmm network list)"
+}
+
+# True for a name machines can be on: a defined network, or an installed one with no definition
+net_known() { net_canon "$1" >/dev/null || net_installed "$1"; }
+
+# A network's kind, subnet, interface or domain: its definition's, else what its record says
+# Usage: net_setting <name> <kind|subnet|interface|domain>
+net_setting() {
+  local id
+  if id=$(net_canon "$1"); then net_get "$id" ".$2"
+  elif [[ "$2" == interface ]]; then
+    [[ "$(net_state_get "$1" .kind)" != bridged ]] || net_state_get "$1" .bridge
+  else net_state_get "$1" ".$2"
+  fi
 }
 
 # --- addresses ----------------------------------------------------------------------------------
@@ -231,15 +246,19 @@ net_machines() {
   return 0
 }
 
-# Install a network from its definition: define it, have it start with the host, start it, and
-# let qemu attach to its bridge. Again on an installed one only makes sure it is up.
+# Install a network from its definition. Again on an installed one only makes sure it is up.
 net_install() {
-  local id="$1" name kind subnet domain iface bridge f tmp
-  name="${id#*/}"
+  local id="$1"
   validate_network_quiet "$id" || die "$id does not validate (pmm validate)"
+  net_make "${id#*/}" "$id" "$(net_get "$id" .kind)" "$(net_get "$id" .subnet)" "$(net_get "$id" .domain)" "$(net_get "$id" .interface)"
+}
+
+# Make a network: define it in libvirt, have it start with the host, start it, let qemu attach to
+# its bridge, and record it. <id> is its definition's, or nothing (`pmm network create`).
+# Usage: net_make <name> <id> <kind> <subnet> <domain> <interface>
+net_make() {
+  local name="$1" id="$2" kind="$3" subnet="$4" domain="$5" iface="$6" bridge f tmp
   net_require
-  kind=$(net_get "$id" .kind) subnet=$(net_get "$id" .subnet)
-  domain=$(net_get "$id" .domain) iface=$(net_get "$id" .interface)
   bridge=$(net_bridge "$kind" "$name" "$iface")
   if net_installed "$name"; then
     [[ "$(net_state_get "$name" .kind)" == "$kind" && "$(net_state_get "$name" .subnet)" == "$subnet" &&
@@ -264,7 +283,7 @@ net_install() {
   f=$(net_state_file "$name")
   mkdir -p "$(dirname "$f")"
   ID="$id" KIND="$kind" SUBNET="$subnet" BRIDGE="$bridge" DOMAIN="$domain" AT="$(now_iso)" \
-    yq -n '.id = strenv(ID) | .kind = strenv(KIND) | .bridge = strenv(BRIDGE) | .created_at = strenv(AT)
+    yq -n '.id = (strenv(ID) | select(. != "")) | .kind = strenv(KIND) | .bridge = strenv(BRIDGE) | .created_at = strenv(AT)
            | .subnet = (strenv(SUBNET) | select(. != "")) | .domain = (strenv(DOMAIN) | select(. != ""))' > "$f"
   echo "Installed network $name ($kind, ${subnet:-on $bridge})"
 }
@@ -332,7 +351,7 @@ net_free_address() {
 
 # Check one network definition, printing its problems; adds to V_ERRORS / V_WARNINGS
 validate_network() {
-  local id="$1" yml k kind subnet iface domain other
+  local id="$1" yml k
   yml=$(net_yml "$id")
   yq -e 'true' "$yml" >/dev/null 2>&1 || { _v_err "network.yml does not parse"; return; }
   [[ "$(yq -r 'tag' "$yml")" == "!!map" ]] || { _v_err "network.yml is not a map"; return; }
@@ -341,17 +360,30 @@ validate_network() {
     [[ " $PMM_NET_KEYS " == *" $k "* ]] || _v_err "$k: is not a network setting ($PMM_NET_KEYS)"
   done < <(yq -r 'keys | .[]' "$yml")
 
-  kind=$(net_get "$id" .kind) subnet=$(net_get "$id" .subnet)
-  iface=$(net_get "$id" .interface) domain=$(net_get "$id" .domain)
+  validate_network_settings "${id#*/}" "$(net_get "$id" .kind)" "$(net_get "$id" .subnet)" "$(net_get "$id" .interface)" "$(net_get "$id" .domain)"
+}
+
+# The checks on a network's settings, wherever they are from: a definition, or the command line
+# of `pmm network create`
+# Usage: validate_network_settings <name> <kind> <subnet> <interface> <domain>
+validate_network_settings() {
+  local name="$1" kind="$2" subnet="$3" iface="$4" domain="$5" other f
   case "$kind" in
     nat|isolated)
       if [[ -z "$subnet" ]]; then _v_err "subnet: is required for a $kind network (10.20.0.0/24)"
       elif ! subnet_parse "$subnet"; then _v_err "subnet '$subnet' is not a network address with a prefix of 16 to 28 (10.20.0.0/24)"
       else
         while IFS= read -r other; do
-          [[ "$other" != "$id" && "$(net_canon "${other#*/}")" == "$other" ]] || continue
+          [[ "${other#*/}" != "$name" && "$(net_canon "${other#*/}")" == "$other" ]] || continue
           [[ "$(net_get "$other" .subnet)" != "$subnet" ]] || _v_err "subnet $subnet is also $other's"
         done < <(net_all_ids)
+        # and the networks that have no definition (pmm network create)
+        for f in "$PMM_DATA_HOME"/networks/*/state.yml; do
+          [[ -f "$f" ]] || continue
+          other=$(basename "$(dirname "$f")")
+          [[ "$other" != "$name" ]] && ! net_canon "$other" >/dev/null || continue
+          [[ "$(net_state_get "$other" .subnet)" != "$subnet" ]] || _v_err "subnet $subnet is also the network $other's"
+        done
       fi
       [[ -z "$iface" ]] || _v_err "interface: is for a bridged network"
       ;;
@@ -381,6 +413,7 @@ validate_network_quiet() {
 
 # `pmm network list`: NAME SOURCE KIND SUBNET STATE MACHINES. STATE: active, inactive (installed,
 # not started), missing (installed, and gone from the host), defined (not installed), shadowed.
+# One made with `network create`, or whose definition is gone, has no source.
 cmd_network_list() {
   local id name d
   local -A seen=()
@@ -399,33 +432,33 @@ cmd_network_list() {
       [[ -f "${d}state.yml" ]] || continue
       name=$(basename "$d")
       [[ -z "${seen[$name]:-}" ]] || continue
-      anfs_row "$name" "" "$(net_state_get "$name" .kind)" "$(net_state_get "$name" .subnet)" "$(net_status "$name")" "$(net_machines "$name" | paste -sd, -)"
+      anfs_row "$name" "" "$(net_setting "$name" kind)" "$(net_setting "$name" subnet | grep . || net_setting "$name" interface)" "$(net_status "$name")" "$(net_machines "$name" | paste -sd, -)"
     done
   } | LC_ALL=C sort -s -t$'\t' -k1,1 | anfs_table "NAME SOURCE KIND SUBNET STATE MACHINES" "name source kind subnet state machines"
 }
 
+# `pmm network show <network>`: what it is and who is on it, then its settings as the YAML a
+# definition holds, so that keeping a network that was made with `create` is a copy
 cmd_network_show() {
   local name id kind subnet m f
   net_find "$1"
   name="$N_NAME" id="$N_ID"
   echo "$name"
-  if [[ -n "$id" ]]; then
-    echo "  definition  $(tilde "$(net_def_dir "$id")") (${id%%/*})"
-    kind=$(net_get "$id" .kind) subnet=$(net_get "$id" .subnet)
-  else
-    echo "  definition  gone"
-    kind=$(net_state_get "$name" .kind) subnet=$(net_state_get "$name" .subnet)
+  if [[ -n "$id" ]]; then echo "  definition  $(tilde "$(net_def_dir "$id")") (${id%%/*})"
+  elif [[ -n "$(net_state_get "$name" .id)" ]]; then echo "  definition  gone"
+  else echo "  definition  none: it was made with pmm network create"
   fi
+  kind=$(net_setting "$name" kind) subnet=$(net_setting "$name" subnet)
   echo "  kind        $kind"
   if [[ "$kind" == bridged ]]; then
-    echo "  bridge      $([[ -n "$id" ]] && net_get "$id" .interface || net_state_get "$name" .bridge) (the host's)"
+    echo "  bridge      $(net_setting "$name" interface) (the host's)"
   else
     echo "  bridge      pmm-$name"
     if subnet_parse "$subnet"; then
       echo "  subnet      $subnet (host $(int_ip $((SN_BASE + 1))))"
       echo "  dhcp        $(int_ip $((SN_BASE + SN_SIZE / 2))) to $(int_ip $((SN_BASE + SN_SIZE - 2))); machines from $(int_ip $((SN_BASE + 2)))"
     fi
-    m=$([[ -n "$id" ]] && net_get "$id" .domain || net_state_get "$name" .domain)
+    m=$(net_setting "$name" domain)
     [[ -z "$m" ]] || echo "  domain      $m"
   fi
   echo "  state       $(net_installed "$name" && net_status "$name" || echo defined)"
@@ -434,31 +467,35 @@ cmd_network_show() {
     f=$(state_file "$m")
     echo "  machine     $m $(N="$name" yq -r '.interfaces[] | select(.network == strenv(N)) | .mac + " " + (.address // "")' "$f" | paste -sd' ' -)"
   done < <(net_machines "$name")
+  echo
+  echo "# machines/networks/$name/network.yml"
+  KIND="$kind" SUBNET="$subnet" IFACE="$(net_setting "$name" interface)" DOMAIN="$(net_setting "$name" domain)" \
+    yq -n '.kind = strenv(KIND) | .subnet = (strenv(SUBNET) | select(. != ""))
+           | .interface = (strenv(IFACE) | select(. != "")) | .domain = (strenv(DOMAIN) | select(. != ""))'
 }
 
 cmd_network_path() {
   net_find "$1"
-  [[ -n "$N_ID" ]] || die "$N_NAME has no definition any more"
+  [[ -n "$N_ID" ]] || die "$N_NAME has no definition (pmm network show $N_NAME prints its settings)"
   net_def_dir "$N_ID"
 }
 
-# `pmm network create <network> --kind K [--subnet CIDR] [--interface IF] [--domain D]`: write a
-# local definition ($PMM_NETWORKS_HOME) and install it
+# `pmm network create <network> --kind K [--subnet CIDR] [--interface IF] [--domain D]`: make a
+# network now. No definition is written: it is recorded with pmm's data, as an installed one is.
 cmd_network_create() {
-  local name="$1" dir f
+  local name="$1" kind="${CLI_OPT[kind]:-}" subnet="${CLI_OPT[subnet]:-}" iface="${CLI_OPT[interface]:-}" domain="${CLI_OPT[domain]:-}" out
   net_name_ok "$name" || die "network names are lowercase letters, digits, . _ - and at most 11 characters"
-  ! net_canon "$name" >/dev/null || anfs_fail 73 "$name is already defined ($(net_canon "$name")); pmm network install $name"
-  ! net_installed "$name" || anfs_fail 73 "$name is already installed (pmm network show $name)"
-  [[ -n "${CLI_OPT[kind]:-}" ]] || cli_usage_err "--kind is required (${PMM_NET_KINDS// /, })"
-  dir="$PMM_NETWORKS_HOME/$name" f="$PMM_NETWORKS_HOME/$name/network.yml"
-  mkdir -p "$dir"
-  KIND="${CLI_OPT[kind]}" SUBNET="${CLI_OPT[subnet]:-}" IFACE="${CLI_OPT[interface]:-}" DOMAIN="${CLI_OPT[domain]:-}" \
-    yq -n '.kind = strenv(KIND) | .subnet = (strenv(SUBNET) | select(. != ""))
-           | .interface = (strenv(IFACE) | select(. != "")) | .domain = (strenv(DOMAIN) | select(. != ""))' > "$f"
-  load_networks
-  # a definition that does not install is not left behind
-  ( net_install "local/$name" ) || { rm -rf "$dir"; return 1; }
-  anfs_result name "$name" kind "${CLI_OPT[kind]}"
+  ! net_canon "$name" >/dev/null || anfs_fail 73 "$name is defined ($(net_canon "$name")): pmm network install $name"
+  ! net_installed "$name" || anfs_fail 73 "$name already exists (pmm network show $name)"
+  [[ -n "$kind" ]] || cli_usage_err "--kind is required (${PMM_NET_KINDS// /, })"
+  V_ERRORS=0 V_WARNINGS=0
+  out=$(validate_network_settings "$name" "$kind" "$subnet" "$iface" "$domain"; echo "rc:$V_ERRORS")
+  if [[ "${out##*rc:}" != 0 ]]; then
+    printf '%s\n' "${out%rc:*}" | grep '  error' >&2
+    die "$name was not made: its settings do not validate"
+  fi
+  net_make "$name" "" "$kind" "$subnet" "$domain" "$iface"
+  anfs_result name "$name" kind "$kind"
 }
 
 # `pmm network install <network|source/>...`: source/ is every network that source defines
@@ -474,7 +511,7 @@ cmd_network_install() {
       done < <(net_all_ids)
     else
       net_find "$arg"
-      [[ -n "$N_ID" ]] || die "$N_NAME has no definition any more"
+      [[ -n "$N_ID" ]] || die "$N_NAME has no definition to install it from"
       ids+=("$N_ID")
     fi
   done
@@ -492,8 +529,8 @@ cmd_network_install() {
   done
 }
 
-# `pmm network rm [-y] <network>...`: refused while machines are on it. A local definition goes
-# too; a source's is kept, and `pmm network install` makes the network again.
+# `pmm network rm [-y] <network>...`: refused while machines are on it. A definition is never
+# touched: `pmm network install` makes the network again from it.
 cmd_network_remove() {
   local spec on i
   local -a names=() ids=()
@@ -506,10 +543,7 @@ cmd_network_remove() {
   confirm "rm takes networks away from this host" "Remove ${names[*]}?"
   for i in "${!names[@]}"; do
     net_installed "${names[$i]}" && net_delete "${names[$i]}"
-    if [[ "${ids[$i]}" == "$PMM_LOCAL_SOURCE/"* ]]; then
-      rm -rf "${PMM_NETWORKS_HOME:?}/${names[$i]}"
-      echo "Removed network ${names[$i]}"
-    elif [[ -n "${ids[$i]}" ]]; then
+    if [[ -n "${ids[$i]}" ]]; then
       echo "Removed network ${names[$i]} (still defined by ${ids[$i]%%/*})"
     else
       echo "Removed network ${names[$i]}"

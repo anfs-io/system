@@ -47,7 +47,11 @@ cmd_vm_up()       { _vm_pim; _vm_target "$1" && pmm up "${@:2}" "anfs-test-$1"; 
 cmd_vm_down()     { _vm_pim; _vm_target "$1" && pmm down "anfs-test-$1"; }
 cmd_vm_shell()    { _vm_pim; _vm_target "$1" && _vm_user "${2:-owner}" && pmm shell "anfs-test-$1" -u "${2:-owner}"; }
 cmd_vm_install()  { _vm_pim; _vm_install "$@"; }
-cmd_vm_snapshot() { _vm_pim; _vm_target "$1" && pmm snapshot "anfs-test-$1" ${2:+"$2"}; }
+cmd_vm_snapshot() {
+  _vm_pim
+  _vm_target "$1" || return 1
+  if [[ -n "${2:-}" ]]; then pmm snapshot create "anfs-test-$1" "$2"; else pmm snapshot list "anfs-test-$1"; fi
+}
 cmd_vm_reset()    { _vm_pim; _vm_target "$1" && pmm reset -y "anfs-test-$1" ${2:+"$2"}; }
 cmd_vm_remove()   { _vm_pim; _vm_target "$1" && pmm remove -y "anfs-test-$1"; }
 # A tool reads another's list with --json: the address is pmm list's, null while the box is down

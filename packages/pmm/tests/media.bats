@@ -36,13 +36,14 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
   [[ "$output" == *"'nope' is not a file or an ISO in the catalogue"* ]]
 }
 
-@test "create --media with no image: a blank machine, an empty disk, nothing held" {
-  run cli_call create nas --media "$T/pve.iso" --disk 32G --memory 8G
+@test "run --media with no image: a blank machine, an empty disk, nothing held, no definition" {
+  run cli_call run --name nas --no-start --media "$T/pve.iso" --disk 32G --memory 8G
   echo "$output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Created nas, blank (32G disk)"* ]]
-  [ "$(yq -r '.media[0]' "$PMM_MACHINES_HOME/nas/machine.yml")" = "$T/pve.iso" ]
-  [ "$(yq -r '.image // "none"' "$PMM_MACHINES_HOME/nas/machine.yml")" = none ]
+  [ ! -e "$PMM_MACHINES_HOME/nas" ]
+  [ "$(state_get nas '.settings.media[0]')" = "$T/pve.iso" ]
+  [ -z "$(state_get nas .settings.image)" ]
   [ -f "$PMM_DATA_HOME/machines/nas/disk.qcow2" ]
   [ -f "$PMM_DATA_HOME/machines/nas/efivars.fd" ]
   [ -z "$(state_get nas .image)" ]
@@ -52,12 +53,14 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
   [[ "$output" == *"media       $T/pve.iso"* ]]
   ANFS_JSON=true run cmd_list
   [ "$(yq -p json -r '.[] | select(.name == "nas") | .image // "null"' <<< "$output")" = null ]
-  run cli_call create x
+  run cli_call run --name x
   [ "$status" -eq 64 ]
+  run cli_call run --media "$T/pve.iso"
+  [ "$status" -eq 64 ]     # a blank machine has no image to be named after
 }
 
 @test "up, a blank machine: the disk first, then its media as a CD; no wait for ssh, no shell" {
-  cli_call create nas --media "$T/pve.iso"
+  cli_call run --name nas --no-start --media "$T/pve.iso"
   run cli_call up nas
   echo "$output"
   [ "$status" -eq 0 ]
@@ -76,7 +79,7 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
 }
 
 @test "up --media: for this run it boots first, as a USB drive when it is not an ISO" {
-  cli_call create web --image deb
+  cli_call run deb --name web --no-start
   run cli_call up web --media "$T/ventoy.img"
   echo "$output"
   [ "$status" -eq 0 ]
@@ -96,7 +99,7 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
   mkdir -p "$HOME/.config/anfs" "$ANFS_ISO_HOME"
   printf -- '- id: pve\n  url: https://x/proxmox.iso\n' > "$HOME/.config/anfs/isos.yml"
   : > "$ANFS_ISO_HOME/proxmox.iso"
-  cli_call create pve1 --media pve
+  cli_call run --name pve1 --no-start --media pve
   run cli_call up pve1
   echo "$output"
   [ "$status" -eq 0 ]
@@ -104,7 +107,7 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
 }
 
 @test "up --display: VNC where the host has no screen; a screen and input devices for arm64" {
-  cli_call create nas --media "$T/pve.iso"
+  cli_call run --name nas --no-start --media "$T/pve.iso"
   PMM_DISPLAY=vnc run cli_call up nas --display
   echo "$output"
   [ "$status" -eq 0 ]
@@ -117,7 +120,7 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
 }
 
 @test "reset recreates a blank machine's empty disk" {
-  cli_call create nas --media "$T/pve.iso"
+  cli_call run --name nas --no-start --media "$T/pve.iso"
   echo data > "$PMM_DATA_HOME/machines/nas/disk.qcow2"
   CLI_OPT[yes]=true run cli_call reset -y nas
   echo "$output"

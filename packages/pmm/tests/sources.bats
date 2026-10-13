@@ -144,21 +144,21 @@ setup() {
   [ "$(all_ids | tr '\n' ' ')" = "acme/web " ]
   [ "$(net_canon lab)" = acme/lab ]
   [ "$(image_def_dir app)" = "$HOME/.local/share/anfs/sources/acme/machines/images/app" ]
-  # a machine.yml in one of them is refused by validate, and create refuses the name
+  # a machine.yml in one of them is refused by validate, and nothing makes a machine of the name
   machine "$T/srcs/acme/machines/images" "image: deb"
   run cmd_validate acme/images
   [ "$status" -ne 0 ]
   [[ "$output" == *"the name 'images'"* ]]
-  run cli_call create images
+  PMM_INSTALL=create run cli_call install images
   [ "$status" -ne 0 ]
   ! mach_exists images
   rm "$T/srcs/acme/machines/images/machine.yml"
   load_machines
-  run cli_call create networks --image deb
+  run cli_call run deb --name networks
   [ "$status" -ne 0 ]
   [[ "$output" == *"not 'images' or 'networks'"* ]]
-  [ ! -e "$PMM_MACHINES_HOME/networks/machine.yml" ]
-  run cli_call up --image deb images
+  ! mach_exists networks
+  run cli_call run deb --name images --no-start
   [ "$status" -ne 0 ]
   ! mach_exists images
 }

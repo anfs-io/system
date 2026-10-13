@@ -122,19 +122,61 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [[ "$output" == *"Linux only so far"* ]]
 }
 
-@test "create: a local definition, installed; one that does not install is not left behind" {
+@test "create: the network is made and recorded with pmm's data; no definition is written" {
+  before=$(find "$PMM_CONFIG_HOME" | sort)
   run cli_call "network create" lab --kind nat --subnet 10.20.0.0/24 --domain lab
   echo "$output"
   [ "$status" -eq 0 ]
-  [ "$(yq -r '.kind + " " + .subnet + " " + .domain' "$PMM_NETWORKS_HOME/lab/network.yml")" = "nat 10.20.0.0/24 lab" ]
+  [ "$(find "$PMM_CONFIG_HOME" | sort)" = "$before" ]
+  [ "$(net_state_get lab '.kind + " " + .subnet + " " + .domain')" = "nat 10.20.0.0/24 lab" ]
+  [ -z "$(net_state_get lab .id)" ]
   [ "$(net_status lab)" = active ]
+  ANFS_JSON=true run cmd_network_list
+  [ "$(yq -p json -r '.[] | .name + " " + (.source // "null") + " " + .kind + " " + .subnet + " " + .state' <<< "$output")" = "lab null nat 10.20.0.0/24 active" ]
+  # show prints it as the YAML a definition holds
+  run cli_call "network show" lab
+  echo "$output"
+  [[ "$output" == *"definition  none: it was made with pmm network create"* ]]
+  [ "$(sed -n '/^# machines\/networks\/lab\/network.yml$/,$p' <<< "$output" | yq -r '.kind + " " + .subnet + " " + .domain')" = "nat 10.20.0.0/24 lab" ]
+  run cli_call "network path" lab
+  [ "$status" -ne 0 ]
+  run cli_call "network install" lab
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"lab has no definition to install it from"* ]]
   run cli_call "network create" lab --kind nat --subnet 10.40.0.0/24
   [ "$status" -eq 73 ]
+  run cli_call "network create" dup --kind isolated --subnet 10.20.0.0/24
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"subnet 10.20.0.0/24 is also the network lab's"* ]]
   run cli_call "network create" bad --kind nat
   [ "$status" -ne 0 ]
-  [ ! -d "$PMM_NETWORKS_HOME/bad" ]
+  [[ "$output" == *"subnet: is required"* ]]
+  ! net_installed bad
   run cli_call "network create" x
   [ "$status" -eq 64 ]
+  # a bridged one is the name of a bridge the host has
+  host_bridge br0
+  cli_call "network create" lan --kind bridged --interface br0 >/dev/null
+  ANFS_JSON=true run cmd_network_list
+  [ "$(yq -p json -r '.[] | select(.name == "lan") | .kind + " " + .subnet' <<< "$output")" = "bridged br0" ]
+  run cli_call "network show" lan
+  [ "$(sed -n '/^# machines\/networks\/lan\/network.yml$/,$p' <<< "$output" | yq -r '.kind + " " + .interface')" = "bridged br0" ]
+  # a machine's definition names one like any other
+  machine "$PMM_MACHINES_HOME/web1" "$(printf 'image: deb\ninterfaces: [{network: lab, address: 10.20.0.11}, {network: lan}]')"
+  load_machines
+  run cmd_validate web1
+  echo "$output"
+  [ "$status" -eq 0 ]
+  PMM_INSTALL=create run cli_call install web1
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(state_get web1 '.interfaces[0].address')" = 10.20.0.11 ]
+  [ "$(state_get web1 '.interfaces[1].bridge')" = br0 ]
+  cli_call remove -y web1 >/dev/null
+  run cli_call "network remove" -y lab lan
+  [ "$status" -eq 0 ]
+  [ ! -e "$PMM_DATA_HOME/networks/lab" ]
+  [ ! -f "$VIRSH_STUB/pmm-lab.state" ]
 }
 
 @test "a machine's interfaces: a MAC each, an address kept, reserved under its name, its networks installed" {
@@ -144,7 +186,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   machine "$PMM_MACHINES_HOME/web1" "$(printf 'image: deb\ninterfaces:\n  - network: lab\n    address: 10.20.0.11\n  - network: lan\n    mac: 52:54:00:aa:bb:cc')"
   machine "$PMM_MACHINES_HOME/web2" "$(printf 'image: deb\ninterfaces: [{network: lab}]')"
   load_machines
-  run cli_call create web1
+  PMM_INSTALL=create run cli_call install web1
   echo "$output"
   [ "$status" -eq 0 ]
   [ "$(net_status lab)" = active ]                     # installed on the way
@@ -158,7 +200,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ -z "$(state_get web1 '.interfaces[1].address')" ]
   grep -q "net-update pmm-lab add ip-dhcp-host <host mac='$mac1' name='web1' ip='10.20.0.11'/> --config --live" "$PMM_CALLS"
   # no address of its own: the first one free
-  cli_call create web2 >/dev/null
+  PMM_INSTALL=create cli_call install web2 >/dev/null
   [ "$(state_get web2 '.interfaces[0].address')" = 10.20.0.2 ]
   [ "$(net_machines lab | paste -sd' ' -)" = "web1 web2" ]
   run cli_call "network remove" -y lab
@@ -179,7 +221,8 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ ! -f "$VIRSH_STUB/pmm-lab.state" ]
   ! grep -qx "allow pmm-lab" "$PMM_BRIDGE_CONF"
   grep -qx "allow br0" "$PMM_BRIDGE_CONF"            # the host's bridge is not pmm's to forget
-  [ ! -d "$PMM_NETWORKS_HOME/lab" ]
+  [[ "$output" == *"Removed network lab (still defined by local)"* ]]
+  [ -f "$PMM_NETWORKS_HOME/lab/network.yml" ]         # a definition is never removed
 }
 
 @test "validate: an interface's network, address and mac; an address another machine holds" {
@@ -199,8 +242,8 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [[ "$output" == *"lan is bridged"* ]]
   [[ "$output" == *"interfaces[3]: network: is required"* ]]
   [[ "$output" == *"lab is listed twice"* ]]
-  cli_call create a >/dev/null
-  run cli_call create b
+  PMM_INSTALL=create cli_call install a >/dev/null
+  PMM_INSTALL=create run cli_call install b
   [ "$status" -ne 0 ]
   [[ "$output" == *"10.20.0.11 on lab is another machine's"* ]]
   # with no backend, a machine on a network does not validate
@@ -272,7 +315,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
 
 @test "implode takes the networks with it" {
   cli_call "network create" lab --kind nat --subnet 10.20.0.0/24 >/dev/null
-  cli_call up w --image deb >/dev/null
+  cli_call run deb --name w >/dev/null
   run cli_call implode -y
   [ "$status" -eq 0 ]
   [ ! -f "$VIRSH_STUB/pmm-lab.state" ]
