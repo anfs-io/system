@@ -12,6 +12,8 @@
 #
 # Commands:
 #   src <add|remove|list|ssh|update>   the source lists (~/.config/anfs/{user,system}.list)
+#   iso <list|show|pull|add|...>       the ISO catalogue and store (lib/anfs/iso.sh; pmm and
+#                                      ventoy have the same group)
 #   install [-y] <source>...           every resource of each source, tool by tool
 #   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
 #                                      your own repo, and the steps installed packages bring
@@ -38,6 +40,8 @@ done
 # shellcheck source=/dev/null
 source "$ANFS_LIB/sources.sh"
 anfs_gitsrc_env
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/iso.sh" ]]; then source "$ANFS_LIB/iso.sh"; fi
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below
 # shellcheck source=/dev/null
@@ -53,6 +57,8 @@ cli_cmd "src remove" "Take a source off your list" --alias rm --arg "source"
 cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "[source]"
 cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
 never pulled)" --arg "[source...]"
+# The iso group is lib/anfs/iso.sh's, the same in every tool that uses ISOs
+! declare -F anfs_iso_cli >/dev/null || anfs_iso_cli
 cli_cmd install "Install everything a source holds: its packages (ppm),
 containers (pcm), machines (pmm), skills (psm)
 and spaces (wsm), in that order. To pick single resources use the

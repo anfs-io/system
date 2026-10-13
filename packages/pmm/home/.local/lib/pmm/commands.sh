@@ -55,7 +55,7 @@ cli_cmd "image export" "Write the build as one standalone qcow2" \
   --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image remove" "Delete every build of the image; the definition is kept" --alias rm \
   --opt "-y --yes: Do not ask" --opt "-f --force: Even if other builds or machines are on it" --arg "image..."
-cli_cmd "image prune" "Delete superseded builds nothing is on" --opt "--isos: The ISOs the images name too"
+cli_cmd "image prune" "Delete superseded builds nothing is on"
 cli_cmd "image path" "Print the definition directory" \
   --opt "--disk: The built disk instead" --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image cd" "Change to an image definition (requires pmm.zsh)" --arg "[image]"
@@ -72,6 +72,8 @@ cli_cmd "network install" "Make networks from their definitions; source/ is ever
 that source defines. A machine's networks are installed with it" --arg "network-spec..."
 cli_cmd "network remove" "Take networks away; refused while machines are on one. A definition
 is kept" --alias rm --opt "-y --yes: Do not ask" --arg "network..."
+# The iso group is lib/anfs/iso.sh's, the same in every tool that uses ISOs
+anfs_iso_cli
 cli_cmd install "Create and start machines; source/ is everything that source defines:
 its images are built, its networks installed, then its machines (\`anfs
 install\` uses this). PMM_INSTALL=create starts nothing, PMM_INSTALL=validate

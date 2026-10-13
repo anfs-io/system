@@ -84,9 +84,10 @@ image, each on the build it was created from until `pmm reset` moves it onto the
 Definition: machines/<name>/machine.yml in a source, or in $PMM_MACHINES_HOME
   image: debian-13          an image, name or source/name; required unless media: is given
   media: [proxmox]          ISOs (a CD) and disk images (a USB drive) to boot from when the disk
-                            does not: a file, or an id in the ISO catalogue (isos/isos.yml in a
-                            source; downloaded into ~/.cache/anfs/isos). With no image: a blank
-                            machine, an empty disk for what the media install (qemu)
+                            does not: a file, or an id in the ISO catalogue (`pmm iso list`;
+                            downloaded into ~/.cache/anfs/isos when the machine starts, or ahead
+                            of time by `pmm iso pull`). With no image: a blank machine, an empty
+                            disk for what the media install (qemu)
   profile: medium           a named shape (below)
   cpus: 4                   each of these overrides the profile
   memory: 8G                8G, 512M, or a number of MB
@@ -157,7 +158,7 @@ machine or a snapshot is on is kept: `image prune` leaves it, `image remove` ref
 Access: each root image gets its own ssh key ($PMM_DATA_HOME/keys/<image>); the user's
 password is locked unless user.password_hash is set.
 
-Files: ISOs in $ANFS_ISO_HOME (~/.cache/anfs/isos, shared with ventoy), builds in
+Files: ISOs in $ANFS_ISO_HOME (~/.cache/anfs/isos, shared with ventoy: `pmm iso`), builds in
 $PMM_DATA_HOME/images/<name>/<arch>/, exports in $PMM_DATA_HOME/exports/.
 EOF
 }
@@ -203,7 +204,7 @@ shift 2>/dev/null || true
 # One catalogue per process (lib/anfs/catalog.sh): images for the image commands, machines for
 # the rest. A tab press reads file names only and loads neither.
 case "$cmd" in
-  completion|__complete|help|-h|--help|--version) ;;
+  completion|__complete|help|-h|--help|--version|iso) ;;
   image) load_images ;;
   *) load_machines ;;
 esac

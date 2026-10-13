@@ -258,10 +258,10 @@ cmd_image_remove() {
   done
 }
 
-# `pmm image prune [--isos]`: delete superseded build disks that no other build and no machine
-# is on, stale build workspaces, and with --isos the ISOs the images name
+# `pmm image prune`: delete superseded build disks that no other build and no machine is on, and
+# stale build workspaces. The ISOs are not pmm's alone: `pmm iso remove`, `pmm iso prune`
 cmd_image_prune() {
-  local isos=${CLI_OPT[isos]:-false} f dir key d d_key freed=0
+  local f dir key d d_key freed=0
   for f in "$PMM_DATA_HOME"/images/*/*/meta.yml; do
     [[ -f "$f" ]] || continue
     dir=$(dirname "$f")
@@ -281,13 +281,5 @@ cmd_image_prune() {
     [[ -f "${d}pid" ]] && pid_alive "$(cat "${d}pid")" && continue
     rm -rf "$d"
   done
-  # the store is shared (lib/anfs/iso.sh): only the ISOs an image names are pmm's to delete
-  if $isos; then
-    while IFS= read -r f; do
-      [[ -n "$f" && -f "$(iso_dir)/$f" ]] || continue
-      echo "Deleting $(tilde "$(iso_dir)/$f")"
-      rm -f "$(iso_dir)/$f" "$(iso_dir)/$f.sha256" "$(iso_dir)/$f.part"
-    done < <(iso_names)
-  fi
   echo "Pruned ($freed superseded disks)"
 }

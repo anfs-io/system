@@ -25,7 +25,7 @@ media_problem() {
   if _media_is_path "$m"; then
     [[ -f "$(_media_expand "$m")" ]] || echo "warning media: $(_media_expand "$m") is not a file here"
   elif ! command -v yq >/dev/null 2>&1 || ! anfs_iso_known "$m"; then
-    echo "error media: '$m' is not a file or an ISO in the catalogue (isos/isos.yml in a source)"
+    echo "error media: '$m' is not a file or an ISO in the catalogue (pmm iso list)"
   fi
 }
 
