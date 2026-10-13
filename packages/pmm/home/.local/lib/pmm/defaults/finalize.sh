@@ -30,7 +30,7 @@ UNIT
 systemctl enable pmm-hostkeys.service
 
 # What built this image
-printf 'image=%s\narch=%s\nbuilt=%s\n' "${PIM_IMAGE:-}" "${PIM_ARCH:-}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/pmm-image
+printf 'image=%s\narch=%s\nbuilt=%s\n' "${ANFS_IMAGE_NAME:-}" "${ANFS_IMAGE_ARCH:-}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > /etc/pmm-image
 
 # Logs, history, temp files
 journalctl --rotate >/dev/null 2>&1 || true

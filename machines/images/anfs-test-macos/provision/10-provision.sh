@@ -7,7 +7,7 @@
 # /src); every VM is a clone of the result, so this happens once per build, not once per box.
 set -uo pipefail
 
-PUBKEY="${PIM_SSH_PUBKEY:?PIM_SSH_PUBKEY must be set}"
+PUBKEY="${ANFS_IMAGE_SSH_PUBKEY:?ANFS_IMAGE_SSH_PUBKEY must be set}"
 
 # owner: admin with a password (so the sudo prompt is testable); other: no admin.
 # Same two users, same password rule as the containers.

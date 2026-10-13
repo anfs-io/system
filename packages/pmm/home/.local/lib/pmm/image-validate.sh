@@ -74,10 +74,20 @@ validate_image() {
   [[ -z "$from" ]] || for f in preseed.cfg kickstart.ks; do
     [[ ! -f "$dir/$f" ]] || _v_warn "$f is ignored on a from: image (its root's installed it)"
   done
+  # Every file in provision/ is a step, and something has to run it: its provisioner is there,
+  # has what it needs on this host (check), and can say what the step depends on (fingerprint)
+  local ext bin out seen=" "
+  prov_image_env "$id" "$(img_arches "$id" 2>/dev/null | head -n1)"
   for f in "$dir"/provision/*; do
-    [[ -e "$f" ]] || continue
-    [[ "$f" == *.sh ]] || { _v_warn "provision/$(basename "$f") is not *.sh and is never run"; continue; }
+    [[ -f "$f" ]] || continue   # a directory is not a step: a provisioner's own tree may be one
+    ext=$(prov_ext "$f") || { _v_err "provision/$(basename "$f") has no extension: a step's provisioner is its extension (10-base.sh)"; continue; }
+    bin=$(prov_bin "$ext") || { _v_err "provision/$(basename "$f"): nothing provides .$ext steps: install the package that does"; continue; }
     [[ -s "$f" ]] || _v_warn "provision/$(basename "$f") is empty"
+    if [[ "$seen" != *" $ext "* ]]; then
+      seen+="$ext "
+      out=$(prov_call check "$f" 2>&1) && [[ -z "$out" ]] || { _v_err ".$ext steps: ${out:-its check failed}"; continue; }
+    fi
+    out=$(prov_call fingerprint "$f" 2>&1 >/dev/null) || _v_err "provision/$(basename "$f"): ${out:-its fingerprint failed}"
   done
   # What the image directory used to be: said, not silently ignored
   [[ ! -d "$dir/scripts" ]] || _v_err "scripts/ is never run: the steps are in provision/ now"
@@ -103,9 +113,7 @@ validate_image() {
       done < <(yq -r '.build | to_entries | .[] | .key + "=" + (.value | tostring)' "$yml")
     fi
   fi
-  if img_has_anfs "$id"; then
-    case "$(img_get "$id" .anfs.sources pushed)" in host|pushed) ;; *) _v_err "anfs.sources must be host or pushed" ;; esac
-  fi
+  [[ "$(yq -r 'has("anfs")' "$yml")" != true ]] || _v_err "anfs: is gone: a step holds it now (provision/50-toolkit.anfs, with the same keys)"
   return 0
 }
 

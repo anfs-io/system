@@ -5,23 +5,27 @@
 # the rendered answer file (and the image's public key) are appended to the initrd as one more
 # cpio archive — the kernel unpacks every archive it is given — and the installer runs unattended
 # until it powers the VM off. A child image (from:) starts as a qcow2 overlay on its parent's
-# build instead. Both then boot from disk, run their provision steps over ssh, run pmm's finalize step,
-# shut down, and are registered under a key hashing everything that went into them.
+# build instead. Both then boot from disk, have each provision step run by its provisioner
+# (provision.sh), run pmm's finalize step, shut down, and are registered under a key hashing
+# everything that went into them.
 
 PMM_IMAGE_BUILD_VERSION=pmm-image-build-v1
 
 # The cache key of <id>'s build for <arch> (its parent must be built: its key is part of this one).
 # Of image.yml it leaves out what this arch's build does not read, or reads another way:
 # description, machine:, timeouts:, the arch list, and iso: (the ids; this arch's ISO is in the
-# key by its pinned sum, so another arch's ISO, or a renamed id, changes nothing).
+# key by its pinned sum, so another arch's ISO, or a renamed id, changes nothing). A step is in it
+# as what its provisioner's fingerprint names (key_steps). Fails with 1 when the parent has no
+# build, with 2 (and why, on stderr) when a step has no provisioner or its fingerprint fails.
 build_key() {
-  local id="$1" arch="$2" dir parent pkey s f
+  local id="$1" arch="$2" dir parent pkey steps f
   dir=$(img_dir "$id")
   parent=$(img_parent "$id" 2>/dev/null) || parent=""
   if [[ -n "$parent" ]]; then
     pkey=$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)
     [[ -n "$pkey" ]] || return 1
   fi
+  steps=$(key_steps "$id" "$arch") || return 2
   {
     echo "$PMM_IMAGE_BUILD_VERSION"
     yq -o=json -I0 'del(.description, .machine, .iso, .arch, .timeouts) | sort_keys(..)' "$dir/image.yml"
@@ -32,14 +36,11 @@ build_key() {
     else
       echo "parent $pkey"
     fi
-    while IFS= read -r s; do echo "script $(basename "$s") $(_sha256 < "$s")"; done < <(img_scripts "$id")
+    [[ -z "$steps" ]] || printf '%s\n' "$steps"
     if [[ -d "$dir/files" ]]; then
       (cd "$dir/files" && find . -type f | LC_ALL=C sort | while IFS= read -r f; do echo "file $f $(_sha256 < "$f")"; done)
     fi
     echo "finalize $(_sha256 < "$(img_finalize)")"
-    if img_has_anfs "$id" && [[ "$(img_get "$id" .anfs.sources pushed)" == host ]]; then
-      anfs_host_fingerprint
-    fi
   } | _sha256 | cut -c1-16
 }
 
@@ -110,12 +111,17 @@ cmd_image_build() {
 # Usage: build_one <id> <arch> <force> <console>
 build_one() {
   local id="$1" arch="$2" force="$3" console="$4"
-  local name parent key on
+  local name parent key on rc=0
   name=$(img_bname "$id")
   parent=$(img_parent "$id") || parent=""
   [[ -z "$parent" ]] || build_one "$parent" "$arch" false "$console"
 
-  key=$(build_key "$id" "$arch") || die "$id: its parent has no $arch build"
+  key=$(build_key "$id" "$arch") || rc=$?
+  case $rc in
+    0) ;;
+    1) die "$id: its parent has no $arch build" ;;
+    *) die "$id: no build key (pmm image validate $id)" ;;
+  esac
   if ! $force && build_present "$name" "$arch" "$key" "$(img_backend "$id")"; then
     # the build is there, whichever record names it: the key is everything that went into it
     if [[ "$(meta_get "$name" "$arch" .cache_key)" != "$key" || "$(meta_get "$name" "$arch" .id)" != "$id" ]]; then
@@ -140,8 +146,8 @@ build_one() {
 
 _build_qemu() {
   local id="$1" arch="$2" key="$3" parent="$4" console="$5"
-  local name bname user sshkey cpus mem size dir logs port sock vars start rc=0 distro iso s timeout
-  name=$(img_name "$id") bname=$(img_bname "$id")
+  local bname user sshkey cpus mem size dir logs port sock vars start rc=0 distro iso timeout
+  bname=$(img_bname "$id")
   user=$(img_user "$id")
   sshkey=$(img_key "$id")
   cpus=$(img_setting "$id" .build.cpus 2)
@@ -216,26 +222,18 @@ _build_qemu() {
   wait_ssh "$sshkey" "$port" "$user" "$(img_get "$id" .timeouts.ssh "$PMM_IMAGE_SSH_TIMEOUT")" "$BUILD_PID" ||
     die "no ssh; see $(tilde "$logs/boot.log")"
 
+  # From here to the shutdown the guest is reached the way a provisioner reaches it
+  guest_ssh_qemu "$BUILD_W/guest" "$sshkey" "$port" "$user"
+  prov_image_env "$id" "$arch"
+  PROV_ENV+=("${GUEST_ENV[@]}")
   if [[ -z "$parent" ]]; then
     local extra
     extra=$(img_list "$id" .user.authorized_keys)
-    [[ -z "$extra" ]] || printf '%s\n' "$extra" | pmm_ssh "$sshkey" "$port" "$user" 'cat >> ~/.ssh/authorized_keys'
-  fi
-  local files=""
-  if [[ -d "$(img_dir "$id")/files" ]]; then
-    files=/tmp/pmm-files
-    push_dir "$sshkey" "$port" "$user" "$(img_dir "$id")/files" "$files"
+    [[ -z "$extra" ]] || printf '%s\n' "$extra" | "$GUEST_DIR/exec" sh -c "cat >> ~$user/.ssh/authorized_keys"
   fi
   : > "$logs/provision.log"
-  while IFS= read -r s; do
-    _provision "$logs/provision.log" "$(basename "$s")" run_script "$sshkey" "$port" "$user" "$s" \
-      PIM_IMAGE="$name" PIM_ARCH="$arch" PIM_USER="$user" PIM_FILES="$files"
-  done < <(img_scripts "$id")
-  if declare -F build_anfs_step >/dev/null; then
-    build_anfs_step "$id" "$sshkey" "$port" "$user" "$logs/provision.log"
-  fi
-  _provision "$logs/provision.log" finalize run_script "$sshkey" "$port" "$user" "$(img_finalize)" \
-    PIM_IMAGE="$name" PIM_ARCH="$arch"
+  provision_steps "$id" "$logs/provision.log"
+  _provision "$logs/provision.log" finalize prov_run "$(img_finalize)"
 
   echo "Shutting down"
   qemu_stop "$BUILD_PID" "$sock" ssh_poweroff "$sshkey" "$port" "$user"
@@ -252,7 +250,7 @@ _build_qemu() {
   echo "Built $id ($arch) in $(( $(date +%s) - start ))s: $(tilde "$dir/$key.qcow2")"
 }
 
-# Run one provisioning step (a command that runs a script in the guest): its output goes to <log>
+# Run one provisioning step (a command that runs it against the guest): its output goes to <log>
 # (and the terminal with -v); on failure the end of the log is shown and the build stops
 # Usage: _provision <log> <label> <command...>
 _provision() {

@@ -118,7 +118,8 @@ machines/images/<name>/
   image.yml       backend (qemu|tart), distro, arch, iso.<arch>: <catalogue id> | from: <image> | base,
                   user, vars, build: {cpus, memory, disk}, machine:
   preseed.cfg | kickstart.ks   a root image's answer file (${VAR} templated): required
-  provision/*.sh  the steps: run as root over ssh after the install, in name order
+  provision/*     the steps, in name order after the install, each run by the provisioner its
+                  extension names: 10-base.sh (a script, as root in the guest), 50-toolkit.anfs
   files/          copied to the guest for the steps
   test.sh         what `pmm image test` runs on a throwaway boot
   README.md       what the image is for and what a machine gets
@@ -145,8 +146,8 @@ machines/images/<name>/
   `isos/isos.yml` because stack's catalogue is not below core in priority.
 - **`image show` prints what a build reads**: the answer file, the vars, each arch's ISO (its
   file in the store, present or missing), every step with its path (for a child, its parents'
-  first, then its own), the anfs install, finalize, the test and the log directory. `--json` is
-  the same as one object. `_image_plan` (`registry.sh`) produces both.
+  first, then its own; one nothing provides is marked), finalize, the test and the log
+  directory. `--json` is the same as one object, each step with its `provisioner`. `_image_plan` (`registry.sh`) produces both.
 - **`image new <name> --from <image> | --copy <image> [--source <alias>]`** starts a definition
   in `PMM_IMAGES_HOME`, or in a source's clone: a child (`image.yml`, an empty `provision/`, a
   README), or a copy of an image's whole directory (its README and `description:` included, to
@@ -156,8 +157,8 @@ machines/images/<name>/
   new one lands (`--source`), that is said.
 - **The old shape is an error, not ignored**: a `scripts/` directory, a `scripts:` key, and
   `cpus`, `memory` or `disk` at the top level (they are `build:`'s) each fail `validate` with
-  what replaced them. So does a key `build:` does not have, or a value that is not a number or a
-  size. A `from:` image's `distro`, `iso`, `base`, `arch`, `vars` and `user` are warned about:
+  what replaced them, as does an `anfs:` key (it is a step, `provision/50-toolkit.anfs`). So
+  does a key `build:` does not have, or a value that is not a number or a size. A `from:` image's `distro`, `iso`, `base`, `arch`, `vars` and `user` are warned about:
   its root's apply.
 - **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
   and the rendered answer file (plus the image's public key) is appended to the initrd as one
@@ -179,8 +180,9 @@ machines/images/<name>/
     compares, so a machine made from the shadowed definition holds its build like any other.
   - `prune` deletes a `meta@<source>.yml` whose definition is gone.
 - **Builds are cached by key**: a hash of `image.yml` (minus `description`, `machine`, `timeouts`,
-  `arch` and `iso`: the ids), the arch, the ISO's pinned sha256, the answer file, the steps,
-  `files/`, pmm's finalize step and the parent's key. `README.md` is not in it, nor is what
+  `arch` and `iso`: the ids), the arch, the ISO's pinned sha256, the answer file, each step (its
+  name, its provisioner and what its `fingerprint` names), `files/`, pmm's finalize step and the
+  parent's key. `README.md` is not in it, nor is what
   another arch installs from; `build: {cpus, memory}` are.
   `pmm image build` is a no-op while the key is unchanged; `meta.yml` beside each build records
   it, with `tested_key` (the build `image test` last passed) and `exports`.
@@ -189,6 +191,10 @@ machines/images/<name>/
   the records say (the definition moved to another source, or is back at an earlier build), and
   `image build -f` refuses while a machine, a snapshot or another build is on the disk it would
   replace.
+- **A step is run by a provisioner** (`lib/pmm/provision.sh`): see "Provisioners" below. Every
+  file in `provision/` is a step (a directory there is not, nor a dotfile), and one nothing
+  provides fails `validate` and the build: declaring a step and silently not running it is the
+  outcome ruled out, as with a `package.yml` key that has no handler.
 - **Every qemu build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first
   boot by a unit pmm installs), machine-id. An exported image is a new machine wherever it boots.
   A tart build has no finalize step: it ends with a reboot, and `image show` lists none.
@@ -221,10 +227,66 @@ machines/images/<name>/
   `$PMM_DATA_HOME/keys/<name>/`, exports in `$PMM_DATA_HOME/exports/`, build workspaces and logs
   in `$PMM_STATE_HOME/{build,logs}`, ISOs in anfs's store (`lib/anfs/iso.sh`). Settings that are
   only about images are `PMM_IMAGE_*` (`PMM_IMAGE_INSTALL_TIMEOUT`, `PMM_IMAGE_SSH_TIMEOUT`).
-- What a provision script sees is still `PIM_IMAGE`, `PIM_ARCH`, `PIM_USER`, `PIM_FILES` and
-  `PIM_SSH_PUBKEY`: the names are replaced with the provisioner contract, not before.
 - **Out of scope:** deploying to hypervisors or clouds (Proxmox, AWS). pmm's job with an image
   ends at a tested build or an exported qcow2; deployment targets are a later kind of their own.
+
+### Provisioners
+
+The provisioner of `provision/<NN>-<name>.<ext>` is `<ext>`: an executable, the first of
+`$PMM_CONFIG_HOME/provisioners/<ext>` and `~/.local/lib/pmm/provisioners/<ext>` (pmm's own, and
+what another package stows). It is the pattern of pcm's edge providers. pmm ships `sh` and
+`anfs`; anything else is a file another package stows, and pmm does not change to gain it. An
+ansible one would be a stack package stowing `~/.local/lib/pmm/provisioners/yml` and declaring
+`brew: [ansible]`; none is written.
+
+| Verb | Does |
+| --- | --- |
+| `check` | Prints what is missing on the host (a binary, a version) and fails; nothing printed is ready. `validate` runs it once per provisioner an image uses |
+| `fingerprint <step>` | Prints, one per line, the files the step's result depends on, the step first. pmm hashes them into the build key (a directory is walked, sorted; a path is absolute or from the image's directory). One that fails, or names what is not there, fails `validate` and the build, so it is also where a provisioner refuses a step it cannot run |
+| `run <step>` | Runs the step against the guest. stdout and stderr are the step's log; a non-zero exit fails the build |
+
+Every verb runs in the image's directory, with an empty stdin, and is told what is being built.
+`run` is also given the guest, as a way to run something in it and not an ssh session, so the
+same provisioner works wherever the guest is:
+
+| Variable | |
+| --- | --- |
+| `ANFS_IMAGE_NAME`, `ANFS_IMAGE_ARCH`, `ANFS_IMAGE_BACKEND`, `ANFS_IMAGE_DISTRO` | what is being built |
+| `ANFS_IMAGE_USER` | the image's user |
+| `ANFS_IMAGE_DIR` | the definition directory |
+| `ANFS_IMAGE_WORK` | an empty directory for the call's own files, deleted after it (`anfs` writes the file its `fingerprint` names there) |
+| `ANFS_IMAGE_GUEST_EXEC` | `run`: a command line that runs its arguments as root in the guest, stdin passed through (`$ANFS_IMAGE_GUEST_EXEC id -u` prints 0). `sh` needs nothing else |
+| `ANFS_IMAGE_GUEST_PUSH` | `run`: a command line that copies a local path to an absolute guest path, as root: a file, or a directory's contents into that directory |
+| `ANFS_IMAGE_GUEST_TRANSPORT` | `run`: `ssh` today. With `ssh`, also `ANFS_IMAGE_GUEST_HOST`, `_PORT`, `_USER`, `_KEY`, for a provisioner that brings its own connection (ansible) |
+| `ANFS_IMAGE_FILES` | `run`: where `files/` is in the guest, empty when the image has none |
+| `ANFS_IMAGE_SSH_PUBKEY` | `run`: the image's public key |
+
+- **The names are tool-neutral on purpose** (`ANFS_IMAGE_*`): a step written today would run in a
+  container build that set `GUEST_EXEC` to `buildah run <container> --`. pmm's own settings
+  (`PMM_IMAGE_INSTALL_TIMEOUT` and the like) keep pmm's prefix: they configure the tool and a step
+  never sees them. Nothing names the old `PIM`-prefixed variables any more (`provision.bats` holds that).
+- **The two command lines are scripts pmm writes for the build** (`guest_ssh`, `ssh.sh`), in the
+  build's workspace. `exec` quotes each argument for the shell at the other end of ssh, which
+  parses the line again, so a provisioner passes argv and never quotes for the guest. They hide
+  the one thing that differs between backends: a qemu guest's user has passwordless sudo
+  (`sudo -n`); a tart guest's stock account needs its password, so pmm puts an askpass helper in
+  the guest before the first step (`_tart_guest`) and takes it out after the last, with
+  `files/`. A provisioner never sees the password and does not ask which backend it is on.
+- **pmm keeps** the order, pushing `files/`, the log (`_provision`: timing, `-v`, the tail on
+  failure) and finalize. Between "waiting for ssh" and the shutdown, a build reaches the guest
+  only through those two scripts: finalize and `test.sh` are run by `sh` like any `.sh` step.
+- **`sh`** pipes the script to `bash -s` in the guest with every `ANFS_IMAGE_*` that means
+  something there: not the `GUEST` ones, nor `DIR` and `WORK`, which are paths on the host.
+- **`anfs`** installs the toolkit: `sources: pushed` (the guest clones them; the default) or
+  `host` (this machine's source clones are copied in), `repo:`, `packages:`, `installer:`. It is
+  the proof that the seam carries a provisioner that runs on the host and has inputs outside
+  the image directory: its `fingerprint` names a file it writes with each source's commit and a
+  hash of its uncommitted changes' names. It runs `install.sh` as the image's user through
+  `su -l`, not a second ssh login, so it needs nothing but `GUEST_EXEC` and `GUEST_PUSH`.
+- **A provisioner is an entry point**: it sources `lib/anfs/bash.sh` first (`bash.bats` checks
+  pmm's own).
+- Provisioners stay in `lib/pmm/provisioners/` until pcm builds images with them; then they move
+  to `lib/anfs/provisioners/`.
 
 ### Networks (Linux)
 
@@ -1061,7 +1123,8 @@ source "$HOME/.local/lib/anfs/bash.sh"
   exists is that PATH puts `/bin` first in nested login shells and non-interactive ones (see Shell
   Integration), so `env bash` finds 3.2 on a machine that has 5.
 - An entry point is anything that starts its own bash process: the six tools, pcm's edge
-  providers (`lib/pcm/edges/*`), the `pre-commit` hook. A library a tool sources needs no guard,
+  providers (`lib/pcm/edges/*`), pmm's provisioners (`lib/pmm/provisioners/*`), the `pre-commit`
+  hook. A library a tool sources needs no guard,
   and neither does a package's `install.sh`: ppm sources it, so it runs under ppm's bash.
 - `anfs` and `ppm` source it only if it exists. `lib/anfs` is stowed file by file, so a pulled
   source has the file before an install links it, and those two are what repair that.
@@ -1098,8 +1161,8 @@ bats packages/ppm/tests      # ppm: callbacks, meta
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
-bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, list, what is on a
-                             # build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
+bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
+                             # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart
                              # and virsh are stubbed, and PMM_SOCK_DIR is the suite's own
 ```

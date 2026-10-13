@@ -9,7 +9,8 @@ cmd_image_test() {
 }
 
 # Boot <id>'s <arch> build with -snapshot (nothing it does is kept), wait for ssh, run its
-# test.sh as root; records the build as tested when it passes
+# test.sh as root (with the ANFS_IMAGE_* a step sees, but no files/); records the build as tested
+# when it passes
 test_one() {
   local id="$1" arch="$2" name disk key script user sshkey port sock w pid rc=0
   name=$(img_bname "$id")
@@ -33,7 +34,11 @@ test_one() {
   "${QEMU_ARGV[@]}" &
   pid=$!
   if wait_ssh "$sshkey" "$port" "$user" "$(img_get "$id" .timeouts.ssh "$PMM_IMAGE_SSH_TIMEOUT")" "$pid"; then
-    run_script "$sshkey" "$port" "$user" "$script" PIM_IMAGE="$(img_name "$id")" PIM_ARCH="$arch" PIM_USER="$user" || rc=$?
+    # test.sh is a shell script: the sh provisioner runs it, as it does a .sh step
+    guest_ssh_qemu "$w/guest" "$sshkey" "$port" "$user"
+    prov_image_env "$id" "$arch"
+    PROV_ENV+=("${GUEST_ENV[@]}" ANFS_IMAGE_FILES=)
+    prov_run "$script" || rc=$?
   else
     rc=1
   fi

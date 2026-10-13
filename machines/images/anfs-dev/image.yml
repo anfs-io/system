@@ -4,5 +4,3 @@ description: Debian 13 with anfs from the host's sources
 from: debian-13
 build:
   memory: 4096
-anfs:
-  sources: host

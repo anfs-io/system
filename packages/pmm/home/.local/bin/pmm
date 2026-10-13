@@ -150,22 +150,52 @@ starts one
                                    SSH_PUBKEY IMAGE ARCH, and HOSTNAME (the image's name)
                                    unless vars: sets it
                  timeouts: {install: 3600, ssh: 600}
-                 anfs: {sources: pushed|host, repo: <url>, packages: [...]}   install the
-                                   toolkit in the image (host: copy this machine's sources)
   preseed.cfg | kickstart.ks   the answer file a root image installs with (required; a from:
                  image has none). ${VAR} is substituted, $${VAR} is a literal ${VAR}, a name
                  neither vars: nor pmm sets is an error
-  provision/*.sh the steps, run in name order as root over ssh after the install. A from:
-                 image runs its own only: its parent's are in the build it starts from.
-                 env: PIM_IMAGE PIM_ARCH PIM_USER PIM_FILES
-  files/         copied to the guest for the steps ($PIM_FILES)
+  provision/*    the steps, run in name order after the install, each by the provisioner its
+                 extension names (below). A from: image runs its own only: its parent's are
+                 in the build it starts from
+    10-base.sh       a script, run as root in the guest. It sees ANFS_IMAGE_NAME, _ARCH,
+                     _BACKEND, _DISTRO, _USER, _FILES and _SSH_PUBKEY
+    50-toolkit.anfs  installs the anfs toolkit as the image's user. YAML: sources: pushed
+                     (the guest clones them; the default) | host (this machine's clones are
+                     copied in), repo: <url>, packages: [...], installer: <url>
+  files/         copied to the guest for the steps ($ANFS_IMAGE_FILES)
   test.sh        what `pmm image test` runs: the image's, else the nearest up its from: chain
   README.md      what the image is for; never read by a build
+
+Provisioner: an executable named for the extension of the steps it runs, the first of
+$PMM_CONFIG_HOME/provisioners/<ext> and ~/.local/lib/pmm/provisioners/<ext> (pmm's own sh and
+anfs, and what another package stows). A step nothing provides fails `image validate`. It is
+called with a verb, in the image's directory:
+  check                prints what is missing on the host and fails; nothing printed is ready
+  fingerprint <step>   prints, one per line, the files the step's result depends on, the step
+                       first (a directory: the tree under it). They are hashed into the build key
+  run <step>           runs the step against the guest; its output is the step's log, a
+                       non-zero exit fails the build
+Every verb gets what is being built; run also gets the guest, as a way to run something in it
+rather than an ssh session:
+  ANFS_IMAGE_NAME _ARCH _BACKEND _DISTRO      what is being built
+  ANFS_IMAGE_USER                             the image's user
+  ANFS_IMAGE_DIR                              the definition directory
+  ANFS_IMAGE_WORK                             an empty directory for the call, deleted after it
+  ANFS_IMAGE_GUEST_EXEC                       a command line that runs its arguments as root in
+                                              the guest, stdin passed through
+  ANFS_IMAGE_GUEST_PUSH                       a command line that copies a local path to an
+                                              absolute guest path, as root (a directory: its
+                                              contents)
+  ANFS_IMAGE_GUEST_TRANSPORT                  ssh, and with it ANFS_IMAGE_GUEST_HOST, _PORT,
+                                              _USER and _KEY, for one that brings its own
+                                              connection
+  ANFS_IMAGE_FILES                            where files/ is in the guest; empty with none
+  ANFS_IMAGE_SSH_PUBKEY                       the image's public key
+pmm keeps the order, files/, the log and finalize.
 
 Every qemu build ends with pmm's finalize step (package caches, logs, ssh host keys regenerated
 on first boot, machine-id); a tart build ends with a reboot. Builds are cached by a hash of
 image.yml (but description:, machine:, timeouts: and the arch and iso lists), the answer file,
-the steps, files/, this arch's ISO's sha256 and the parent's build; `image build` is a no-op
+what each step's fingerprint names, files/, this arch's ISO's sha256 and the parent's build; `image build` is a no-op
 while that hash is unchanged. A build a machine, a snapshot or another image's build is on is
 kept: `image prune` leaves it, `image remove` refuses, and so does `image build -f`, which would
 replace its disk.
@@ -184,7 +214,7 @@ cmd_cd() {
 }
 
 # pmm's own libraries: every *.sh in PMM_LIB_DIR (defaults/ below it holds the finalize step:
-# data, not sourced). The
+# data, not sourced; provisioners/ the executables that run a provision step). The
 # stowed dir is preferred; next to this script's real path is the fallback (unstowed, or tests)
 pmm_lib_dir() {
   local self="${BASH_SOURCE[0]}" dir link

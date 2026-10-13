@@ -57,10 +57,11 @@ iso: {arm64: {url: https://x/a.iso, sha256: $SHA}}"
   image "$PMM_IMAGES_HOME/c" "distro: debian
 arch: [riscv]"
   image "$PMM_IMAGES_HOME/o" "$(deb_yml 'memory: 4096
+anfs: {sources: host}
 scripts: {defaults: false}')"
   mkdir -p "$PMM_IMAGES_HOME/o/scripts" "$PMM_IMAGES_HOME/o/provision"
   echo 'echo x' > "$PMM_IMAGES_HOME/o/scripts/10-x.sh"
-  : > "$PMM_IMAGES_HOME/o/provision/20-empty.sh"; echo x > "$PMM_IMAGES_HOME/o/provision/notes.txt"
+  : > "$PMM_IMAGES_HOME/o/provision/20-empty.sh"
   v b c o
   [ "$status" -ne 0 ]
   [[ "$output" == *"backend 'vbox'"* ]]
@@ -69,7 +70,8 @@ scripts: {defaults: false}')"
   [[ "$output" == *"scripts/ is never run: the steps are in provision/ now"* ]]
   [[ "$output" == *"scripts: is gone"* ]]
   [[ "$output" == *"provision/20-empty.sh is empty"* ]]
-  [[ "$output" == *"provision/notes.txt is not *.sh and is never run"* ]]
+  [[ "$output" == *"anfs: is gone: a step holds it now (provision/50-toolkit.anfs"* ]]
+  # every file in provision/ is a step now: provision.bats
 }
 
 @test "the shipped images validate: every file a build reads is in the image, every ISO in core's catalogue" {
@@ -79,7 +81,10 @@ scripts: {defaults: false}')"
   [ "$status" -eq 0 ]
   [[ "$output" == *"4 image(s): 0 error(s), 0 warning(s)"* ]]
   [ "$(img_answer_file core/anfs-dev)" = "$(img_dir core/debian-13)/preseed.cfg" ]
-  [ "$(img_scripts core/fedora-44)" = "$(img_dir core/fedora-44)/provision/10-base.sh" ]
+  [ "$(img_steps core/fedora-44)" = "$(img_dir core/fedora-44)/provision/10-base.sh" ]
+  # anfs-dev's toolkit is a step for the anfs provisioner, not a key
+  [ "$(img_steps core/anfs-dev)" = "$(img_dir core/anfs-dev)/provision/50-toolkit.anfs" ]
+  ! grep -rn '^anfs:' "$BATS_TEST_DIRNAME/../../../machines/images"
   [ "$(img_test_script core/anfs-dev)" = "$(img_dir core/debian-13)/test.sh" ]
   # the ids are core's own entries, each pinned
   for i in debian-13 fedora-44; do for a in arm64 amd64; do

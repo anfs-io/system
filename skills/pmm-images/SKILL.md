@@ -1,6 +1,6 @@
 ---
 name: pmm-images
-description: Create or edit pmm VM image definitions — the image.yml, answer file (preseed.cfg / kickstart.ks), provision steps, files/, test.sh and README in an anfs source (a repo's machines/images/<name>/, or ~/.config/pmm/machines/images/<name>/). Use when the user wants a new VM image, to add software or configuration to one (a provision step), to change a shipped image such as debian-13 without forking it (from: its own name), to point an image at an ISO, or to make `pmm image validate` pass.
+description: Create or edit pmm VM image definitions — the image.yml, answer file (preseed.cfg / kickstart.ks), provision steps, files/, test.sh and README in an anfs source (a repo's machines/images/<name>/, or ~/.config/pmm/machines/images/<name>/). Use when the user wants a new VM image, to add software or configuration to one (a provision step), to change a shipped image such as debian-13 without forking it (from: its own name), to point an image at an ISO, to write a provisioner (what runs a kind of step, e.g. ansible), or to make `pmm image validate` pass.
 ---
 
 # pmm image definitions
@@ -13,7 +13,7 @@ and it holds everything a build reads. Nothing is hidden in pmm except the last 
 machines/images/<name>/
   image.yml                    what it is
   preseed.cfg | kickstart.ks   a root image's answer file (Debian | Fedora): required
-  provision/*.sh               the steps, run in name order as root in the guest
+  provision/*                  the steps, run in name order, each by its extension's provisioner
   files/                       copied to the guest for the steps
   test.sh                      what `pmm image test` runs
   README.md                    what the image is for and what a machine gets
@@ -78,7 +78,6 @@ machine:                                  # for machines run from it; never read
   min: {cpus: 2, memory: 4G, disk: 20G}
 user: {name: pmm, password_hash: <crypt>, authorized_keys: [...]}   # a root's; default pmm, locked
 timeouts: {install: 3600, ssh: 600}
-anfs: {sources: host}                     # install the anfs toolkit in the image (see anfs-dev)
 ```
 
 - `build:` is the build's; `machine:` is what `pmm run` gives a machine by default. A machine's
@@ -124,9 +123,25 @@ when editing a copy.
 
 ## Provision steps
 
-`provision/*.sh`, run in name order (`10-base.sh`, `50-app.sh`) as root over ssh, after the
-install (a root) or on the parent's disk (a child). Each gets `PIM_IMAGE`, `PIM_ARCH`, `PIM_USER`
-and, when the image has a `files/` directory, `PIM_FILES`: where it was copied in the guest.
+Every file in `provision/` is a step, run in name order (`10-base.sh`, `50-app.sh`) after the
+install (a root) or on the parent's disk (a child). A step's **extension names the provisioner**
+that runs it. pmm ships two:
+
+- **`.sh`**: a script, run as root in the guest. It sees `ANFS_IMAGE_NAME`, `ANFS_IMAGE_ARCH`,
+  `ANFS_IMAGE_BACKEND`, `ANFS_IMAGE_DISTRO`, `ANFS_IMAGE_USER`, `ANFS_IMAGE_SSH_PUBKEY` and
+  `ANFS_IMAGE_FILES`: where `files/` was copied in the guest, empty when the image has none.
+- **`.anfs`**: installs the anfs toolkit as the image's user. A YAML file, not a script (see
+  `anfs-dev`):
+
+  ```yaml
+  # provision/50-toolkit.anfs
+  sources: host            # this machine's source clones are copied in | pushed (the default):
+                           # the guest fetches install.sh and clones them itself
+  repo: git@github.com:me/dots.git    # optional: install.sh --repo
+  packages: [stack/zsh]               # optional: installed after the toolkit
+  ```
+
+A `.sh` step:
 
 ```bash
 #!/bin/bash
@@ -135,7 +150,7 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -q
 apt-get install -y -q nginx
-install -m 644 "$PIM_FILES/site.conf" /etc/nginx/conf.d/site.conf
+install -m 644 "$ANFS_IMAGE_FILES/site.conf" /etc/nginx/conf.d/site.conf
 systemctl enable nginx
 ```
 
@@ -144,14 +159,71 @@ systemctl enable nginx
 - Don't start what must not run during the build, and don't clean up: every qemu build ends
   with pmm's finalize step (package caches, logs, ssh host keys, machine-id), which an image
   cannot skip or replace. (A tart build has none: it ends with a reboot.)
-- Only `*.sh` run today; `validate` warns about anything else in `provision/`, and about an
-  empty step.
+- A step nothing provides (`50-site.yml` with no `yml` provisioner installed) fails `validate`,
+  and so does a file with no extension: nothing in `provision/` is silently skipped. A directory
+  there is not a step. `validate` warns about an empty one.
 - An image must leave DHCP running on every ethernet interface: pmm configures nothing in a
   guest. `debian-13` does (dhcpcd); a child inherits it.
 
+## Writing a provisioner
+
+A provisioner is an executable named for the extension it runs: `yml` runs `provision/*.yml`.
+pmm looks in `~/.config/pmm/provisioners/<ext>` (yours), then `~/.local/lib/pmm/provisioners/<ext>`
+(pmm's `sh` and `anfs`, and where a package stows one: `packages/<pkg>/home/.local/lib/pmm/provisioners/yml`,
+with what it needs declared in `package.yml`, e.g. `brew: [ansible]`). pmm does not change to gain
+one. Read `sh` (twenty lines) and `anfs` first: `ls "$(dirname "$(command -v pmm)")/../lib/pmm/provisioners"`.
+
+It is called with a verb, in the image's directory, with an empty stdin:
+
+| Verb | Does |
+| --- | --- |
+| `check` | Print what is missing on the host (a binary, a version) and exit non-zero; print nothing when ready. `validate` shows the text |
+| `fingerprint <step>` | Print, one per line, every file the step's result depends on, the step first. A directory is the whole tree under it; a path is absolute or from the image's directory. pmm hashes them into the build key, so leave one out and a change to it rebuilds nothing. Exit non-zero (with why on stderr) for a step you cannot run: `validate` reports it |
+| `run <step>` | Run the step against the guest. stdout and stderr are the step's log; a non-zero exit fails the build |
+
+What it is told, in its environment:
+
+| Variable | |
+| --- | --- |
+| `ANFS_IMAGE_NAME`, `ANFS_IMAGE_ARCH`, `ANFS_IMAGE_BACKEND`, `ANFS_IMAGE_DISTRO` | what is being built |
+| `ANFS_IMAGE_USER` | the image's user |
+| `ANFS_IMAGE_DIR` | the definition directory |
+| `ANFS_IMAGE_WORK` | an empty directory for this call, deleted after it. A `fingerprint` whose inputs are not files writes one here and prints its path |
+| `ANFS_IMAGE_GUEST_EXEC` | `run` only, like the rest: a command line that runs its arguments as root in the guest, stdin passed through |
+| `ANFS_IMAGE_GUEST_PUSH` | a command line: `<local path> <absolute guest path>`, copied as root (a directory: its contents into that directory) |
+| `ANFS_IMAGE_GUEST_TRANSPORT` | `ssh`, and then `ANFS_IMAGE_GUEST_HOST`, `_PORT`, `_USER`, `_KEY` |
+| `ANFS_IMAGE_FILES` | where `files/` is in the guest; empty when the image has none |
+| `ANFS_IMAGE_SSH_PUBKEY` | the image's public key |
+
+```bash
+#!/usr/bin/env bash
+# tgz: pmm provisioner for .tgz steps: the archive, unpacked over / in the guest
+set -euo pipefail
+source "$HOME/.local/lib/anfs/bash.sh"     # every anfs entry point: the bash floor, first
+case "${1:-}" in
+  check)       command -v tar >/dev/null || { echo "tar is not installed"; exit 1; } ;;
+  fingerprint) echo "$2" ;;
+  run)         $ANFS_IMAGE_GUEST_EXEC tar -C / --no-same-owner -xzf - < "$2" ;;
+  *)           echo "tgz: unknown verb '${1:-}'" >&2; exit 1 ;;
+esac
+```
+
+- **Use `ANFS_IMAGE_GUEST_EXEC` and `ANFS_IMAGE_GUEST_PUSH`, unquoted, and nothing else to reach
+  the guest** unless the tool brings its own connection. They are the same on every backend (a
+  tart guest's sudo needs a password; pmm deals with it), and pass arguments as given: no
+  quoting for the far shell. Use the `GUEST_HOST`, `_PORT`, `_USER` and `_KEY` only after
+  checking `ANFS_IMAGE_GUEST_TRANSPORT` is `ssh`; that user is not root, and on a tart guest is
+  the stock account, not the image's user.
+- **A provisioner that runs on the host** (ansible against the guest) lists its whole input tree
+  in `fingerprint`: the playbook, `roles/`, the vars files.
+- pmm keeps the order of the steps, `files/`, the log and finalize. Don't clean up the guest.
+- Test it with a throwaway child: `pmm image new t --from debian-13`, one step, `pmm image
+  validate t`, `pmm image build -v t`.
+
 ## test.sh
 
-Runs as root in a throwaway boot of the build (`-snapshot`: nothing it does is kept). Print
+Runs as root in a throwaway boot of the build (`-snapshot`: nothing it does is kept), with the
+`ANFS_IMAGE_*` a `.sh` step sees (`ANFS_IMAGE_FILES` is empty: `files/` is not copied). Print
 `ok  <what>` lines; a non-zero exit fails the test. An image without one uses the nearest one up
 its `from:` chain, so a child's own `test.sh` should repeat what still matters from its parent's
 and add its own. With none anywhere, `image test` says so and succeeds.
@@ -186,7 +258,7 @@ package set), make a root under a new name with `--copy`.
 
 `pmm image build <image>` builds its parents first and is a no-op while the **build key** is
 unchanged: a hash of `image.yml` (without `description`, `machine`, `timeouts`, and the `arch`
-and `iso` lists), the answer file, the steps, `files/`, the pinned sum of the ISO this arch
+and `iso` lists), the answer file, each step (what its provisioner's `fingerprint` names), `files/`, the pinned sum of the ISO this arch
 installs from, pmm's finalize step and the parent's key. `README.md` is not in it. `pmm image list` says `stale` when the definition changed since the build. A machine
 stays on the build it was made from until `pmm reset <machine>`.
 
@@ -211,6 +283,10 @@ stays on the build it was made from until `pmm reset <machine>`.
 | `iso.arm64: an inline url and sha256 are gone` | move them to a catalogue entry and name its id |
 | `iso.amd64 is missing` | every arch in `arch:` needs an id, or drop the arch |
 | `scripts/ is never run` / `scripts: is gone` | rename the directory `provision/`; delete the key |
+| `anfs: is gone: a step holds it now` | move the key's contents to `provision/50-toolkit.anfs` |
+| `nothing provides .yml steps` | install the package that ships that provisioner, or the file is not a step: move it out of `provision/` |
+| `provision/README has no extension` | a step's extension names its provisioner; notes go in `README.md` |
+| `.yml steps: ansible is not installed` | what that provisioner's `check` printed: install it |
 | `memory: is build.memory now` | move `cpus`, `memory`, `disk` under `build:` |
 | `from: <x> not found in its source or below` | the parent is in a higher-priority source, or misspelt |
 | `distro: is ignored on a from: image` | delete it: a child's distro, arch, ISO, `vars:` and `user:` are its root's |

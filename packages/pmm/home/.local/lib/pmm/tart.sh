@@ -16,8 +16,11 @@
 #
 # Clones are APFS copy-on-write, so they cost seconds and almost no disk. The stock image's own
 # account (user.bootstrap, default admin/admin) is used once with its password to install the
-# image's key; the provision steps then run as root through its sudo. user.name is who `pmm shell` logs in as
-# (a step creates it and authorizes $PIM_SSH_PUBKEY when it is not the bootstrap account).
+# image's key; the provision steps then run as root through its sudo, which wants the password
+# again: pmm puts an askpass helper in the guest before the first step and takes it out after the
+# last, so a provisioner is given a way to be root (guest_ssh, ssh.sh) and never the password.
+# user.name is who `pmm shell` logs in as (a step creates it and authorizes
+# $ANFS_IMAGE_SSH_PUBKEY when it is not the bootstrap account).
 #
 # Shutting down is from inside the guest, then waiting for tart: `tart stop` can return while the
 # guest's last writes are still buffered, and a clone taken then has an older APFS checkpoint.
@@ -81,17 +84,22 @@ _tart_ssh_pw() {  # <ip> <user> <password> [args...]
   return $rc
 }
 
-# Run a local script as root through the bootstrap account's sudo
-_tart_root() {  # <key> <ip> <script> [NAME=value...]
-  local key="$1" ip="$2" script="$3" env="" kv
-  shift 3
-  for kv in "$@"; do env+=" $(shq "$kv")"; done
-  # sudo -A with an askpass helper (sudo -S would read the password from stdin, which carries
-  # the script). The helper holds the stock image's own password, readable only by its account.
+# How a provisioner is root in a tart guest: the bootstrap account's sudo, with an askpass helper
+# (sudo -S would read the password from stdin, which carries the step). The helper holds the
+# stock image's own password, readable only by its account. Sets GUEST_DIR and GUEST_ENV.
+TART_ASKPASS=/tmp/pmm-askpass
+_tart_guest() {  # <dir> <key> <ip>
+  local dir="$1" key="$2" ip="$3"
   printf '#!/bin/sh\necho %s\n' "$(shq "$BOOT_PW")" |
-    _tart_ssh "$key" "$ip" "$BOOT_USER" 'umask 077; cat > /tmp/pmm-askpass && chmod 700 /tmp/pmm-askpass' || return 1
-  _tart_ssh "$key" "$ip" "$BOOT_USER" "SUDO_ASKPASS=/tmp/pmm-askpass sudo -A env$env bash -s" < "$script" 2>&1 | sed 's/^/  | /'
-  return "${PIPESTATUS[0]}"
+    _tart_ssh "$key" "$ip" "$BOOT_USER" "umask 077; cat > $TART_ASKPASS && chmod 700 $TART_ASKPASS" || return 1
+  guest_ssh "$dir" "SUDO_ASKPASS=$TART_ASKPASS sudo -A" "$ip" 22 "$BOOT_USER" "$key" \
+    ssh "${TART_SSH_OPTS[@]}" -o BatchMode=yes -o IdentitiesOnly=yes -i "$key" "$BOOT_USER@$ip"
+}
+
+# Take out of the guest what pmm put there for the steps: files/ (root's), then the helper
+_tart_guest_close() {  # <key> <ip>
+  "$GUEST_DIR/exec" rm -rf /tmp/pmm-files || true
+  _tart_ssh "$1" "$2" "$BOOT_USER" "rm -f $TART_ASKPASS"
 }
 
 _tart_wait() {  # <secs> <command...>: until the command succeeds
@@ -151,13 +159,14 @@ _tart_shutdown() {  # <vm> <pid> <key> <ip>
   wait_exit "$pid" 30 || kill -9 "$pid" 2>/dev/null || true
 }
 
-TART_BUILDING=""
+TART_BUILDING="" TART_GUEST=""
 
 # A failed build: stop its VM and delete it
 _tart_build_cleanup() {
   [[ -n "$BUILD_PID" ]] && pid_alive "$BUILD_PID" && { tart stop "$TART_BUILDING" >/dev/null 2>&1 || kill "$BUILD_PID" 2>/dev/null; wait_exit "$BUILD_PID" 20 || kill -9 "$BUILD_PID" 2>/dev/null; }
   [[ -n "$TART_BUILDING" ]] && tart delete "$TART_BUILDING" >/dev/null 2>&1
-  BUILD_PID="" TART_BUILDING=""
+  [[ -n "$TART_GUEST" ]] && rm -rf "$TART_GUEST"
+  BUILD_PID="" TART_BUILDING="" TART_GUEST=""
   return 0
 }
 
@@ -205,11 +214,16 @@ tart_build() {
   fi
   _tart_wait 300 _tart_ssh "$sshkey" "$ip" "$BOOT_USER" true || die "no key login for $BOOT_USER@$ip"
 
+  TART_GUEST="$PMM_STATE_HOME/build/$bname-$arch"
+  _tart_guest "$TART_GUEST/guest" "$sshkey" "$ip" || die "could not install the askpass helper for $BOOT_USER"
+  prov_image_env "$id" "$arch"
+  PROV_ENV+=("${GUEST_ENV[@]}")
   : > "$log/provision.log"
-  while IFS= read -r s; do
-    _provision "$log/provision.log" "$(basename "$s")" _tart_root "$sshkey" "$ip" "$s" \
-      PIM_IMAGE="$name" PIM_ARCH="$arch" PIM_USER="$user" PIM_SSH_PUBKEY="$(cat "$sshkey.pub")"
-  done < <(img_scripts "$id")
+  provision_steps "$id" "$log/provision.log"
+  # what finalize is to a qemu build: nothing of pmm's own is left in the image
+  _tart_guest_close "$sshkey" "$ip" || die "could not remove the askpass helper"
+  rm -rf "$TART_GUEST"
+  TART_GUEST=""
 
   # A reboot, so whatever the steps set up for boot (synthetic.conf, launchd) is in place
   echo "Rebooting"
@@ -261,7 +275,16 @@ tart_test() {
   echo "== test $id (tart, $key) with $(tilde "$script")"
   pid=$(_tart_run "$vm" "$log/test.log" ${TART_DIRS[@]+"${TART_DIRS[@]}"})
   if ip=$(tart ip "$vm" --wait 180 2>/dev/null) && _tart_wait 300 _tart_ssh "$sshkey" "$ip" "$user" true; then
-    _tart_root "$sshkey" "$ip" "$script" PIM_IMAGE="$name" PIM_ARCH=arm64 PIM_USER="$user" || rc=$?
+    # test.sh is a shell script: the sh provisioner runs it, as it does a .sh step. The copy is
+    # deleted below, and the askpass helper with it
+    if _tart_guest "$PMM_STATE_HOME/build/test-$(img_bname "$id")-arm64/guest" "$sshkey" "$ip"; then
+      prov_image_env "$id" arm64
+      PROV_ENV+=("${GUEST_ENV[@]}" ANFS_IMAGE_FILES=)
+      prov_run "$script" || rc=$?
+    else
+      rc=1
+    fi
+    rm -rf "$PMM_STATE_HOME/build/test-$(img_bname "$id")-arm64"
   else
     rc=1
   fi

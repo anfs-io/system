@@ -38,21 +38,50 @@ wait_ssh() {
   done
 }
 
-# Run a local script as root in the guest, its output prefixed; env is NAME=value pairs
-# Usage: run_script <key> <port> <user> <script> [NAME=value...]
-run_script() {
-  local key="$1" port="$2" user="$3" script="$4" env="" kv
-  shift 4
-  for kv in "$@"; do env+=" $(shq "$kv")"; done
-  pmm_ssh "$key" "$port" "$user" "sudo -n env$env bash -s" < "$script" 2>&1 | sed 's/^/  | /'
-  return "${PIPESTATUS[0]}"
+# How a provisioner reaches a guest over ssh (provision.sh): two scripts in <dir>, and GUEST_ENV,
+# the ANFS_IMAGE_GUEST_* it is told them by. exec runs its arguments as root in the guest, each
+# quoted for the shell at the other end of ssh, which parses the command line again; push copies
+# a file, or a directory's contents, to a guest path through it. <sudo> is how the user becomes
+# root there, and the rest is the ssh command line up to the remote command.
+# Usage: guest_ssh <dir> <sudo> <host> <port> <user> <key> <ssh argv...>
+guest_ssh() {
+  local dir="$1" sudo="$2" host="$3" port="$4" user="$5" key="$6"
+  shift 6
+  [[ "$dir" != *[[:space:]]* ]] || die "$dir has a space in it: a provisioner is given the path as a command line"
+  mkdir -p "$dir"
+  {
+    printf '#!%s\n# pmm: run the arguments as root in the guest being built\n' "$BASH"
+    printf 'SSH=(%s)\nSUDO=%q\n' "$(printf '%q ' "$@")" "$sudo"
+    cat <<'EXEC'
+q=""
+for a in "$@"; do q+=" '${a//\'/\'\\\'\'}'"; done
+exec "${SSH[@]}" "$SUDO --$q"
+EXEC
+  } > "$dir/exec"
+  {
+    printf '#!%s\n# pmm: copy a local path to a path in the guest being built, as root\n' "$BASH"
+    cat <<'PUSH'
+x="$(dirname "$0")/exec"
+[[ $# -eq 2 && -e "$1" ]] || { echo "usage: push <local path> <guest path>" >&2; exit 64; }
+if [[ -d "$1" ]]; then
+  tar -C "$1" -cf - . | "$x" sh -c 'mkdir -p "$1" && tar -C "$1" --no-same-owner -xf -' sh "$2"
+else
+  "$x" sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1"' sh "$2" < "$1"
+fi
+PUSH
+  } > "$dir/push"
+  chmod 700 "$dir/exec" "$dir/push"
+  GUEST_DIR="$dir"
+  GUEST_ENV=("ANFS_IMAGE_GUEST_EXEC=$dir/exec" "ANFS_IMAGE_GUEST_PUSH=$dir/push" ANFS_IMAGE_GUEST_TRANSPORT=ssh
+             "ANFS_IMAGE_GUEST_HOST=$host" "ANFS_IMAGE_GUEST_PORT=$port" "ANFS_IMAGE_GUEST_USER=$user"
+             "ANFS_IMAGE_GUEST_KEY=$key" "ANFS_IMAGE_SSH_PUBKEY=$(cat "$key.pub" 2>/dev/null || true)")
 }
 
-# Copy a local directory into the guest at <dest> (tar over ssh)
-# Usage: push_dir <key> <port> <user> <dir> <dest>
-push_dir() {
-  local key="$1" port="$2" user="$3" dir="$4" dest="$5"
-  tar -C "$dir" -cf - . | pmm_ssh "$key" "$port" "$user" "mkdir -p $(shq "$dest") && tar -C $(shq "$dest") -xf -"
+# A qemu guest: the image's user on the forwarded port, who has passwordless sudo
+# Usage: guest_ssh_qemu <dir> <key> <port> <user>
+guest_ssh_qemu() {
+  local host="${PMM_SSH_HOST:-127.0.0.1}"
+  guest_ssh "$1" "sudo -n" "$host" "$3" "$4" "$2" ssh "${PMM_SSH_OPTS[@]}" -i "$2" -p "$3" "$4@$host"
 }
 
 # The guest's own poweroff (for qemu_stop); the connection drops, so its status is ignored

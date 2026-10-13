@@ -90,8 +90,9 @@ cmd_image_new() {
 Built on \`$(img_name "$base")\`: its build is this one's starting disk, so its user, its ssh key and
 everything its own steps installed are already there.
 
-- \`provision/*.sh\` run as root over ssh, in name order (none yet)
-- \`files/\` is copied to the guest for them (\`\$PIM_FILES\`)
+- \`provision/*\` are the steps, run in name order (none yet). A \`.sh\` step is a script run
+  as root in the guest; another extension is another provisioner's
+- \`files/\` is copied to the guest for them (\`\$ANFS_IMAGE_FILES\`)
 - \`test.sh\` is what \`pmm image test $name\` runs; without one it is $(img_name "$base")'s
 
 \`pmm image show $name\` lists what a build reads; \`pmm image build --test $name\` builds it.

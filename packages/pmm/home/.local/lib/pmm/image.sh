@@ -87,11 +87,12 @@ img_answer_file() {
   echo "$(img_dir "$root")/$file"
 }
 
-# The steps a build of <id> runs, in name order: its own provision/*.sh. A child's build starts
-# from its parent's, so the parent's steps are not run again.
-img_scripts() {
+# The steps a build of <id> runs, in name order: every file in its own provision/, each run by
+# the provisioner its extension names (provision.sh). A child's build starts from its parent's,
+# so the parent's steps are not run again.
+img_steps() {
   local f
-  for f in "$(img_dir "$1")/provision"/*.sh; do
+  for f in "$(img_dir "$1")/provision"/*; do
     if [[ -f "$f" ]]; then echo "$f"; fi
   done | LC_ALL=C sort
 }

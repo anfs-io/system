@@ -252,9 +252,8 @@ cmd_image_list() {
 #   var <name> <value> <base64>      the root's vars:; <value> has \n for a newline, to be one line
 #   iso <arch> <id> <file> <state>   the ISO each arch installs from: present | missing | unknown
 #   base <oci image>                 tart
-#   step <label> <image> <file>      the provision steps, the root's first, each image's anfs
-#                                    install (no file) after its own; then finalize, pmm's (no
-#                                    image; qemu)
+#   step <label> <image> <file> <provisioner>   the provision steps, the root's first; then
+#                                    finalize, pmm's (no image; qemu)
 #   test <file>                      test.sh: the image's, or the nearest up its chain
 #   logs <dir>                       where a build's logs go, for the arch this host builds
 _image_plan() {
@@ -282,11 +281,10 @@ _image_plan() {
   fi
   for (( i = ${#chain[@]} - 1; i >= 0; i-- )); do
     cid="${chain[$i]}"
-    while IFS= read -r f; do anfs_row step "$(basename "$f")" "$cid" "$f"; done < <(img_scripts "$cid")
-    ! img_has_anfs "$cid" || anfs_row step "anfs install ($(img_get "$cid" .anfs.sources pushed))" "$cid" ""
+    while IFS= read -r f; do anfs_row step "$(basename "$f")" "$cid" "$f" "$(prov_ext "$f" || true)"; done < <(img_steps "$cid")
   done
   # a tart build ends with a reboot instead (tart_build)
-  [[ "$(img_backend "$root")" == tart ]] || anfs_row step finalize "" "$(img_finalize)"
+  [[ "$(img_backend "$root")" == tart ]] || anfs_row step finalize "" "$(img_finalize)" sh
   f=$(img_test_script "$id" 2>/dev/null) || f=""
   [[ -z "$f" ]] || anfs_row test "$f"
   arch=$(host_arch)
@@ -326,8 +324,7 @@ cmd_image_show() {
       iso)    _plan_line "iso $a" "${b:-(none)}$([[ -z "$c" ]] || echo "  ($(tilde "$c"), $d)")$([[ -z "$b" || "$d" != unknown ]] || echo "  (not in the catalogue)")" ;;
       base)   _plan_line base "$a" ;;
       step)   if [[ -z "$b" ]]; then _plan_line provision "$(printf '%-*s (pmm) %s' "$w" "$a" "$(tilde "$c")")"
-              elif [[ -z "$c" ]]; then _plan_line provision "$(printf '%-*s (pmm) %s' "$w" "$a" "$b: image.yml anfs:")"
-              else _plan_line provision "$(printf '%-*s %s' "$w" "$a" "$(tilde "$c")")"
+              else _plan_line provision "$(printf '%-*s %s%s' "$w" "$a" "$(tilde "$c")" "$([[ -z "$d" ]] || prov_bin "$d" >/dev/null || echo "  (nothing provides .$d steps)")")"
               fi ;;
       test)   _plan_line test "$(tilde "$a")" ;;
       logs)   grep -q "^test$ANFS_US" <<< "$plan" || _plan_line test "(none: image test has nothing to run)"
@@ -371,7 +368,7 @@ _image_show_json() {
       logs)   logs=$(_js "$a") ;;
       var)    vars+="${vars:+,}$(_anfs_json_str "$a"):$(_anfs_json_str "$(var_value "=$c")")" ;;
       iso)    isos+="${isos:+,}$(_anfs_json_str "$a"):{\"id\":$(_js "$b"),\"file\":$(_js "$c"),\"state\":$(_js "$d")}" ;;
-      step)   steps+="${steps:+,}{\"step\":$(_js "$a"),\"image\":$(_js "$b"),\"file\":$(_js "$c")}" ;;
+      step)   steps+="${steps:+,}{\"step\":$(_js "$a"),\"image\":$(_js "$b"),\"file\":$(_js "$c"),\"provisioner\":$(_js "$d")}" ;;
     esac
   done <<< "$plan"
   while IFS= read -r a; do chain+="${chain:+,}$(_anfs_json_str "$a")"; done < <(img_chain "$id" 2>/dev/null | tail -n +2)

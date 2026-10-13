@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pmm end to end, for real: qemu with hvf (macOS) or kvm (Linux), the host's arch. The image half
-# first (validate, build, test, export), then machines from that build.
+# first (validate, build, test, export, a child whose steps two provisioners run), then machines
+# from that build.
 # Usage: packages/pmm/tests/e2e [debian|fedora]   (default: debian)
 #
 # Runs the working tree's pmm, with the working tree's lib/anfs, against an isolated HOME (a temp
@@ -55,6 +56,29 @@ step() {
   fi
 }
 pmm() { "$PMM" "$@"; }
+# A provisioner of the run's own, for .probe steps: it fails unless it was given everything the
+# contract names and is root in the guest through the command line it was handed, then leaves
+# two files there, one written through GUEST_EXEC and one copied by GUEST_PUSH
+mkdir -p "$PMM_CONFIG_HOME/provisioners"
+cat > "$PMM_CONFIG_HOME/provisioners/probe" <<'PROBE'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$1" in
+  check) ;;
+  fingerprint) echo "$2" ;;
+  run)
+    for v in NAME ARCH BACKEND DISTRO USER DIR WORK FILES SSH_PUBKEY GUEST_EXEC GUEST_PUSH GUEST_TRANSPORT \
+             GUEST_HOST GUEST_PORT GUEST_USER GUEST_KEY; do
+      n="ANFS_IMAGE_$v"; [[ -n "${!n:-}" ]] || { echo "$n is not set"; exit 1; }
+    done
+    uid=$($ANFS_IMAGE_GUEST_EXEC id -u)
+    [[ "$uid" == 0 ]] || { echo "GUEST_EXEC id -u: $uid"; exit 1; }
+    echo "probe: $ANFS_IMAGE_NAME is root in the guest over $ANFS_IMAGE_GUEST_TRANSPORT"
+    $ANFS_IMAGE_GUEST_EXEC sh -c 'cat > "$1"' sh "/etc/probe by exec" < "$2"
+    $ANFS_IMAGE_GUEST_PUSH "$2" /etc/probe-pushed ;;
+esac
+PROBE
+chmod +x "$PMM_CONFIG_HOME/provisioners/probe"
 mkdir -p "$root/share" "$PMM_MACHINES_HOME" && echo shared > "$root/share/f"
 printf 'small: {cpus: 1, memory: 1G}\n' > "$PMM_MACHINES_HOME/profiles.yml"
 
@@ -66,10 +90,12 @@ step "image build --test"             pmm image build --test "$img"
 step "rebuild is a cache hit"         bash -c "'$PMM' image build $img | grep -q 'is up to date'"
 step "image list: built and tested"   bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
 step "image export -c, a standalone qcow2" bash -c "'$PMM' image export -c -o '$root/out.qcow2' $img && qemu-img check -q '$root/out.qcow2' && ! qemu-img info '$root/out.qcow2' | grep -q 'backing file'"
-step "image new --from: a child, in the local source" bash -c "'$PMM' image new web --from $img && printf '#!/bin/bash\necho web > /etc/web-image\n' > '$PMM_IMAGES_HOME/web/provision/50-web.sh' && '$PMM' image validate web"
-step "the child builds on $img's build and passes its test.sh" bash -c "'$PMM' image build --test web | tee '$root/web.log' && grep -q '$img (.*) is up to date' '$root/web.log' && grep -q '== 50-web.sh' '$root/web.log' && ! grep -q '10-base.sh' '$root/web.log'"
-step "image show web: both images' steps; built and tested" bash -c "[ \"\$('$PMM' image show --json web | yq -p json -r '[.provision[].step] | join(\",\")')\" = 10-base.sh,50-web.sh,finalize ] && [ \"\$('$PMM' image list --json web | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
-step "a machine from the child has its step's work" bash -c "'$PMM' run web --rm >/dev/null && '$PMM' exec web -- cat /etc/web-image | grep -qx web && '$PMM' down web >/dev/null"
+step "image new --from: a child, in the local source" bash -c "'$PMM' image new web --from $img && mkdir '$PMM_IMAGES_HOME/web/files' && echo from-files > '$PMM_IMAGES_HOME/web/files/hello' && printf '#!/bin/bash\nset -e\necho \"\$ANFS_IMAGE_NAME \$ANFS_IMAGE_ARCH \$ANFS_IMAGE_USER\" > /etc/web-image\ncp \"\$ANFS_IMAGE_FILES/hello\" /etc/web-file\n' > '$PMM_IMAGES_HOME/web/provision/50-web.sh' && echo probed > '$PMM_IMAGES_HOME/web/provision/60-root.probe' && '$PMM' image validate web"
+step "a step nothing provides fails validate" bash -c "echo x > '$PMM_IMAGES_HOME/web/provision/70-site.yml'; '$PMM' image validate web > '$root/v.log' 2>&1; rc=\$?; rm '$PMM_IMAGES_HOME/web/provision/70-site.yml'; cat '$root/v.log'; [ \$rc -ne 0 ] && grep -q 'nothing provides .yml steps' '$root/v.log'"
+step "the child builds on $img's build: a .sh step, then the run's own provisioner, in name order; it passes $img's test.sh" bash -c "'$PMM' image build --test web | tee '$root/web.log' && grep -q '$img (.*) is up to date' '$root/web.log' && [ \"\$(grep -o '^== [^ ]*' '$root/web.log' | paste -sd' ' -)\" = '== build == 50-web.sh == 60-root.probe == finalize == test' ] && ! grep -q '10-base.sh' '$root/web.log' && grep -q 'probe: web is root in the guest over ssh' '$PMM_STATE_HOME/logs/web-$arch/provision.log'"
+step "image show web: both images' steps and what runs each; built and tested" bash -c "[ \"\$('$PMM' image show --json web | yq -p json -r '[.provision[] | .step + \":\" + .provisioner] | join(\",\")')\" = 10-base.sh:sh,50-web.sh:sh,60-root.probe:probe,finalize:sh ] && [ \"\$('$PMM' image list --json web | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
+step "a machine from the child has both steps' work, and nothing of the build's" bash -c "'$PMM' run web --rm >/dev/null && '$PMM' exec web -- 'cat /etc/web-image /etc/web-file \"/etc/probe by exec\" /etc/probe-pushed; ls /tmp/pmm-files 2>/dev/null | wc -l' | paste -sd, - | tee /dev/stderr | grep -qx 'web $arch pmm,from-files,probed,probed,0' && '$PMM' down web >/dev/null"
+step "a file the step's fingerprint names changes the build key" bash -c "echo again >> '$PMM_IMAGES_HOME/web/provision/60-root.probe' && [ \"\$('$PMM' image list --json web | yq -p json -r '.[0].state')\" = stale ]"
 step "image remove is refused while the child is built on it" bash -c "! '$PMM' image remove -y $img"
 step "image remove web"               pmm image remove -y web
 

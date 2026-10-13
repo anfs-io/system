@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# sh — pmm provisioner for .sh steps: the script, run as root in the guest
+#
+# Verbs (see pmm's provision.sh):
+#   check                nothing: bash is in every guest pmm builds
+#   fingerprint <step>   the step
+#   run <step>           the script is piped to bash in the guest. It sees every ANFS_IMAGE_*
+#                        this was called with that means something there: NAME, ARCH, BACKEND,
+#                        DISTRO, USER, FILES, SSH_PUBKEY. Not the GUEST ones (how the host
+#                        reaches it), nor DIR and WORK (paths on the host)
+set -euo pipefail
+# The bash floor: provisioners are their own processes, so each sources it (lib/anfs/bash.sh)
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
+
+case "${1:-}" in
+  check) ;;
+  fingerprint) echo "${2:?fingerprint <step>}" ;;
+  run)
+    step="${2:?run <step>}"
+    env=()
+    for v in $(compgen -v ANFS_IMAGE_); do
+      case "$v" in ANFS_IMAGE_GUEST_*|ANFS_IMAGE_DIR|ANFS_IMAGE_WORK) ;; *) env+=("$v=${!v}") ;; esac
+    done
+    # shellcheck disable=SC2086
+    exec ${ANFS_IMAGE_GUEST_EXEC:?} env ${env[@]+"${env[@]}"} bash -s < "$step" ;;
+  *) echo "sh: unknown verb '${1:-}' (check fingerprint run)" >&2; exit 1 ;;
+esac

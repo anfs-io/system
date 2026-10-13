@@ -79,6 +79,7 @@ need_old_bash() {
   local f first
   for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm}/home/.local/bin/* \
            "$REPO"/packages/pcm/home/.local/lib/pcm/edges/{local,cloudflare-tunnel} \
+           "$REPO"/packages/pmm/home/.local/lib/pmm/provisioners/* \
            "$REPO"/packages/dev/home/.config/git/ppm-hooks/pre-commit; do
     first=$(grep -n 'lib/anfs/\|\$ANFS_LIB/' "$f" | grep 'source ' | head -1)
     [[ "$first" == *bash.sh* ]] || { echo "$f: first lib/anfs source is: $first"; return 1; }

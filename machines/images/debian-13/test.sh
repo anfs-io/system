@@ -7,4 +7,4 @@ test -s /etc/ssh/ssh_host_ed25519_key && echo "ok  host keys were generated on t
 test -s /etc/machine-id && echo "ok  machine-id was generated on this boot"
 systemctl is-active --quiet dhcpcd && echo "ok  dhcpcd looks after every interface"
 dpkg -s qemu-guest-agent >/dev/null && echo "ok  qemu-guest-agent installed"
-sudo -n -u "${PIM_USER:-pmm}" true && echo "ok  ${PIM_USER:-pmm} has passwordless sudo"
+sudo -n -u "${ANFS_IMAGE_USER:-pmm}" true && echo "ok  ${ANFS_IMAGE_USER:-pmm} has passwordless sudo"

@@ -56,20 +56,22 @@ setup() { setup_images; }
   [[ "$output" == *"cycle"* ]]
 }
 
-@test "steps: an image's own provision/*.sh in name order; a child does not rerun its parent's" {
+@test "steps: every file in an image's own provision/, in name order; a child does not rerun its parent's" {
   image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
   mkdir -p "$PMM_IMAGES_HOME/d/provision"
   echo 'echo app' > "$PMM_IMAGES_HOME/d/provision/50-app.sh"
   echo 'echo base' > "$PMM_IMAGES_HOME/d/provision/10-base.sh"
-  echo 'notes' > "$PMM_IMAGES_HOME/d/provision/README"
+  echo 'sources: pushed' > "$PMM_IMAGES_HOME/d/provision/30-kit.anfs"
+  # a directory is not a step, nor is what is in it
+  mkdir -p "$PMM_IMAGES_HOME/d/provision/tree"; echo 'echo no' > "$PMM_IMAGES_HOME/d/provision/tree/00-no.sh"
   image "$PMM_IMAGES_HOME/c" "from: d"
   mkdir -p "$PMM_IMAGES_HOME/c/provision"
   echo 'echo c' > "$PMM_IMAGES_HOME/c/provision/01-c.sh"
   image "$PMM_IMAGES_HOME/e" "$(deb_yml)"
   load_images
-  [ "$(img_scripts local/d | paste -sd' ' -)" = "$PMM_IMAGES_HOME/d/provision/10-base.sh $PMM_IMAGES_HOME/d/provision/50-app.sh" ]
-  [ "$(img_scripts local/c)" = "$PMM_IMAGES_HOME/c/provision/01-c.sh" ]
-  [ -z "$(img_scripts local/e)" ]
+  [ "$(img_steps local/d | paste -sd' ' -)" = "$PMM_IMAGES_HOME/d/provision/10-base.sh $PMM_IMAGES_HOME/d/provision/30-kit.anfs $PMM_IMAGES_HOME/d/provision/50-app.sh" ]
+  [ "$(img_steps local/c)" = "$PMM_IMAGES_HOME/c/provision/01-c.sh" ]
+  [ -z "$(img_steps local/e)" ]
 }
 
 @test "test.sh: the image's own, else the nearest up its chain; with none, image test says so and succeeds" {
@@ -98,10 +100,11 @@ setup() { setup_images; }
   echo 'echo base' > "$PMM_IMAGES_HOME/d/provision/10-base.sh"
   echo 'true' > "$PMM_IMAGES_HOME/d/test.sh"
   : > "$ANFS_ISO_HOME/a.iso"
-  image "$PMM_IMAGES_HOME/c" "from: d
-anfs: {sources: host}"
+  image "$PMM_IMAGES_HOME/c" "from: d"
   mkdir -p "$PMM_IMAGES_HOME/c/provision"
   echo 'echo c' > "$PMM_IMAGES_HOME/c/provision/20-c.sh"
+  echo 'sources: host' > "$PMM_IMAGES_HOME/c/provision/30-kit.anfs"
+  echo 'x' > "$PMM_IMAGES_HOME/c/provision/40-site.yml"
   load_images
   run cli_call "image show" d
   echo "$output"
@@ -113,13 +116,14 @@ anfs: {sources: host}"
   [[ "$output" == *"  provision   10-base.sh       ~/.config/pmm/machines/images/d/provision/10-base.sh"$'\n'"              finalize         (pmm) "*"/defaults/finalize.sh"* ]]
   [[ "$output" == *"  test        ~/.config/pmm/machines/images/d/test.sh"* ]]
   [[ "$output" == *"  logs        ~/.local/state/pmm/logs/d-arm64/"* ]]
-  # the child: its root's answer file and test, its parent's steps, then its own, anfs, finalize
+  # the child: its root's answer file and test, its parent's steps, then its own, finalize; a
+  # step nothing provides is said
   run cli_call "image show" c
   echo "$output"
   [[ "$output" == *"  from        local/d"* ]]
   [[ "$output" == *"  answer      ~/.config/pmm/machines/images/d/preseed.cfg"* ]]
   # the paths line up after the longest label
-  [[ "$output" == *"10-base.sh          ~/.config/pmm/machines/images/d/provision/10-base.sh"*"20-c.sh             ~/.config/pmm/machines/images/c/provision/20-c.sh"*"anfs install (host) (pmm) local/c: image.yml anfs:"*"finalize            (pmm)"* ]]
+  [[ "$output" == *"10-base.sh       ~/.config/pmm/machines/images/d/provision/10-base.sh"*"20-c.sh          ~/.config/pmm/machines/images/c/provision/20-c.sh"*"30-kit.anfs      ~/.config/pmm/machines/images/c/provision/30-kit.anfs"$'\n'*"40-site.yml      ~/.config/pmm/machines/images/c/provision/40-site.yml  (nothing provides .yml steps)"*"finalize         (pmm)"* ]]
   [[ "$output" == *"  test        ~/.config/pmm/machines/images/d/test.sh"* ]]
   # --json: the same, as one object
   ANFS_JSON=true run cli_call "image show" c
@@ -131,9 +135,9 @@ anfs: {sources: host}"
   [ "$(q .answer)" = "$PMM_IMAGES_HOME/d/preseed.cfg" ]
   [ "$(q .vars.TASKSEL)" = "standard, ssh-server" ]
   [ "$(q '.iso.arm64 | .id + " " + .state')" = "t-arm64 present" ]
-  [ "$(q '[.provision[] | .step] | join("|")')" = "10-base.sh|20-c.sh|anfs install (host)|finalize" ]
+  [ "$(q '[.provision[] | .step + ":" + .provisioner] | join("|")')" = "10-base.sh:sh|20-c.sh:sh|30-kit.anfs:anfs|40-site.yml:yml|finalize:sh" ]
   [ "$(q '.provision[0] | .image + " " + .file')" = "local/d $PMM_IMAGES_HOME/d/provision/10-base.sh" ]
-  [ "$(q '.provision[3].image')" = null ]
+  [ "$(q '.provision[4].image')" = null ]
   [ "$(q .test)" = "$PMM_IMAGES_HOME/d/test.sh" ]
   [ "$(q '.builds | length')" = 0 ]
   # an image with no test says so; a tart image has a base and no answer file

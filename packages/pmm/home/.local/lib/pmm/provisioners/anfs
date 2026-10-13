@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# anfs — pmm provisioner for .anfs steps: installs the anfs toolkit in the image
+#
+# The step is a YAML file, provision/50-toolkit.anfs:
+#
+#   sources: pushed       install.sh is fetched in the guest, which clones every source itself
+#                         (the default)
+#          | host         this machine's source clones are copied in, in its priority order: the
+#                         image gets exactly the host's sources, uncommitted changes included,
+#                         and needs no network for them
+#   repo: <git url>       a customization repo (install.sh --repo)
+#   packages: [stack/zsh]   installed after the toolkit
+#   installer: <url>      pushed: where install.sh is fetched from (default: anfs-io/system's main)
+#
+# It runs on the host and reaches the guest only through the two command lines it is given, so
+# it does not know how. install.sh runs as the image's user in a login session (it refuses root,
+# and the toolkit is the user's), who needs sudo without a password.
+#
+# Verbs (see pmm's provision.sh):
+#   check                yq and git must be on the host
+#   fingerprint <step>   the step; for sources: host also a file it writes with each source's
+#                        commit and a hash of its uncommitted changes' names, so a source that
+#                        moved is another build
+#   run <step>           copy the sources (host), then install.sh as the user
+set -euo pipefail
+# The bash floor: provisioners are their own processes, so each sources it (lib/anfs/bash.sh)
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
+ANFS_LIB="$HOME/.local/lib/anfs"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/paths.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/log.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/sources.sh"
+anfs_gitsrc_env
+
+INSTALLER=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh
+
+die() { echo "anfs: $*" >&2; exit 1; }
+shq() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
+
+# A scalar of the step, or <default>
+get() {
+  local v
+  v=$(yq -p yaml -r "($1) | select(. != null)" "$step" 2>/dev/null) || v=""
+  [[ -n "$v" ]] && echo "$v" || echo "${2:-}"
+}
+
+# The step's sources:, which is all of it that can be wrong
+mode() {
+  local m
+  yq -p yaml -e 'tag == "!!map" or tag == "!!null"' "$step" >/dev/null 2>&1 || die "$(basename "$step") is not a YAML map"
+  m=$(get .sources pushed)
+  case "$m" in host|pushed) echo "$m" ;; *) die "$(basename "$step"): sources must be host or pushed, not '$m'" ;; esac
+}
+
+# The host's sources that are there, in priority order: "<alias> <url> <directory>" per line
+host_sources() {
+  local i dir
+  gitsrc_collect
+  for i in ${GITSRC_NAMES[@]+"${!GITSRC_NAMES[@]}"}; do
+    dir=$(gitsrc_dir "${GITSRC_NAMES[$i]}")
+    [[ -d "$dir" ]] && echo "${GITSRC_NAMES[$i]} ${GITSRC_URLS[$i]} $(cd "$dir" && pwd -P)"
+  done
+  return 0
+}
+
+verb="${1:-}"
+step="${2:-}"
+case "$verb" in
+  check)
+    for c in yq git; do command -v "$c" >/dev/null 2>&1 || echo "$c is not installed"; done
+    command -v yq >/dev/null 2>&1 && command -v git >/dev/null 2>&1 ;;
+  fingerprint)
+    [[ -f "$step" ]] || die "fingerprint <step>"
+    m=$(mode)
+    echo "$step"
+    if [[ "$m" == host ]]; then
+      while read -r name _ dir; do
+        printf '%s %s %s\n' "$name" "$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo -)" \
+          "$(git -C "$dir" status --porcelain 2>/dev/null | sha | cut -c1-12)"
+      done < <(host_sources) > "${ANFS_IMAGE_WORK:?}/sources"
+      echo "$ANFS_IMAGE_WORK/sources"
+    fi ;;
+  run)
+    [[ -f "$step" ]] || die "run <step>"
+    m=$(mode)
+    user="${ANFS_IMAGE_USER:?}"
+    repo=$(get .repo)
+    pkgs=$(yq -p yaml -r '[.packages] | flatten | .[] | select(. != null)' "$step" 2>/dev/null | paste -sd' ' -)
+    args="${repo:+ --repo $(shq "$repo")}${pkgs:+ $pkgs}"
+    script="${ANFS_IMAGE_WORK:?}/install.sh"
+    case "$m" in
+      host)
+        # shellcheck disable=SC2086
+        home=$(${ANFS_IMAGE_GUEST_EXEC:?} sh -c "echo ~$user")
+        [[ "$home" == /* ]] || die "the guest has no user '$user'"
+        list=""
+        while read -r name url dir; do
+          echo "copying source $name"
+          # shellcheck disable=SC2086
+          ${ANFS_IMAGE_GUEST_PUSH:?} "$dir" "$home/.local/share/anfs/sources/$name" || die "copying source $name into the guest failed"
+          if gitsrc_is_git_url "$url"; then list+="$url  $name"$'\n'
+          else list+="\$HOME/.local/share/anfs/sources/$name  $name"$'\n'
+          fi
+        done < <(host_sources)
+        # pushed as root: the clones, and the directories made on the way to them, are the user's
+        # shellcheck disable=SC2086
+        $ANFS_IMAGE_GUEST_EXEC chown -R "$user:" "$home/.local"
+        {
+          echo 'set -euo pipefail'
+          echo 'mkdir -p ~/.config/anfs'
+          printf 'cat > ~/.config/anfs/user.list <<LIST\n%sLIST\n' "$list"
+          echo "bash ~/.local/share/anfs/sources/core/install.sh$args"
+        } > "$script" ;;
+      pushed)
+        {
+          echo 'set -euo pipefail'
+          echo "curl -fsSL $(shq "$(get .installer "$INSTALLER")") | bash -s --$args"
+        } > "$script" ;;
+    esac
+    echo "anfs install ($m${pkgs:+: $pkgs})"
+    # shellcheck disable=SC2086
+    exec ${ANFS_IMAGE_GUEST_EXEC:?} su -l "$user" -c 'bash -l -s' < "$script" ;;
+  *) echo "anfs: unknown verb '$verb' (check fingerprint run)" >&2; exit 1 ;;
+esac
