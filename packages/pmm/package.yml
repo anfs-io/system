@@ -1,5 +1,8 @@
-version: 0.1.0
+version: 0.1.1
 author: rjayroach
-# Machines run from pim's builds, and the qemu, tart and ssh code pmm sources is pim's
 depends:
-  - pim
+  - qemu
+# tart runs macOS guests (the tart backend); it is in OpenAI's tap, which ppm trusts because it is
+# declared here. Linux has no tart: tart images and their machines are macOS-only.
+brew:
+  macos: [openai/tools/tart]

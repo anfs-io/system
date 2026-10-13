@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# tart, as far as pmm and pim's builds list use it: a VM is a file in $TART_STUB holding its state
+# tart, as far as pmm's machines and its image list use it: a VM is a file in $TART_STUB holding its state
 # (running or stopped). `run` runs until killed, as the real one does.
-echo "tart $*" >> "$PIM_CALLS"
+echo "tart $*" >> "$PMM_CALLS"
 cmd="$1"; shift
 case "$cmd" in
   list)

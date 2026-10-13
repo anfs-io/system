@@ -10,7 +10,7 @@ cli_cmd cd "Change to a machine definition (requires pmm.zsh)" --arg "[machine]"
 cli_cmd validate "Check definitions (all if none given); up runs it first" --arg "[machine...]"
 cli_cmd create "Make a machine without starting it. With --image and a new name, a
 definition is written first (\$PMM_MACHINES_HOME)" \
-  --opt "--image IMAGE: The pim image it runs from" \
+  --opt "--image IMAGE: The image it runs from" \
   --opt "--media MEDIA: An ISO or disk image to boot from when its disk does not: a file, or an ISO's id. Without --image: a blank machine" \
   --opt "--profile PROFILE: A named shape" \
   --opt "--cpus N: Virtual CPUs" --opt "--memory SIZE: 8G, 512M, or MB" \
@@ -34,9 +34,29 @@ cli_cmd reset "Recreate the machine from a snapshot, or onto its image's current
   --opt "-y --yes: Do not ask" --arg "machine" --arg "[snapshot]"
 cli_cmd remove "Stop and delete machines and their snapshots; a local definition
 goes too, a source's is kept" --alias rm --opt "-y --yes: Do not ask" --arg "machine..."
-cli_cmd install "Create and start machines; source/ is every machine that source
-defines (\`anfs install\` uses this). PMM_INSTALL=create only creates,
-PMM_INSTALL=validate only validates" --arg "machine-spec..."
+cli_cmd install "Create and start machines; source/ is everything that source defines:
+its images are built, its networks installed, then its machines (\`anfs
+install\` uses this). PMM_INSTALL=create starts nothing, PMM_INSTALL=validate
+only validates" --arg "machine-spec..."
+cli_group image "What machines run from: definitions and their builds"
+cli_cmd "image list" "Images, a row per built arch: NAME SOURCE ARCH STATE KEY ..." --alias ls --arg "[image...]"
+cli_cmd "image show" "Definition, its from: chain and builds" --arg "image"
+cli_cmd "image build" "Build an image (and its from: parents) unless the build is current" \
+  --opt "-f --force: Rebuild" --opt "-v --verbose: Show script output" \
+  --opt "--arch ARCH: For that architecture" --opt "--console: Show the installer's console" \
+  --opt "--test: Run test.sh on the result" --arg "image..."
+cli_cmd "image test" "Boot a throwaway copy of the build and run the image's test.sh" \
+  --opt "--arch ARCH: Of that architecture" --arg "image"
+cli_cmd "image export" "Write the build as one standalone qcow2" \
+  --opt "-c --compress: Compressed" --opt "-o --output FILE: There (default: \$PMM_DATA_HOME/exports/)" \
+  --opt "--arch ARCH: Of that architecture" --arg "image"
+cli_cmd "image remove" "Delete every build of the image; the definition is kept" --alias rm \
+  --opt "-y --yes: Do not ask" --opt "-f --force: Even if other builds or machines are on it" --arg "image..."
+cli_cmd "image prune" "Delete superseded builds nothing is on" --opt "--isos: The ISOs the images name too"
+cli_cmd "image path" "Print the definition directory" \
+  --opt "--disk: The built disk instead" --opt "--arch ARCH: Of that architecture" --arg "image"
+cli_cmd "image cd" "Change to an image definition (requires pmm.zsh)" --arg "[image]"
+cli_cmd "image validate" "Check definitions (all if none given); build runs it first" --arg "[image...]"
 cli_group network "Networks machines are on: names, fixed addresses, bridges (Linux)"
 cli_cmd "network list" "Networks: NAME SOURCE KIND SUBNET STATE MACHINES" --alias ls
 cli_cmd "network show" "Definition, bridge, addresses, the machines on it" --arg "network"
@@ -49,6 +69,5 @@ cli_cmd "network install" "Make networks from their definitions; source/ is ever
 that source defines. A machine's networks are installed with it" --arg "network-spec..."
 cli_cmd "network remove" "Take networks away; refused while machines are on one. A local
 definition goes too, a source's is kept" --alias rm --opt "-y --yes: Do not ask" --arg "network..."
-cli_cmd migrate "Take over the VMs pim used to run (one per image), as machines"
-cli_cmd implode "Stop every machine and delete everything pmm created" --opt "-y --yes: Do not ask"
+cli_cmd implode "Stop every machine and delete everything pmm created: machines, builds, networks" --opt "-y --yes: Do not ask"
 cli_standard

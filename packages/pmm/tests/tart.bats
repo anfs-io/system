@@ -21,9 +21,9 @@ teardown() {
   run cli_call up m1
   echo "$output"
   [ "$status" -eq 0 ]
-  grep -qx "tart clone pim-mac-bbbbbbbbbbbbbbbb pmm-m1" "$PIM_CALLS"
-  grep -qx "tart set pmm-m1 --cpu 6 --memory 8192" "$PIM_CALLS"
-  grep -q "tart run --no-graphics --dir=src:.*/share:ro pmm-m1" "$PIM_CALLS"
+  grep -qx "tart clone pmm-image-mac-bbbbbbbbbbbbbbbb pmm-m1" "$PMM_CALLS"
+  grep -qx "tart set pmm-m1 --cpu 6 --memory 8192" "$PMM_CALLS"
+  grep -q "tart run --no-graphics --dir=src:.*/share:ro pmm-m1" "$PMM_CALLS"
   [ "$(state_get m1 .backend)" = tart ]
   [ "$(state_get m1 .boot.user)" = admin ]
   [ -z "$(held mac)" ]
@@ -42,7 +42,7 @@ teardown() {
   echo "$output"
   [ "$status" -ne 0 ]
   [[ "$output" == *"2 macOS guests at once and 2 are up (one someone-elses); pmm down one first"* ]]
-  run grep "tart clone" "$PIM_CALLS"
+  run grep "tart clone" "$PMM_CALLS"
   [ "$status" -ne 0 ]
   [ ! -f "$TART_STUB/pmm-m3" ]
   echo stopped > "$TART_STUB/someone-elses"
@@ -59,22 +59,8 @@ teardown() {
   [ "$output" = s1 ]
   run cli_call reset -y m1 s1
   [ "$status" -eq 0 ]
-  grep -qx "tart clone pmm-m1-snap-s1 pmm-m1" "$PIM_CALLS"
+  grep -qx "tart clone pmm-m1-snap-s1 pmm-m1" "$PMM_CALLS"
   cli_call remove -y m1 >/dev/null
   [ ! -f "$TART_STUB/pmm-m1" ] && [ ! -f "$TART_STUB/pmm-m1-snap-s1" ]
-  [ -f "$TART_STUB/pim-mac-bbbbbbbbbbbbbbbb" ]
-}
-
-@test "migrate: pim-<image> and its snapshots are renamed; builds are not touched" {
-  echo stopped > "$TART_STUB/pim-mac"
-  echo stopped > "$TART_STUB/pim-mac-snap-clean"
-  echo stopped > "$TART_STUB/pim-mac-building"
-  run cmd_migrate
-  echo "$output"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"Migrated mac from pim (1 snapshots)"* ]]
-  [ -f "$TART_STUB/pmm-mac" ] && [ -f "$TART_STUB/pmm-mac-snap-clean" ]
-  [ -f "$TART_STUB/pim-mac-bbbbbbbbbbbbbbbb" ] && [ -f "$TART_STUB/pim-mac-building" ]
-  [ "$(state_get mac .backend)" = tart ]
-  [ "$(yq -r '.image' "$PMM_MACHINES_HOME/mac/machine.yml")" = mac ]
+  [ -f "$TART_STUB/pmm-image-mac-bbbbbbbbbbbbbbbb" ]
 }

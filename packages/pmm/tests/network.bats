@@ -69,7 +69,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   grep -q "<domain name='lab' localOnly='yes'/>" "$VIRSH_STUB/pmm-lab.xml"
   grep -q "<ip address='10.20.0.1' netmask='255.255.255.0'>" "$VIRSH_STUB/pmm-lab.xml"
   grep -q "<range start='10.20.0.128' end='10.20.0.254'/>" "$VIRSH_STUB/pmm-lab.xml"
-  grep -q "virsh -c qemu:///system net-autostart pmm-lab" "$PIM_CALLS"
+  grep -q "virsh -c qemu:///system net-autostart pmm-lab" "$PMM_CALLS"
   [ "$(cat "$VIRSH_STUB/pmm-lab.state")" = active ]
   grep -qx "allow pmm-lab" "$PMM_BRIDGE_CONF"
   [ "$(net_state_get lab .kind)" = nat ]
@@ -79,7 +79,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   echo inactive > "$VIRSH_STUB/pmm-lab.state"
   run cli_call "network install" lab
   [[ "$output" == *"lab is installed (nat, active)"* ]]
-  [ "$(grep -c net-define "$PIM_CALLS")" -eq 1 ]
+  [ "$(grep -c net-define "$PMM_CALLS")" -eq 1 ]
   # changed underneath an installed one
   network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.21.0.0/24')"
   run cli_call "network install" lab
@@ -156,7 +156,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ "$(state_get web1 '.interfaces[1].mac')" = 52:54:00:aa:bb:cc ]
   [ "$(state_get web1 '.interfaces[1].bridge')" = br0 ]
   [ -z "$(state_get web1 '.interfaces[1].address')" ]
-  grep -q "net-update pmm-lab add ip-dhcp-host <host mac='$mac1' name='web1' ip='10.20.0.11'/> --config --live" "$PIM_CALLS"
+  grep -q "net-update pmm-lab add ip-dhcp-host <host mac='$mac1' name='web1' ip='10.20.0.11'/> --config --live" "$PMM_CALLS"
   # no address of its own: the first one free
   cli_call create web2 >/dev/null
   [ "$(state_get web2 '.interfaces[0].address')" = 10.20.0.2 ]
@@ -170,9 +170,9 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   mac2=$(state_get web2 '.interfaces[0].mac')
   cli_call reset -y web1 >/dev/null
   [ "$(state_get web1 '.interfaces[0].mac')" = "$mac1" ]
-  : > "$PIM_CALLS"
+  : > "$PMM_CALLS"
   cli_call remove -y web1 web2 >/dev/null
-  grep -q "net-update pmm-lab delete ip-dhcp-host <host mac='$mac2' name='web2' ip='10.20.0.2'/>" "$PIM_CALLS"
+  grep -q "net-update pmm-lab delete ip-dhcp-host <host mac='$mac2' name='web2' ip='10.20.0.2'/>" "$PMM_CALLS"
   run cli_call "network remove" -y lab lan
   echo "$output"
   [ "$status" -eq 0 ]
@@ -221,15 +221,15 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   run cli_call up web1 edge plain
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"web1 is up: pmm shell web1  (ssh pim@10.20.0.11 "* ]]
+  [[ "$output" == *"web1 is up: pmm shell web1  (ssh pmm@10.20.0.11 "* ]]
   m0=$(state_get web1 '.interfaces[0].mac') m1=$(state_get web1 '.interfaces[1].mac')
-  line=$(grep "machines/web1/disk.qcow2" "$PIM_CALLS" | grep qemu-system)
+  line=$(grep "machines/web1/disk.qcow2" "$PMM_CALLS" | grep qemu-system)
   [[ "$line" != *"-netdev user"* ]]
   [[ "$line" == *"-netdev bridge,id=net1,br=pmm-lab -device virtio-net-pci,netdev=net1,mac=$m0 -netdev bridge,id=net2,br=br0 -device virtio-net-pci,netdev=net2,mac=$m1"* ]]
   # all bridged: the address is the LAN's, so the forwarded port stays, with a MAC of its own
-  line=$(grep "machines/edge/disk.qcow2" "$PIM_CALLS" | grep qemu-system)
+  line=$(grep "machines/edge/disk.qcow2" "$PMM_CALLS" | grep qemu-system)
   [[ "$line" == *"hostfwd=tcp:127.0.0.1:42300-:22 -device virtio-net-pci,netdev=net0,mac=$(state_get edge .mac) -netdev bridge,id=net1,br=br0"* ]]
-  line=$(grep "machines/plain/disk.qcow2" "$PIM_CALLS" | grep qemu-system)
+  line=$(grep "machines/plain/disk.qcow2" "$PMM_CALLS" | grep qemu-system)
   [[ "$line" == *"netdev=net0,mac=$(state_get plain .mac) -display none"* ]]
   [ "$(state_get plain .mac)" != "$(state_get edge .mac)" ]
   ANFS_JSON=true run cmd_list

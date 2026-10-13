@@ -4,11 +4,12 @@
 #
 # A qemu machine's disk is a qcow2 overlay on the build it was created from
 # ($PMM_DATA_HOME/machines/<name>/), so the build is never booted read-write and any number of
-# machines share it. pim is told (a hold) so that it keeps the build. A tart machine is a clone of
+# machines share it. That keeps the build: `pmm image prune` and `image remove` read every
+# machine's record for the build it is on (holders_of, registry.sh). A tart machine is a clone of
 # the build in tart's own store, pmm-<name>. Runtime state is in $PMM_STATE_HOME/run/<name>/
 # (pid, port, arch, backend, user, key); the QMP socket is in a short /tmp dir.
 
-mach_sock() { echo "$(sock_dir pmm)/$1.qmp"; }
+mach_sock() { echo "$(sock_dir)/$1.qmp"; }
 
 # True when <name> is running (a dead record is pruned)
 mach_running() {
@@ -50,9 +51,9 @@ mach_stop() {
     ip=$(tart ip "$(tart_vm "$name")" --wait 10 2>/dev/null || cat "$r/ip")
     _tart_shutdown "$(tart_vm "$name")" "$(cat "$r/pid")" "$(cat "$r/key")" "$ip"
   else
-    PIM_SSH_HOST=$(mach_ssh_host "$name") qemu_stop "$(cat "$r/pid")" "$(mach_sock "$name")" ssh_poweroff "$(cat "$r/key")" "$(cat "$r/port")" "$(cat "$r/user")"
+    PMM_SSH_HOST=$(mach_ssh_host "$name") qemu_stop "$(cat "$r/pid")" "$(mach_sock "$name")" ssh_poweroff "$(cat "$r/key")" "$(cat "$r/port")" "$(cat "$r/user")"
   fi
-  rm -rf "$r" "$(mach_sock "$name")" "$(sock_dir pmm)/$name.ga"
+  rm -rf "$r" "$(mach_sock "$name")" "$(sock_dir)/$name.ga"
   ssh_config_write
 }
 
@@ -88,7 +89,7 @@ min_problems() {
 }
 
 # Make <name> from its definition <id>: its disk on the image's current build, and its record.
-# The image is built first unless its build is current (pim build is a no-op then).
+# The image is built first unless its build is current (image build is a no-op then).
 machine_create() {
   local name="$1" id="$2" image arch disk cpus mem d old old_mac
   image=$(mach_get "$id" .image)
@@ -108,11 +109,14 @@ machine_create() {
     ifaces_record "$name" "$id" "$old" "$old_mac"
     return 0
   fi
-  pim_cli build --arch "$arch" "$image" >&2 || die "$image did not build (pim build $image)"
-  image_build "$image" "$arch" || die "$image has no $arch build (pim build $image)"
+  qemu_accel_warn "$arch"
+  # not in an || list: errexit must stay on inside the build
+  image_ensure_built "$image" "$arch" >&2
+  [[ $? -eq 0 ]] || die "$image did not build (pmm image build $image)"
+  image_build "$image" "$arch" || die "$image has no $arch build (pmm image build $image)"
   ifaces_release "$name"
   if [[ "$B_BACKEND" == tart ]]; then
-    anfs_require tart "ppm install core/pim"
+    anfs_require tart "ppm install core/pmm"
     tart delete "$(tart_vm "$name")" >/dev/null 2>&1 || true
     tart clone "$B_DISK" "$(tart_vm "$name")" || die "tart clone $B_DISK failed"
     [[ -z "$cpus$mem$disk" ]] ||
@@ -125,7 +129,6 @@ machine_create() {
     [[ -z "$disk" ]] || qemu-img resize -q "$d/disk.qcow2" "$disk" || die "could not grow $name's disk to $disk"
   fi
   state_write "$(state_file "$name")" "$B_SOURCE/$B_NAME" "$arch" "$B_BACKEND" "$B_KEY" "$B_DISK" "$B_USER" "$B_SSHKEY" "$B_BOOT_USER" "$B_BOOT_PW"
-  mach_hold hold "$name" "$(state_file "$name")"
   [[ "$B_BACKEND" == tart ]] || ifaces_record "$name" "$id" "$old" "$old_mac"
 }
 
@@ -228,6 +231,7 @@ _up_qemu() {
   d=$(mdir "$name")
   [[ -f "$d/disk.qcow2" ]] || die "$name has no disk (pmm reset $name)"
   arch=$(state_get "$name" .arch)
+  qemu_accel_warn "$arch"
   sshkey=$(state_get "$name" .sshkey)
   user=$(mach_get "$id" .user "$(state_get "$name" .user)")
   cpus=$(mach_setting "$id" cpus); cpus="${cpus:-2}"
@@ -249,7 +253,7 @@ _up_qemu() {
     QEMU_MAC="" qemu_argv "$arch" "$cpus" "$mem" "$d/disk.qcow2" "$vars" ""
     printf '%s\n' "$host" > "$r/host"
   else
-    port=$(free_port "$PMM_STATE_HOME/run")
+    port=$(free_port)
     QEMU_MAC=$(state_get "$name" .mac) qemu_argv "$arch" "$cpus" "$mem" "$d/disk.qcow2" "$vars" "$port" ${ports[@]+"${ports[@]}"}
   fi
   QEMU_NICS=()
@@ -265,7 +269,7 @@ _up_qemu() {
   for s in ${shares[@]+"${shares[@]}"}; do qemu_argv_share "$(share_expand "$s")"; done
   # The guest agent channel, for a later pmm that asks the guest for its addresses
   QEMU_ARGV+=(-device virtio-serial-pci
-              -chardev "socket,path=$(sock_dir pmm)/$name.ga,server=on,wait=off,id=ga0"
+              -chardev "socket,path=$(sock_dir)/$name.ga,server=on,wait=off,id=ga0"
               -device virtserialport,chardev=ga0,name=org.qemu.guest_agent.0)
 
   printf '%s\n' "$port" > "$r/port"
@@ -306,10 +310,10 @@ _up_qemu() {
     return 0
   fi
   echo "Started $name ($arch, $(qemu_accel "$arch")); waiting for ssh${host:+ at $host}"
-  PIM_SSH_HOST="${host:-127.0.0.1}" wait_ssh "$sshkey" "$port" "$user" "$PMM_SSH_TIMEOUT" "$(cat "$r/pid")" ||
+  PMM_SSH_HOST="${host:-127.0.0.1}" wait_ssh "$sshkey" "$port" "$user" "$PMM_SSH_TIMEOUT" "$(cat "$r/pid")" ||
     die "no ssh; see $(tilde "$r/serial.log")"
   for tag in ${SHARE_TAGS[@]+"${SHARE_TAGS[@]}"}; do
-    PIM_SSH_HOST="${host:-127.0.0.1}" pim_ssh "$sshkey" "$port" "$user" "sudo -n mkdir -p /mnt/$tag && sudo -n mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 $tag /mnt/$tag" ||
+    PMM_SSH_HOST="${host:-127.0.0.1}" pmm_ssh "$sshkey" "$port" "$user" "sudo -n mkdir -p /mnt/$tag && sudo -n mount -t 9p -o trans=virtio,version=9p2000.L,msize=512000 $tag /mnt/$tag" ||
       warn "could not mount share $tag at /mnt/$tag"
   done
   ssh_config_write
@@ -369,14 +373,14 @@ cmd_shell() {
     fi
     return
   fi
-  local -x PIM_SSH_HOST
-  PIM_SSH_HOST=$(mach_ssh_host "$name")
+  local -x PMM_SSH_HOST
+  PMM_SSH_HOST=$(mach_ssh_host "$name")
   if [[ -n "$cmd" ]]; then
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" "$cmd"
+    pmm_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" "$cmd"
   elif [[ -t 0 ]]; then
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" -t
+    pmm_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" -t
   else
-    pim_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" bash -s
+    pmm_ssh "$(cat "$r/key")" "$(cat "$r/port")" "$user" bash -s
   fi
 }
 
@@ -449,19 +453,16 @@ cmd_show() {
   [[ -z "$snaps" ]] || echo "  snapshots   $snaps"
 }
 
-# Delete what pmm made for <name>: its disk or tart VM, its snapshots, its holds, its record
+# Delete what pmm made for <name>: its disk or tart VM, its snapshots, its record. With them goes
+# what kept its image's build (holders_of)
 mach_delete() {
-  local name="$1" s vm
+  local name="$1" vm
   mach_running "$name" && mach_stop "$name"
   if [[ "$(state_get "$name" .backend)" == tart ]]; then
     if command -v tart >/dev/null 2>&1; then
       _tart_names | grep -E "^$(tart_vm "$name")(-snap-.*)?\$" | while read -r vm; do tart delete "$vm" >/dev/null 2>&1 || true; done || true
     fi
   else
-    for s in $(mach_snapshots "$name"); do
-      mach_hold release "$name" "$(snap_dir "$name")/$s/state.yml" "$s"
-    done
-    mach_hold release "$name" "$(state_file "$name")"
     ifaces_release "$name"
   fi
   rm -rf "$(mdir "$name")" "$(snap_dir "$name")" "$(run_dir "$name")"

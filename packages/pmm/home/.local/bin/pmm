@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
-# cloned once under ~/.local/share/anfs/sources; pmm reads the machines/ directory of each
+# cloned once under ~/.local/share/anfs/sources; pmm reads the images/, networks/ and machines/
+# directories of each
 ANFS_LIB="$HOME/.local/lib/anfs"
 if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
   echo "pmm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
@@ -24,15 +25,16 @@ source "$ANFS_LIB/catalog.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/iso.sh"
 anfs_tool_paths pmm
-# pim's paths too: its libraries (below) read them, and the migration moves what pim kept
-anfs_tool_paths pim
 anfs_gitsrc_env
 : "${PMM_MACHINES_HOME:=$PMM_CONFIG_HOME/machines}"
 : "${PMM_SSH_PORT_BASE:=2222}"
 : "${PMM_SSH_TIMEOUT:=600}"
 : "${PMM_INSTALL:=up}"
 : "${PMM_MACOS_LIMIT:=2}"
-: "${PMM_PIM:=pim}"
+# Images: local definitions, and how long a build waits for the installer and then for ssh
+: "${PMM_IMAGES_HOME:=$PMM_MACHINES_HOME/images}"
+: "${PMM_IMAGE_INSTALL_TIMEOUT:=3600}"
+: "${PMM_IMAGE_SSH_TIMEOUT:=600}"
 # Networks: local definitions, libvirt, and what qemu's bridge helper needs (pmm-network sets
 # the last two up). The backend is libvirt on Linux; there is none elsewhere yet
 : "${PMM_NETWORKS_HOME:=$PMM_CONFIG_HOME/networks}"
@@ -48,11 +50,10 @@ fi
 if [[ -z "${PMM_NET_BACKEND:-}" ]]; then
   [[ "$(uname -s)" == Linux ]] && PMM_NET_BACKEND=libvirt || PMM_NET_BACKEND=none
 fi
-export PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME
-# What pim's port search (free_port, sourced below) starts from
-PIM_SSH_PORT_BASE="$PMM_SSH_PORT_BASE"
+export PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME PMM_IMAGES_HOME
 
-# The implicit, highest-priority source: machines made on the spot, in $PMM_MACHINES_HOME
+# The implicit, highest-priority source: machines made on the spot in $PMM_MACHINES_HOME, and
+# hand-made image definitions in $PMM_IMAGES_HOME
 PMM_LOCAL_SOURCE=local
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pmm/; the
@@ -70,11 +71,12 @@ A <machine> is `name` or `source/name`. A plain name resolves to the highest-pri
 that defines it: local ($PMM_MACHINES_HOME), then the anfs sources in order. The name alone is
 the machine: its disk, its snapshots, what `up` and `shell` act on.
 
-A machine runs from a pim image's build, the way an instance runs from an AMI: any number per
+A machine runs from an image's build, the way an instance runs from an AMI: any number per
 image, each on the build it was created from until `pmm reset` moves it onto the current one.
+`pmm image` manages the images: `pmm image build debian-13`, then `pmm up --image debian-13`.
 
 Definition: machines/<name>/machine.yml in a source (`pmm create` writes a local one)
-  image: debian-13          a pim image, name or source/name; required unless media: is given
+  image: debian-13          an image, name or source/name; required unless media: is given
   media: [proxmox]          ISOs (a CD) and disk images (a USB drive) to boot from when the disk
                             does not: a file, or an id in the ISO catalogue (isos/isos.yml in a
                             source; downloaded into ~/.cache/anfs/isos). With no image: a blank
@@ -112,6 +114,43 @@ Network: networks/<name>/network.yml in a source (`pmm network create` writes a 
 A machine with no interfaces has qemu's user-mode network: ssh and any ports: are forwarded on
 127.0.0.1 only. The host setup networks need is one package: ppm install core/pmm-network.
 `ssh <machine>` works for running machines where ~/.ssh/config includes ~/.ssh/config.d/*.conf.
+
+An <image> is `name` or `source/name`, resolved like a machine: local ($PMM_IMAGES_HOME), then
+the anfs sources in order.
+
+Image: images/<name>/ in a source
+  image.yml      backend: qemu (default) | tart
+                 distro: debian | fedora | macos     arch: [arm64, amd64]
+                 iso: {<arch>: {url: <url or list>, sha256: <hex>}}     (qemu, from an ISO)
+                 from: <image>     a qcow2 overlay on another image's build; resolves to the
+                                   same or a lower-priority source, like a dependency
+                 base: <oci image>                                        (tart)
+                 disk: 20G  memory: 2048  cpus: 2     the disk's size; what a build boots with
+                 machine: {profile: medium, min: {cpus: 2, memory: 4G, disk: 20G}}
+                                   the profile its machines get, and their minimums
+                 user: {name: pmm, password_hash: <crypt>, authorized_keys: [...]}
+                 vars: {HOSTNAME: x, ...}     ${VAR}s for the answer file
+                 scripts: {defaults: true}    false skips the distro's default scripts
+                 timeouts: {install: 3600, ssh: 600}
+                 anfs: {sources: pushed|host, repo: <url>, packages: [...]}   install the
+                                   toolkit in the image (host: copy this machine's sources)
+  preseed.cfg | kickstart.ks   the answer file (default: pmm's own for the distro); ${VAR}
+                 is substituted, $${VAR} is a literal ${VAR}, an unknown name is an error
+  scripts/*.sh   run in order as root over ssh after the install (a name shared with a
+                 default script replaces it); env: PIM_IMAGE PIM_ARCH PIM_USER PIM_FILES
+  files/         copied to the guest for the scripts ($PIM_FILES)
+  test.sh        what `pmm image test` runs (default: the distro's)
+
+Every build ends with pmm's finalize step (package caches, logs, ssh host keys regenerated on
+first boot, machine-id). Builds are cached by a hash of the definition, its scripts, the ISO
+and the parent's build; `image build` is a no-op while that hash is unchanged. A build a
+machine or a snapshot is on is kept: `image prune` leaves it, `image remove` refuses.
+
+Access: each root image gets its own ssh key ($PMM_DATA_HOME/keys/<image>); the user's
+password is locked unless user.password_hash is set.
+
+Files: ISOs in $ANFS_ISO_HOME (~/.cache/anfs/isos, shared with ventoy), builds in
+$PMM_DATA_HOME/images/<name>/<arch>/, exports in $PMM_DATA_HOME/exports/.
 EOF
 }
 
@@ -120,8 +159,8 @@ cmd_cd() {
   return 1
 }
 
-# Every *.sh in <dir>/../lib/<tool>, the stowed dir preferred; next to this script's real path is
-# the fallback (unstowed, or tests)
+# pmm's own libraries: every *.sh in PMM_LIB_DIR (defaults/ below it is data, not sourced). The
+# stowed dir is preferred; next to this script's real path is the fallback (unstowed, or tests)
 pmm_lib_dir() {
   local self="${BASH_SOURCE[0]}" dir link
   if [[ -n "${PMM_LIB_DIR:-}" ]]; then echo "$PMM_LIB_DIR"; return; fi
@@ -140,30 +179,24 @@ if [[ ! -f "$PMM_LIB_DIR/commands.sh" ]]; then
   echo "pmm: libraries not found in $PMM_LIB_DIR; run: ppm install -f core/pmm" >&2
   exit 1
 fi
-
-# The machinery is pim's, since building an image means booting one: its small helpers, qemu's
-# command line, ssh, and what starts and stops a tart VM. Those four files define no command.
-: "${PIM_LIB_DIR:=$HOME/.local/lib/pim}"
-for lib_file in core qemu ssh tart; do
-  if [[ ! -f "$PIM_LIB_DIR/$lib_file.sh" ]]; then
-    echo "pmm: pim's libraries not found in $PIM_LIB_DIR; run: ppm install core/pim" >&2
-    exit 69
-  fi
-  # shellcheck source=/dev/null
-  source "$PIM_LIB_DIR/$lib_file.sh"
-done
 for lib_file in "$PMM_LIB_DIR"/*.sh; do
   # shellcheck source=/dev/null
   [[ -f "$lib_file" ]] && source "$lib_file"
 done
 
+# -d, --trace and --json may come before the command: read them first, to see which it is
+cli_globals "$@"
+set -- ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
 cmd=$(cli_resolve "${1:-help}")
 shift 2>/dev/null || true
 
-# install pulls stale sources first, like ppm install
-[[ "$cmd" == "install" ]] && { gitsrc_update_stale >&2 || true; }
+# install and image build pull stale sources first, like ppm install
+[[ "$cmd" == "install" || "$cmd ${1:-}" == "image build" ]] && { gitsrc_update_stale >&2 || true; }
+# One catalogue per process (lib/anfs/catalog.sh): images for the image commands, machines for
+# the rest. A tab press reads file names only and loads neither.
 case "$cmd" in
-  completion|help|-h|--help) ;;
+  completion|__complete|help|-h|--help|--version) ;;
+  image) load_images ;;
   *) load_machines ;;
 esac
 

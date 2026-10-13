@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# pmm library: implode — stop every machine and delete everything pmm created. Sourced by
-# ~/.local/bin/pmm; functions only.
+# pmm library: implode — stop every machine and delete everything pmm created: machines, their
+# snapshots, networks, image builds and keys. Sourced by ~/.local/bin/pmm; functions only.
 
 cmd_implode() {
   local d dir name vm
@@ -15,12 +15,16 @@ cmd_implode() {
       [[ -f "${d}state.yml" ]] || continue
       echo "  network      $(basename "$d")"
     done
+    for d in "$PMM_DATA_HOME"/images/*/; do
+      [[ -d "$d" ]] && echo "  builds       $(basename "$d")"
+    done
+    command -v tart >/dev/null 2>&1 && [[ -d "${TART_HOME:-$HOME/.tart}" ]] && echo "  tart vms     pmm's machines and builds, in tart's store"
     for dir in "$PMM_DATA_HOME" "$PMM_STATE_HOME" "$PMM_CACHE_HOME" "$PMM_CONFIG_HOME"; do
       [[ -e "$dir" ]] && echo "  directory    $(tilde "$dir")"
     done
   }
-  confirm "implode deletes every machine, snapshot and definition in $(tilde "$PMM_MACHINES_HOME")" "Implode pmm?"
-  # each machine's own removal, so that pim's holds go with it
+  confirm "implode deletes every machine, snapshot and build, and every definition in $(tilde "$PMM_CONFIG_HOME")" "Implode pmm?"
+  # each machine's own removal, so that what it reserved on a network goes with it
   for d in "$PMM_DATA_HOME"/machines/*/; do
     [[ -f "${d}state.yml" ]] || continue
     mach_delete "$(basename "$d")"
@@ -38,7 +42,7 @@ cmd_implode() {
       tart delete "$vm" >/dev/null 2>&1 || true
     done || true
   fi
-  for dir in "$PMM_DATA_HOME" "$PMM_STATE_HOME" "$PMM_CACHE_HOME" "$PMM_CONFIG_HOME" "/tmp/pmm-$(id -u)"; do
+  for dir in "$PMM_DATA_HOME" "$PMM_STATE_HOME" "$PMM_CACHE_HOME" "$PMM_CONFIG_HOME" "${PMM_SOCK_DIR:-/tmp/pmm-$(id -u)}"; do
     [[ -e "$dir" ]] || continue
     chmod -R u+w "$dir" 2>/dev/null || true
     rm -rf "${dir:?}"

@@ -1,4 +1,4 @@
-# Debian 13 (trixie) from the netinst ISO, with pim's default preseed and scripts
+# Debian 13 (trixie) from the netinst ISO, with pmm's default preseed and scripts
 description: Debian 13 base image
 distro: debian
 arch: [arm64, amd64]

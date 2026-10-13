@@ -14,10 +14,8 @@ EOF2
   echo -e "${cyan}Personal Machine Manager${nc}"
 }
 
-# The VMs pim used to run (one per image) become machines; nothing to do on a machine without any
 post_install() {
-  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pmm/machines"
-  "$HOME/.local/bin/pmm" migrate || user_message "pmm migrate did not finish; run it again to take over pim's old VMs"
+  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pmm/machines/images"
 }
 
 # Refuse removal while machines run (override with ppm remove -f)

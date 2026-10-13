@@ -8,6 +8,8 @@
 
 # Finding definitions is anfs's (lib/anfs/catalog.sh); these are pmm's names for it. A machine is
 # a directory with a machine.yml, in a source's machines/ or in $PMM_MACHINES_HOME, which is first.
+# canon, all_ids and effective_ids answer for the catalogue loaded last: this one, or the images'
+# (image-sources.sh).
 load_machines() { catalog_load machines machine.yml "$PMM_LOCAL_SOURCE" "$PMM_MACHINES_HOME"; load_networks; }
 mach_name()     { echo "${1#*/}"; }
 mach_src()      { echo "${1%%/*}"; }
@@ -85,19 +87,31 @@ cmd_path() {
 }
 
 # `pmm install <machine|source/>...`: create and start (PMM_INSTALL=create: only create;
-# validate: only validate). source/ expands to every network and machine that source defines.
+# validate: only validate). source/ is everything that source defines, in the order one needs
+# the other: its images are built, its networks installed, then its machines made.
 cmd_install() {
-  local arg id src
+  local arg id src found
   local -a machines=()
+  case "$PMM_INSTALL" in
+    up|create|validate) ;;
+    *) die "PMM_INSTALL must be up, create or validate, not '$PMM_INSTALL'" ;;
+  esac
   for arg in "$@"; do
     if [[ "$arg" == */ ]]; then
-      src="${arg%/}"
-      # a source's networks first: its machines are on them
-      if net_source_dir "$src" >/dev/null; then
-        cli_call "network install" "$arg"
-        catalog_source_dir "$src" >/dev/null || continue
+      src="${arg%/}" found=false
+      # in a subshell: the images' catalogue is loaded there, the machines' stays loaded here
+      if ( load_images; source_dir "$src" >/dev/null ); then
+        found=true
+        # not in an || list: errexit must stay on inside a build
+        ( load_images; images_install "$src" )
+        [[ $? -eq 0 ]] || return 1
       fi
-      catalog_source_dir "$src" >/dev/null || die "'$src' is not a source with machines or networks (see: anfs src list)"
+      if net_source_dir "$src" >/dev/null; then
+        found=true
+        cli_call "network install" "$arg"
+      fi
+      catalog_source_dir "$src" >/dev/null || $found || die "'$src' is not a source with images, networks or machines (see: anfs src list)"
+      catalog_source_dir "$src" >/dev/null || continue
       for id in $(all_ids); do
         [[ "$(mach_src "$id")" == "$src" ]] && machines+=("$id")
       done
@@ -111,9 +125,8 @@ cmd_install() {
     create)
       for arg in "${machines[@]}"; do
         mach_find "$arg"
-        mach_exists "$M_NAME" || cli_call create "$M_NAME"
+        if ! mach_exists "$M_NAME"; then cli_call create "$M_NAME"; fi
       done ;;
     up) cli_call up "${machines[@]}" ;;
-    *) die "PMM_INSTALL must be up, create or validate, not '$PMM_INSTALL'" ;;
   esac
 }

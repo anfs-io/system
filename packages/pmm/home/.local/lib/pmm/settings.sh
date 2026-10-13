@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pmm library: what a machine is made of — its machine.yml, profiles, what pim says about its
+# pmm library: what a machine is made of — its machine.yml, profiles, what it needs to know of its
 # image, and the record of what it was created from. Sourced by ~/.local/bin/pmm; functions only.
 
 # --- the definition -----------------------------------------------------------------------------
@@ -60,32 +60,42 @@ profile_get() {
   P="$1" K="$2" yq -r '.[strenv(P)][strenv(K)] | select(. != null)' "$f" 2>/dev/null || true
 }
 
-# --- the image, which is pim's ------------------------------------------------------------------
+# --- the image ----------------------------------------------------------------------------------
+# The machines' catalogue is the one loaded while a machine command runs, and there is one per
+# process (lib/anfs/catalog.sh). So what a machine needs from its image is asked in a subshell
+# that loads the images' catalogue, and comes back as text.
 
-pim_cli() { "$PMM_PIM" "$@"; }
+# The definition directory of <image>; fails when nothing defines it
+image_def_dir() {
+  ( load_images; id=$(canon "$1") && img_dir "$id" )
+}
 
-# A value from the image definition's machine: block, which pim carries and never reads (as ppm
-# does a package's meta:). Nothing when the image is not defined here.
+# A value from the image definition's machine: block, which a build never reads (it is left out
+# of the build key). Nothing when the image is not defined here.
 # Usage: image_machine_get <image> <yq path under .machine>
 image_machine_get() {
   local dir
-  dir=$(pim_cli path "$1" 2>/dev/null) || return 0
+  dir=$(image_def_dir "$1" 2>/dev/null) || return 0
   yq -r "(.machine$2) | select(. != null)" "$dir/image.yml" 2>/dev/null || true
 }
 
-# The current build of <image> for <arch>, from `pim builds --json`. Sets B_NAME B_SOURCE B_KEY
+# The current build of <image> for <arch> (build_read, registry.sh). Sets B_NAME B_SOURCE B_KEY
 # B_DISK B_BACKEND B_USER B_SSHKEY B_BOOT_USER B_BOOT_PW; fails when there is none.
 image_build() {
-  local image="$1" arch="$2" json line
+  local -a v=()
   B_NAME="" B_SOURCE="" B_KEY="" B_DISK="" B_BACKEND="" B_USER="" B_SSHKEY="" B_BOOT_USER="" B_BOOT_PW=""
-  json=$(pim_cli builds --json "$image" 2>/dev/null) || return 1
-  line=$(A="$arch" yq -p json -o tsv -r \
-    '.[] | select(.arch == strenv(A)) | [.name, .source, .key, .disk, .backend, .user, .sshkey // "-", .boot_user // "-", .boot_password // "-"]' <<< "$json" 2>/dev/null | head -n1)
-  [[ -n "$line" ]] || return 1
-  IFS=$'\t' read -r B_NAME B_SOURCE B_KEY B_DISK B_BACKEND B_USER B_SSHKEY B_BOOT_USER B_BOOT_PW <<< "$line"
-  [[ "$B_SSHKEY" != - ]] || B_SSHKEY=""
-  [[ "$B_BOOT_USER" != - ]] || B_BOOT_USER=""
-  [[ "$B_BOOT_PW" != - ]] || B_BOOT_PW=""
+  mapfile -t v < <(
+    load_images
+    build_read "$(img_name "$(canon "$1" || echo "x/$1")")" "$2" 2>/dev/null || exit 0
+    printf '%s\n' "$B_NAME" "${B_ID%%/*}" "$B_KEY" "$B_DISK" "$B_BACKEND" "$B_USER" "$B_SSHKEY" "$B_BOOT_USER" "$B_BOOT_PW")
+  [[ ${#v[@]} -ge 9 ]] || return 1
+  B_NAME="${v[0]}" B_SOURCE="${v[1]}" B_KEY="${v[2]}" B_DISK="${v[3]}" B_BACKEND="${v[4]}" B_USER="${v[5]}"
+  B_SSHKEY="${v[6]}" B_BOOT_USER="${v[7]}" B_BOOT_PW="${v[8]}"
+}
+
+# Build <image> for <arch> unless its build is current (`pmm image build`, a no-op then)
+image_ensure_built() {
+  ( load_images; cli_call "image build" --arch "$2" "$1" )
 }
 
 # --- settings -----------------------------------------------------------------------------------
@@ -148,19 +158,5 @@ mach_image() {
   echo "$v"
 }
 
-# The pim image name in a machine's record: `source/name` -> name
+# The image's name in a machine's record: `source/name` -> name
 state_image_name() { local v; v=$(state_get "$1" .image); echo "${v#*/}"; }
-
-mach_holder() { echo "pmm:$1${2:+@$2}"; }
-
-# Hold or release the build a qemu machine (or one of its snapshots) is an overlay on. pim's
-# record, by pim's command: pmm writes nothing in pim's directories.
-# Usage: mach_hold <hold|release> <name> <state file> [snapshot]
-mach_hold() {
-  local verb="$1" name="$2" f="$3" snap="${4:-}" image key
-  [[ "$(state_get "$name" .backend "$f")" == qemu ]] || return 0
-  image=$(state_get "$name" .image "$f") key=$(state_get "$name" .key "$f")
-  [[ -n "$image" && -n "$key" ]] || return 0
-  pim_cli "$verb" "${image#*/}" "$(state_get "$name" .arch "$f")" "$key" "$(mach_holder "$name" "$snap")" 2>/dev/null ||
-    { [[ "$verb" == release ]] || warn "could not hold $image's build $key for $name: pim clean may delete it"; }
-}

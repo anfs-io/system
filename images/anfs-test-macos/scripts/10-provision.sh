@@ -3,7 +3,7 @@
 # containers/<distro>/Containerfile: it turns the stock image into the ppm test box, and what it
 # does has to match the containers so the same tests mean the same thing on both.
 #
-# pim runs this as root while building the image (pim build anfs-test-macos), then reboots (for
+# pmm runs this as root while building the image (pmm image build anfs-test-macos), then reboots (for
 # /src); every VM is a clone of the result, so this happens once per build, not once per box.
 set -uo pipefail
 

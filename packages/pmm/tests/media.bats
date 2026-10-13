@@ -6,7 +6,7 @@ setup() {
   setup_pmm
   fake_build deb
   : > "$T/pve.iso"; : > "$T/ventoy.img"
-  wait_ssh() { echo "wait_ssh" >> "$PIM_CALLS"; return 0; }
+  wait_ssh() { echo "wait_ssh" >> "$PMM_CALLS"; return 0; }
 }
 
 teardown() {
@@ -15,7 +15,7 @@ teardown() {
   return 0
 }
 
-argv() { grep "^qemu-system" "$PIM_CALLS" | tail -n1; }
+argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
 
 @test "validate: image or media; a media entry is a file or a catalogue id" {
   machine "$PMM_MACHINES_HOME/none" "cpus: 2"
@@ -46,7 +46,7 @@ argv() { grep "^qemu-system" "$PIM_CALLS" | tail -n1; }
   [ -f "$PMM_DATA_HOME/machines/nas/disk.qcow2" ]
   [ -f "$PMM_DATA_HOME/machines/nas/efivars.fd" ]
   [ -z "$(state_get nas .image)" ]
-  ! grep -q "pim build" "$PIM_CALLS"
+  ! grep -q "image build" "$PMM_CALLS"
   run cmd_show nas
   [[ "$output" == *"image       none"* ]]
   [[ "$output" == *"media       $T/pve.iso"* ]]
@@ -62,7 +62,7 @@ argv() { grep "^qemu-system" "$PIM_CALLS" | tail -n1; }
   echo "$output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Started nas"*"booting its disk, then its media"* ]]
-  ! grep -q wait_ssh "$PIM_CALLS"
+  ! grep -q wait_ssh "$PMM_CALLS"
   [[ "$(argv)" == *"file=$PMM_DATA_HOME/machines/nas/disk.qcow2,format=qcow2,if=none,id=disk0"* ]]
   [[ "$(argv)" == *"virtio-blk-pci,drive=disk0,bootindex=0"* ]]
   [[ "$(argv)" == *"file=$T/pve.iso,media=cdrom,if=none,id=media1,readonly=on -device scsi-cd,drive=media1,bus=mscsi.0,bootindex=1"* ]]
@@ -81,7 +81,7 @@ argv() { grep "^qemu-system" "$PIM_CALLS" | tail -n1; }
   echo "$output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"booting ventoy.img"* ]]
-  ! grep -q wait_ssh "$PIM_CALLS"
+  ! grep -q wait_ssh "$PMM_CALLS"
   [[ "$(argv)" == *"file=$T/ventoy.img,format=raw,if=none,id=media1,snapshot=on -device usb-storage,drive=media1,bus=musb.0,removable=on,bootindex=0"* ]]
   [[ "$(argv)" == *"virtio-blk-pci,drive=disk0,bootindex=1"* ]]
   cli_call down web

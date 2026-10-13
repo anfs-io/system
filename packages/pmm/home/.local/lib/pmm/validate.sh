@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# pmm library: checking definitions; the validate command. Sourced by ~/.local/bin/pmm; functions only.
+# pmm library: checking machine definitions; the validate command. Sourced by ~/.local/bin/pmm;
+# functions only. (Images: image-validate.sh, which counts with _v_err and _v_warn too.)
 
 V_ERRORS=0 V_WARNINGS=0
 
@@ -29,8 +30,8 @@ validate_machine() {
   done < <(mach_list "$id" .media)
   if [[ -z "$image" ]]; then
     [[ -n "$(mach_list "$id" .media)" ]] || _v_err "image: is required (or media:, for a machine installed from an ISO)"
-  elif ! pim_cli path "$image" >/dev/null 2>&1; then
-    _v_err "image '$image' not found (pim list)"
+  elif ! image_def_dir "$image" >/dev/null 2>&1; then
+    _v_err "image '$image' not found (pmm image list)"
     image=""
   fi
 

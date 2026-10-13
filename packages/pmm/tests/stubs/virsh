@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # virsh, as far as pmm uses it: a network is a file in $VIRSH_STUB holding its state (active or
 # inactive); its XML is kept beside it. Reservations are only logged.
-echo "virsh $*" >> "$PIM_CALLS"
+echo "virsh $*" >> "$PMM_CALLS"
 [[ "$1" == -c ]] && shift 2
 cmd="$1"; shift
 case "$cmd" in

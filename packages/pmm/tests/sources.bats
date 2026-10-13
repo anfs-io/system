@@ -18,8 +18,8 @@ setup() {
   run mach_find acme/web
   [ "$status" -ne 0 ]
   [[ "$output" == *"acme/web is shadowed by local/web"* ]]
-  state_write "$(state_file old)" local/deb arm64 qemu aaaaaaaaaaaaaaaa /x.qcow2 pim /k
-  state_write "$(state_file db)" local/deb arm64 qemu aaaaaaaaaaaaaaaa /x.qcow2 pim /k
+  state_write "$(state_file old)" local/deb arm64 qemu aaaaaaaaaaaaaaaa /x.qcow2 pmm /k
+  state_write "$(state_file db)" local/deb arm64 qemu aaaaaaaaaaaaaaaa /x.qcow2 pmm /k
   ANFS_JSON=true run cmd_list
   echo "$output"
   [ "$(yq -p json -r '.[] | select(.name == "web" and .source == "local") | .state' <<< "$output")" = defined ]
@@ -97,11 +97,11 @@ setup() {
   PMM_INSTALL=validate run cmd_install acme/
   [ "$status" -eq 0 ]
   [[ "$output" == *"2 machine(s): 0 error(s)"* ]]
-  ! grep -q qemu "$PIM_CALLS"
+  ! grep -q qemu "$PMM_CALLS"
   PMM_INSTALL=create run cmd_install acme/
   [ "$status" -eq 0 ]
   mach_exists web; mach_exists db
-  ! grep -q qemu-system "$PIM_CALLS"
+  ! grep -q qemu-system "$PMM_CALLS"
   run cmd_install nope/
   [ "$status" -ne 0 ]
 }

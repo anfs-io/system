@@ -22,23 +22,27 @@ complete_machine() {
     done
   } | awk '!seen[$0]++'
 }
-# What install takes: a machine, or source/ for all of a source's
+# What install takes: a machine, or source/ for everything a source defines
 complete_machine_spec() {
   local d
   complete_machine
-  for d in "$ANFS_SOURCES_HOME"/*/machines; do
+  for d in "$ANFS_SOURCES_HOME"/*/machines "$ANFS_SOURCES_HOME"/*/networks "$ANFS_SOURCES_HOME"/*/images; do
     [[ -d "$d" ]] || continue
-    d="${d%/machines}"
+    d="${d%/*}"
     printf '%s/\n' "${d##*/}"
-  done
+  done | awk '!seen[$0]++'
 }
-# pim's images, by their definitions' names
+# Every image: its name, and source/name
 complete_image() {
-  local f
-  for f in "$PIM_CONFIG_HOME"/images/*/image.yml "$ANFS_SOURCES_HOME"/*/images/*/image.yml; do
+  local f name
+  for f in "$PMM_IMAGES_HOME"/*/image.yml "$ANFS_SOURCES_HOME"/*/images/*/image.yml; do
     [[ -f "$f" ]] || continue
     f="${f%/image.yml}"
-    printf '%s\n' "${f##*/}"
+    name="${f##*/}"
+    printf '%s\n' "$name"
+    [[ "$f" == "$PMM_IMAGES_HOME"/* ]] && continue
+    f="${f%/images/*}"
+    printf '%s/%s\n' "${f##*/}" "$name"
   done | awk '!seen[$0]++'
 }
 # The names at the top level of each profiles.yml

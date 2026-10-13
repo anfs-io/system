@@ -1,4 +1,4 @@
-# Fedora 44 Server from the netinst ISO, with pim's default kickstart and scripts
+# Fedora 44 Server from the netinst ISO, with pmm's default kickstart and scripts
 description: Fedora 44 base image
 distro: fedora
 arch: [arm64, amd64]

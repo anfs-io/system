@@ -3,8 +3,9 @@
 #
 # A qemu snapshot is a copy of the machine's disk, its UEFI vars and its record, in
 # $PMM_DATA_HOME/snapshots/<name>/<snapshot>/. The copy is still an overlay on the build the
-# machine was on, so each snapshot holds that build too (pmm:<name>@<snapshot>). A tart snapshot
-# is a clone, pmm-<name>-snap-<snapshot>.
+# machine was on, and its copy of the record says which: that keeps the build (holders_of,
+# registry.sh, lists it as <name>@<snapshot>). A tart snapshot is a clone,
+# pmm-<name>-snap-<snapshot>.
 
 snap_ok() { [[ "$1" =~ ^[a-z0-9][a-z0-9_.-]*$ ]]; }
 
@@ -47,12 +48,10 @@ cmd_snapshot() {
     fi
   else
     d=$(mdir "$name") s="$(snap_dir "$name")/$snap"
-    [[ ! -d "$s" ]] || mach_hold release "$name" "$s/state.yml" "$snap"
     rm -rf "$s"
     mkdir -p "$s"
     cp "$d/disk.qcow2" "$d/state.yml" "$s/"
     [[ ! -f "$d/efivars.fd" ]] || cp "$d/efivars.fd" "$s/"
-    mach_hold hold "$name" "$s/state.yml" "$snap"
   fi
   echo "Saved snapshot $snap of $name (pmm reset $name $snap)"
   ! $was || cli_call up "$name"
@@ -78,14 +77,11 @@ cmd_reset() {
     fi
   elif [[ -n "$snap" ]]; then
     d=$(mdir "$name") s="$(snap_dir "$name")/$snap"
-    mach_exists "$name" && mach_hold release "$name" "$d/state.yml"
     rm -rf "$d"
     mkdir -p "$d"
     cp "$s/disk.qcow2" "$s/state.yml" "$d/"
     [[ ! -f "$s/efivars.fd" ]] || cp "$s/efivars.fd" "$d/"
-    mach_hold hold "$name" "$d/state.yml"
   else
-    mach_exists "$name" && mach_hold release "$name" "$(state_file "$name")"
     machine_create "$name" "$id"
   fi
   echo "Reset $name${snap:+ to $snap}"

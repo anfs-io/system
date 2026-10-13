@@ -1,26 +1,36 @@
 #!/usr/bin/env bash
-# pmm end to end, for real: qemu with hvf (macOS) or kvm (Linux), the host's arch.
+# pmm end to end, for real: qemu with hvf (macOS) or kvm (Linux), the host's arch. The image half
+# first (validate, build, test, export), then machines from that build.
 # Usage: packages/pmm/tests/e2e [debian|fedora]   (default: debian)
 #
-# Runs the working tree's pmm and pim against isolated copies of both (a temp dir for config, data
-# and state; the ISO cache is the real one, so an ISO downloads once) with this repo's images/ as
-# pim's local source. Two machines run from one image. Each step is checked; the temp dir must be
+# Runs the working tree's pmm, with the working tree's lib/anfs, against an isolated HOME (a temp
+# dir for config, data and state) and this repo's images/ as the local image source. Only the
+# ISO store is the real one, so an ISO downloads once. Each step is checked; the temp dir must be
 # empty of pmm's files at the end.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PMM="$here/../home/.local/bin/pmm"
-PIM="$here/../../pim/home/.local/bin/pim"
 root=$(mktemp -d "${TMPDIR:-/tmp}/pmm-e2e.XXXXXX")
-export PMM_LIB_DIR="$here/../home/.local/lib/pmm" PIM_LIB_DIR="$here/../../pim/home/.local/lib/pim"
-export PMM_PIM="$PIM"
-export PIM_IMAGES_HOME="$here/../../../images"
-export PIM_CONFIG_HOME="$root/pim/config" PIM_DATA_HOME="$root/pim/data" PIM_STATE_HOME="$root/pim/state"
+# the store is anfs's and shared (lib/anfs/iso.sh): pmm's implode leaves it alone
+export ANFS_ISO_HOME="${ANFS_ISO_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/anfs/isos}"
+export HOME="$root/home"
+export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
+export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_STATE_HOME ANFS_CACHE_HOME
+mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs"
+ln -s "$here/../../anfs/home/.local/lib/anfs" "$HOME/.local/lib/anfs"
+export ANFS_LOG=off
+export PMM_LIB_DIR="$here/../home/.local/lib/pmm"
 export PMM_CONFIG_HOME="$root/pmm/config" PMM_DATA_HOME="$root/pmm/data" PMM_STATE_HOME="$root/pmm/state"
 export PMM_CACHE_HOME="$root/pmm/cache"
 export PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines"
-export PMM_SSH_PORT_BASE=2342 PIM_SSH_PORT_BASE=2322
-# tart's store is not this run's to touch: implode deletes every pim- and pmm- VM in it
+export PMM_IMAGES_HOME="$here/../../../images"
+export PMM_SSH_PORT_BASE=2342
+# not the default: a pmm really running machines on this host has their sockets there, and the
+# implode below deletes the directory
+export PMM_SOCK_DIR=$(mktemp -d /tmp/pmm-e2e.XXXXXX)
+# tart's store is not this run's to touch: implode deletes every pmm- VM in it
 export TART_HOME="$root/no-tart"
 case "${1:-debian}" in
   debian) img=debian-13 ;;
@@ -39,15 +49,21 @@ step() {
   fi
 }
 pmm() { "$PMM" "$@"; }
-pim() { "$PIM" "$@"; }
 mkdir -p "$root/share" "$PMM_MACHINES_HOME" && echo shared > "$root/share/f"
 printf 'small: {cpus: 1, memory: 1G}\n' > "$PMM_MACHINES_HOME/profiles.yml"
 
-echo "== $img"
-step "pim build"                      pim build "$img"
+echo "== $img: the image"
+step "image validate"                 pmm image validate "$img"
+step "image list: unbuilt"            bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0].state')\" = unbuilt ]"
+step "image build --test"             pmm image build --test "$img"
+step "rebuild is a cache hit"         bash -c "'$PMM' image build $img | grep -q 'is up to date'"
+step "image list: built and tested"   bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0] | .state + \" \" + .tested')\" = 'built true' ]"
+step "image export -c, a standalone qcow2" bash -c "'$PMM' image export -c -o '$root/out.qcow2' $img && qemu-img check -q '$root/out.qcow2' && ! qemu-img info '$root/out.qcow2' | grep -q 'backing file'"
+
+echo "== $img: machines"
 step "create a, with a read-only share" pmm create a --image "$img" --profile small --share "$root/share:sh:ro"
 step "validate"                       pmm validate a
-step "pim holds the build for a"      bash -c "'$PIM' builds --json $img | yq -p json -e '.[0].held | contains([\"pmm:a\"])'"
+step "the build is held by a"         bash -c "'$PMM' image list --json $img | yq -p json -e '.[0].held | contains([\"a\"])'"
 step "up a"                           pmm up a
 step "shell runs a command"           bash -c "'$PMM' shell a -- 'cat /mnt/sh/f; echo kept > ~/kept' | grep -qx shared"
 step "the share is read-only"         bash -c "! '$PMM' shell a -- touch /mnt/sh/x"
@@ -58,13 +74,15 @@ step "b has its own disk"             bash -c "! '$PMM' shell b -- test -e kept"
 step "down a"                         pmm down a
 step "up again: the disk persisted"   bash -c "'$PMM' up a >/dev/null && '$PMM' shell a -- cat kept | grep -qx kept"
 step "snapshot, change, reset to it"  bash -c "'$PMM' snapshot a s1 >/dev/null && '$PMM' shell a -- rm kept && '$PMM' reset -y a s1 >/dev/null && '$PMM' shell a -- cat kept | grep -qx kept"
-step "pim rm is refused while held"   bash -c "! '$PIM' rm -y $img"
+step "the snapshot holds the build too" bash -c "'$PMM' image list --json $img | yq -p json -e '.[0].held | contains([\"a@s1\"])'"
+step "image remove is refused while held" bash -c "! '$PMM' image remove -y $img"
 step "reset onto the build: a new disk" bash -c "'$PMM' reset -y a >/dev/null && ! '$PMM' shell a -- test -e kept"
 step "list: a and b running"          bash -c "[ \"\$('$PMM' list --json | yq -p json -r '[.[] | select(.state == \"running\")] | length')\" = 2 ]"
-step "rm b"                           pmm rm -y b
+step "rm a and b"                     pmm rm -y a b
+step "the build is no longer held"    bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0].held | length')\" = 0 ]"
+step "image prune"                    pmm image prune
+step "image remove, now that nothing is on it" pmm image remove -y "$img"
 step "implode"                        pmm implode -y
-step "the build is no longer held"    bash -c "[ \"\$('$PIM' builds --json $img | yq -p json -r '.[0].held | length')\" = 0 ]"
-step "pim rm, now that nothing holds it" pim rm -y "$img"
 left=$(find "$root/pmm" -mindepth 1 2>/dev/null | head -5)
 [[ -z "$left" ]] && echo "  ok    implode left nothing" || { echo "  FAIL  implode left: $left"; status=1; }
 rm -rf "$root"
