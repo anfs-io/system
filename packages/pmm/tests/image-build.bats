@@ -19,6 +19,13 @@ setup() {
   echo "# d" > "$PMM_IMAGES_HOME/d/README.md"
   [ "$(build_key local/d arm64)" = "$k1" ]
   [ "$(build_key local/d amd64)" != "$k1" ]
+  # nor what another arch installs from, the arch list, a timeout, an ISO id of the same sum
+  printf -- '- {id: t-other, url: https://x/a.iso, checksum: "sha256:%s"}\n' "$SHA" >> "$HOME/.config/anfs/isos.yml"
+  image "$PMM_IMAGES_HOME/d" "$(printf 'distro: debian\narch: [arm64]\niso: {arm64: t-other, amd64: nosuch}\ntimeouts: {ssh: 9}')"
+  [ "$(build_key local/d arm64)" = "$k1" ]
+  # what the build runs with is in it
+  echo 'build: {cpus: 8}' >> "$PMM_IMAGES_HOME/d/image.yml"
+  [ "$(build_key local/d arm64)" != "$k1" ]
   image "$PMM_IMAGES_HOME/c" "from: d"
   load_images
   run build_key local/c arm64
@@ -118,6 +125,113 @@ setup() {
   run cli_call "image remove" -y d
   [ "$status" -ne 0 ]
   [[ "$output" == *"c/arm64 is built on d"* ]]
+  # -f would put a new disk where the one c is an overlay on is
+  echo MARK > "$PMM_DATA_HOME/images/d/arm64/$pkey.qcow2"
+  run cli_call "image build" -f d
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"local/d (arm64): c/arm64 built on, or running from, its build $pkey"* ]]
+  [ "$(cat "$PMM_DATA_HOME/images/d/arm64/$pkey.qcow2")" = MARK ]
+  run cli_call "image build" -f c
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"== build local/c"* ]]
+}
+
+@test "a build that is there is never built again: an earlier build the definition is back at is taken as it is" {
+  cmd_image_build d >/dev/null
+  k1=$(meta_get d arm64 .cache_key)
+  at=$(meta_get d arm64 .built_at)
+  echo MARK > "$PMM_DATA_HOME/images/d/arm64/$k1.qcow2"
+  cp "$PMM_IMAGES_HOME/d/image.yml" "$T/was.yml"
+  echo 'vars: {TIMEZONE: UTC}' >> "$PMM_IMAGES_HOME/d/image.yml"
+  cmd_image_build d >/dev/null
+  [ "$(meta_get d arm64 .cache_key)" != "$k1" ]
+  cp "$T/was.yml" "$PMM_IMAGES_HOME/d/image.yml"
+  : > "$PMM_CALLS"
+  run cmd_image_build d
+  echo "$output"
+  [[ "$output" == *"local/d (arm64) is up to date ($k1)"* ]]
+  ! grep -q qemu-system "$PMM_CALLS"
+  [ "$(meta_get d arm64 .cache_key)" = "$k1" ]
+  [ "$(cat "$PMM_DATA_HOME/images/d/arm64/$k1.qcow2")" = MARK ]
+}
+
+@test "from: its own name: adding the override, and removing it, never rebuilds the root under what is on it" {
+  add_source user
+  add_source core
+  image "$T/srcs/core/machines/images/debian-13" "$(deb_yml)"
+  load_images
+  cmd_image_build debian-13 >/dev/null
+  d="$PMM_DATA_HOME/images/debian-13/arm64"
+  pkey=$(meta_get debian-13 arm64 .cache_key)
+  at=$(meta_get debian-13 arm64 .built_at)
+  meta_set debian-13 arm64 '.tested_key = strenv(v)' "$pkey"
+  echo MARK > "$d/$pkey.qcow2"
+  # a higher source overrides it: core's is the same build, now under its own record
+  image "$T/srcs/user/machines/images/debian-13" "from: debian-13"
+  load_images
+  : > "$PMM_CALLS"
+  run cmd_image_build debian-13
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"core/debian-13 (arm64) is up to date ($pkey)"*"== build user/debian-13"* ]]
+  [[ "$output" != *"== build core/debian-13"* ]]
+  [ "$(cat "$d/$pkey.qcow2")" = MARK ]
+  [ "$(meta_get debian-13@core arm64 .cache_key)" = "$pkey" ]
+  [ "$(meta_get debian-13@core arm64 .built_at)" = "$at" ]
+  [ "$(meta_get debian-13@core arm64 .tested_key)" = "$pkey" ]
+  key=$(meta_get debian-13 arm64 .cache_key)
+  [ "$(meta_get debian-13 arm64 .id)" = user/debian-13 ]
+
+  # a machine made from core's definition is on core's build, by the image's name
+  image_build core/debian-13 arm64
+  [ "$B_SOURCE/$B_NAME $B_KEY" = "core/debian-13 $pkey" ]
+  state_write "$PMM_DATA_HOME/machines/m1/state.yml" "$B_SOURCE/$B_NAME" arm64 "$B_BACKEND" "$B_KEY" "$B_DISK" "$B_USER" "$B_SSHKEY"
+  [ "$(holders_of debian-13 arm64 "$pkey")" = m1 ]
+  [ -z "$(holders_of debian-13 arm64 "$key")" ]
+  run cli_call "image remove" -y debian-13
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"debian-13 (arm64) has machines on it: m1"* ]]
+  run cli_call "image build" -f core/debian-13
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"m1 debian-13/arm64 built on, or running from, its build $pkey"* ]]
+
+  # the override goes: core's is the name's build again, the same disk, and one record
+  rm -rf "$T/srcs/user/machines/images/debian-13"
+  load_images
+  : > "$PMM_CALLS"
+  run cmd_image_build debian-13
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"core/debian-13 (arm64) is up to date ($pkey)"* ]]
+  ! grep -q qemu-system "$PMM_CALLS"
+  [ "$(cat "$d/$pkey.qcow2")" = MARK ]
+  [ "$(meta_get debian-13 arm64 .id) $(meta_get debian-13 arm64 .cache_key)" = "core/debian-13 $pkey" ]
+  [ "$(meta_get debian-13 arm64 .tested_key)" = "$pkey" ]
+  [ ! -e "$d/meta@core.yml" ]
+  # the override's build is superseded: prune takes it, and keeps what m1 is on
+  run cmd_image_prune
+  [[ "$output" == *"Pruned (1 superseded disks)"* ]]
+  [ ! -e "$d/$key.qcow2" ] && [ -f "$d/$pkey.qcow2" ]
+}
+
+@test "prune: the record of a shadowed definition that is gone goes" {
+  add_source user
+  add_source core
+  image "$T/srcs/core/machines/images/debian-13" "$(deb_yml)"
+  image "$T/srcs/user/machines/images/debian-13" "from: debian-13"
+  load_images
+  cmd_image_build debian-13 >/dev/null
+  d="$PMM_DATA_HOME/images/debian-13/arm64"
+  [ -f "$d/meta@core.yml" ]
+  run cmd_image_prune
+  [ -f "$d/meta@core.yml" ]
+  rm -rf "$T/srcs/core/machines/images/debian-13"
+  load_images
+  run cmd_image_prune
+  [ ! -e "$d/meta@core.yml" ]
+  # its disk stays: the other build is an overlay on it
+  [ "$(ls "$d"/*.qcow2 | wc -l)" -eq 2 ]
 }
 
 @test "from: its own name: a user source's debian-13 with one step builds on core's, and both builds stay" {

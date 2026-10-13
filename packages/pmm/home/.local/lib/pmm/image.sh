@@ -130,10 +130,15 @@ tpl_get() {
   printf '%s' "${TPL[$1]}"
 }
 
-# The vars: of <id>'s root image, as NAME=value lines (a null is an empty value)
+# The vars: of <id>'s root image, one NAME=<value in base64> line each (a null is an empty value).
+# Encoded because a value may have lines of its own; var_value reads one back.
 img_vars() {
-  yq -r '.vars // {} | to_entries | .[] | with(select(.value == null); .value = "") | .key + "=" + (.value | tostring)' \
+  yq -r '.vars // {} | to_entries | .[] | with(select(.value == null); .value = "") | .key + "=" + (.value | tostring | @base64)' \
     "$(img_yml "$(img_root "$1")")" 2>/dev/null || true
+}
+# The value of one img_vars line, as it is in image.yml but for newlines at its end
+var_value() {
+  [[ -z "${1#*=}" ]] || base64 --decode <<< "${1#*=}"
 }
 
 # Load the variables a root image's answer file renders with: HOSTNAME (the image's name unless
@@ -146,7 +151,7 @@ tpl_load() {
   TPL=()
   tpl_set HOSTNAME "$(img_name "$id")"
   while IFS= read -r line; do
-    [[ "$line" == *=* ]] && tpl_set "${line%%=*}" "${line#*=}"
+    [[ "$line" == *=* ]] && tpl_set "${line%%=*}" "$(var_value "$line")"
   done < <(img_vars "$id")
 
   user=$(img_user "$id")

@@ -508,7 +508,8 @@ cmd_show() {
   mach_exists "$name" || { _show_settings "$name" "$id"; return 0; }
   key=$(state_get "$name" .key)
   v=""
-  if [[ -n "$image" ]] && image_build "${image#*/}" "$(state_get "$name" .arch)" && [[ "$B_KEY" != "$key" ]]; then
+  # by its id: the build of the definition it was made from, which a higher source may shadow
+  if [[ -n "$image" ]] && image_build "$image" "$(state_get "$name" .arch)" && [[ "$B_KEY" != "$key" ]]; then
     v="; $image has a newer build (pmm reset $name)"
   fi
   if [[ -n "$image" ]]; then echo "  build       $key ($(state_get "$name" .arch), $(state_get "$name" .backend))$v"

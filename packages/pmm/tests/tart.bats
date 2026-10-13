@@ -72,3 +72,13 @@ teardown() {
   [ ! -f "$TART_STUB/pmm-m1" ] && [ ! -f "$TART_STUB/pmm-m1-snap-s1" ]
   [ -f "$TART_STUB/pmm-image-mac-bbbbbbbbbbbbbbbb" ]
 }
+
+@test "an image's VMs: its builds, by name as text; not another image's that the name would match as a pattern" {
+  echo stopped > "$TART_STUB/pmm-image-a.b-cccccccccccccccc"
+  echo stopped > "$TART_STUB/pmm-image-a.b-test"
+  echo stopped > "$TART_STUB/pmm-image-aXb-cccccccccccccccc"
+  echo stopped > "$TART_STUB/pmm-image-a.b-c-cccccccccccccccc"
+  [ "$(_tart_image_vms a.b | paste -sd' ' -)" = "pmm-image-a.b-cccccccccccccccc pmm-image-a.b-test" ]
+  tart_rm a.b
+  [ "$(ls "$TART_STUB" | grep -c '^pmm-image-a')" -eq 2 ]
+}

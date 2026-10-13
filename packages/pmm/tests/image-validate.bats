@@ -100,6 +100,30 @@ distro: fedora"
   [[ "$output" == *"distro: is ignored on a from: image"* ]]
 }
 
+@test "a from: image's vars: and user: are its root's, and said; build: holds cpus, memory and disk" {
+  image "$PMM_IMAGES_HOME/e" "$(deb_yml 'build: {cpus: 2, memory: 4096, disk: 30G}')"
+  image "$PMM_IMAGES_HOME/c" "from: e
+vars: {TIMEZONE: X}
+user: {name: bob}
+build: {memory: 4096}"
+  image "$PMM_IMAGES_HOME/b" "$(deb_yml 'build: {mem: 1, cpus: lots, disk: big}')"
+  image "$PMM_IMAGES_HOME/l" "$(deb_yml 'build: [2]')"
+  v e c
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"local/e ok"* ]]
+  [[ "$output" == *"vars: is ignored on a from: image"* ]]
+  [[ "$output" == *"user: is ignored on a from: image"* ]]
+  [[ "$output" == *"0 error(s), 2 warning(s)"* ]]
+  v b l
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"build.mem is not a setting (cpus, memory, disk)"* ]]
+  [[ "$output" == *"build.cpus 'lots' is not a number"* ]]
+  [[ "$output" == *"build.disk 'big' is not a size"* ]]
+  [[ "$output" == *"build: is a map"* ]]
+}
+
 @test "tart: base is required" {
   image "$PMM_IMAGES_HOME/m" "backend: tart
 distro: macos"

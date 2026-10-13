@@ -53,7 +53,7 @@ cmd_image_cd() {
 # only creates, so it never asks about what is there: an existing directory is refused (73).
 cmd_image_new() {
   local name="$1" from="${CLI_OPT[from]:-}" copy="${CLI_OPT[copy]:-}" src="${CLI_OPT[source]:-}"
-  local dest base id how
+  local dest base id how parent
   [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || cli_usage_err "'$name' is not an image name (letters, digits, . _ -)"
   [[ -z "$from" || -z "$copy" ]] || cli_usage_err "--from or --copy, not both"
   if [[ -z "$from$copy" ]]; then
@@ -81,7 +81,9 @@ cmd_image_new() {
   else
     mkdir -p "$dest/provision"
     : > "$dest/provision/.gitkeep"
-    printf '%s\n' "# $name: built on $(img_name "$base")" "description: $name" "from: $(img_name "$base")" > "$dest/image.yml"
+    # from: as it was asked for: with its source, it is that image and no other of the name
+    [[ "$from" == */* ]] || from=$(img_name "$base")
+    printf '%s\n' "# $name: built on $(img_name "$base")" "description: $name" "from: $from" > "$dest/image.yml"
     cat > "$dest/README.md" <<EOF
 # $name
 
@@ -97,7 +99,12 @@ EOF
   fi
   id="$src/$name"
   load_images
-  echo "Created $id: $(tilde "$dest")"
+  anfs_json_on || echo "Created $id: $(tilde "$dest")"
+  [[ -z "$copy" ]] || anfs_json_on || echo "Its README.md and description: are $base's, to be rewritten"
+  # a plain from: is the name as $src sees it, which may not be the image the name is here
+  if [[ -n "$from" ]] && parent=$(img_parent "$id") && [[ "$parent" != \?* && "$parent" != "$base" ]]; then
+    warn "$id is built on $parent, not $base: from: $from resolves in $src or a lower-priority source"
+  fi
   validate_image_quiet "$id" || warn "$id does not validate yet (pmm image validate $id)"
   anfs_result id "$id" dir "$dest"
 }

@@ -118,7 +118,8 @@ anfs: {sources: host}"
   echo "$output"
   [[ "$output" == *"  from        local/d"* ]]
   [[ "$output" == *"  answer      ~/.config/pmm/machines/images/d/preseed.cfg"* ]]
-  [[ "$output" == *"10-base.sh       ~/.config/pmm/machines/images/d/provision/10-base.sh"*"20-c.sh          ~/.config/pmm/machines/images/c/provision/20-c.sh"*"anfs install (host) (pmm) local/c: image.yml anfs:"*"finalize         (pmm)"* ]]
+  # the paths line up after the longest label
+  [[ "$output" == *"10-base.sh          ~/.config/pmm/machines/images/d/provision/10-base.sh"*"20-c.sh             ~/.config/pmm/machines/images/c/provision/20-c.sh"*"anfs install (host) (pmm) local/c: image.yml anfs:"*"finalize            (pmm)"* ]]
   [[ "$output" == *"  test        ~/.config/pmm/machines/images/d/test.sh"* ]]
   # --json: the same, as one object
   ANFS_JSON=true run cli_call "image show" c
@@ -147,6 +148,20 @@ base: ghcr.io/x/macos:latest"
   [[ "$output" == *"  test        (none: image test has nothing to run)"* ]]
 }
 
+@test "show: a vars: value with lines of its own is one variable, shown on one line" {
+  image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
+  printf 'vars:\n  RECIPE: |\n    one\n    X=two\n  BS: a\\nb\n' >> "$PMM_IMAGES_HOME/d/image.yml"
+  load_images
+  run cli_call "image show" d
+  echo "$output"
+  [[ "$output" == *"  vars        RECIPE=one\nX=two"$'\n'"              BS=a\nb"* ]]
+  [[ "$output" != *"  X=two"* ]]
+  ANFS_JSON=true run cli_call "image show" d
+  [ "$(yq -p json -r '.vars | keys | join(",")' <<< "$output")" = "RECIPE,BS" ]
+  [ "$(yq -p json -r .vars.RECIPE <<< "$output")" = "one"$'\n'"X=two" ]
+  [ "$(yq -p json -r .vars.BS <<< "$output")" = 'a\nb' ]
+}
+
 @test "new --from: a child with an empty provision/ and a README, in the local source; it validates" {
   image "$PMM_IMAGES_HOME/d" "$(deb_yml)"
   load_images
@@ -172,6 +187,38 @@ base: ghcr.io/x/macos:latest"
   run cli_call "image new" x --from nosuch
   [ "$status" -eq 1 ]
   [ ! -e "$PMM_IMAGES_HOME/x" ]
+  # --json: one object and nothing else
+  ANFS_JSON=true run cli_call "image new" web2 --from d
+  [ "$status" -eq 0 ]
+  [ "$(yq -p json -r '.id + " " + .dir' <<< "$output")" = "local/web2 $PMM_IMAGES_HOME/web2" ]
+}
+
+@test "new --from: with its source it is that image; a plain name that is another image from there is said" {
+  add_source user
+  add_source core
+  image "$T/srcs/user/machines/images/deb" "from: deb"
+  image "$T/srcs/core/machines/images/deb" "$(deb_yml)"
+  load_images
+  # the name is user/deb; core/deb was asked for
+  run cli_call "image new" web --from core/deb
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(yq -r .from "$PMM_IMAGES_HOME/web/image.yml")" = core/deb ]
+  [ "$(img_chain local/web | paste -sd' ' -)" = "local/web core/deb" ]
+  [[ "$output" != *"is built on"* ]]
+  run cli_call "image new" web3 --from deb
+  [ "$(img_chain local/web3 | paste -sd' ' -)" = "local/web3 user/deb core/deb" ]
+  [[ "$output" != *"is built on"* ]]
+  # from core, deb is core/deb: the image it will be built on is not the one the name is here
+  run cli_call "image new" low --from deb --source core
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"core/low is built on core/deb, not user/deb"* ]]
+  # a higher source's image cannot be built on: written as asked, and it does not validate
+  run cli_call "image new" low2 --from user/deb --source core
+  [ "$status" -eq 0 ]
+  [ "$(yq -r .from "$T/srcs/core/machines/images/low2/image.yml")" = user/deb ]
+  [[ "$output" == *"core/low2 does not validate yet"* ]]
 }
 
 @test "new --copy: a root, the whole directory under the new name; --source puts it in a source" {
@@ -189,6 +236,7 @@ base: ghcr.io/x/macos:latest"
   diff -r "$PMM_IMAGES_HOME/d" "$n"
   [ "$(canon d2)" = acme/d2 ]
   [ -z "$(img_get acme/d2 .from)" ]
+  [[ "$output" == *"Its README.md and description: are local/d's"* ]]
   run cmd_image_validate d2
   [ "$status" -eq 0 ]
   # the override of a shipped image: its own name, from a higher source

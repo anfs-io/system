@@ -134,7 +134,9 @@ machines/images/<name>/
   what an image cannot know and `vars:` cannot override (`tpl_load`: `USER`, `FULLNAME`,
   `PASSWORD_HASH`, `KS_PASSWORD`, `SSH_PUBKEY`, `IMAGE`, `ARCH`), and `HOSTNAME`, the image's name
   unless `vars:` sets it. Nothing else has a default, so a name `vars:` does not set fails
-  `validate` and the build. Comments in an answer file are rendered too.
+  `validate` and the build. Comments in an answer file are rendered too. A value may have lines
+  of its own (`img_vars` carries each in base64); `image show` prints it on one line, `\n` for a
+  newline.
 - **An ISO is a catalogue id** (`iso.<arch>`, `lib/pmm/iso.sh`), resolved the catalogue's own way
   (`~/.config/anfs/isos.yml`, then the sources in order), so a person's catalogue can point an id
   at a mirror. The entry must pin `checksum: sha256:<hex>`: the sum is in the build key, which is
@@ -147,11 +149,16 @@ machines/images/<name>/
   the same as one object. `_image_plan` (`registry.sh`) produces both.
 - **`image new <name> --from <image> | --copy <image> [--source <alias>]`** starts a definition
   in `PMM_IMAGES_HOME`, or in a source's clone: a child (`image.yml`, an empty `provision/`, a
-  README), or a copy of an image's whole directory. It only creates: an existing directory is
-  73, neither option without a terminal is 64.
+  README), or a copy of an image's whole directory (its README and `description:` included, to
+  be rewritten). It only creates: an existing directory is 73, neither option without a terminal
+  is 64. `--from core/debian-13` writes `from:` with its source, so it is that image and no
+  other of the name; a plain name is written plain, and when it is another image from where the
+  new one lands (`--source`), that is said.
 - **The old shape is an error, not ignored**: a `scripts/` directory, a `scripts:` key, and
   `cpus`, `memory` or `disk` at the top level (they are `build:`'s) each fail `validate` with
-  what replaced them.
+  what replaced them. So does a key `build:` does not have, or a value that is not a number or a
+  size. A `from:` image's `distro`, `iso`, `base`, `arch`, `vars` and `user` are warned about:
+  its root's apply.
 - **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
   and the rendered answer file (plus the image's public key) is appended to the initrd as one
   more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
@@ -163,13 +170,28 @@ machines/images/<name>/
   then means. Both are built. A name is one build record (`meta.yml`), so the shadowed
   definition's is `meta@<source>.yml` in the same directory, its disk beside the other's
   (`img_bname`, `registry.sh`); `image prune` keeps the current build of each.
-- **Builds are cached by key**: a hash of `image.yml` (minus `description` and `machine`), the
-  arch, the ISO's pinned sha256, the answer file, the steps, `files/`, pmm's finalize step and the
-  parent's key. `README.md` is not in it.
+  - Which record a definition has changes when the override is added or removed. The build does
+    not: `build_one` finds the disk by its key and `build_adopt` moves the record (with when it
+    was built and tested), so the root is not installed again. Removing the override leaves its
+    build superseded: `prune` takes it once no machine is on it.
+  - `<name>@<source>` names a record and nothing else. A machine's `state.yml` has the image's id
+    (`core/debian-13`, `build_read`'s `B_NAME` is the plain name), which is what `holders_of`
+    compares, so a machine made from the shadowed definition holds its build like any other.
+  - `prune` deletes a `meta@<source>.yml` whose definition is gone.
+- **Builds are cached by key**: a hash of `image.yml` (minus `description`, `machine`, `timeouts`,
+  `arch` and `iso`: the ids), the arch, the ISO's pinned sha256, the answer file, the steps,
+  `files/`, pmm's finalize step and the parent's key. `README.md` is not in it, nor is what
+  another arch installs from; `build: {cpus, memory}` are.
   `pmm image build` is a no-op while the key is unchanged; `meta.yml` beside each build records
   it, with `tested_key` (the build `image test` last passed) and `exports`.
-- **Every build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first boot
-  by a unit pmm installs), machine-id. An exported image is a new machine wherever it boots.
+- **A disk with a build's key is that build, and is never written twice.** Machines and other
+  images' builds are overlays on it, so `build_one` takes a disk that is there as built whatever
+  the records say (the definition moved to another source, or is back at an earlier build), and
+  `image build -f` refuses while a machine, a snapshot or another build is on the disk it would
+  replace.
+- **Every qemu build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first
+  boot by a unit pmm installs), machine-id. An exported image is a new machine wherever it boots.
+  A tart build has no finalize step: it ends with a reboot, and `image show` lists none.
 - **`test` is not `validate`.** `image validate` checks a definition without booting anything;
   `image test` (and `image build --test`) boots a throwaway copy of the build and runs `test.sh`.
   `image export` writes the build, and any `from:` chain under it, as one standalone qcow2.

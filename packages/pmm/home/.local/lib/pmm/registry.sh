@@ -12,7 +12,12 @@
 # be built: it is what an image whose from: is its own name is built on (user/debian-13 on
 # core/debian-13). Its record is meta@<source>.yml in the same directory, its disk beside the
 # other's, so the two builds do not replace each other. img_bname is the name such a record is
-# asked for by, and what meta_dir, meta_file and everything over them take.
+# asked for by, and what meta_dir, meta_file and everything over them take. It is a record's name
+# only: the image is still <name>, in a machine's state.yml and to holders_of.
+#
+# Which record a definition has therefore changes when a higher source starts or stops defining
+# the name. Its build does not: a disk is found by its key (build_one), and build_adopt gives the
+# definition's record what the other one said about it.
 
 img_bname() {
   local name
@@ -51,14 +56,14 @@ build_present() {
   esac
 }
 
-# The current build of <name> for <arch>, with what a machine made from it needs. Sets B_NAME,
-# B_ID (the definition it was built from), B_BACKEND, B_KEY, B_DISK (a tart build: its VM's name),
+# The current build of <name> for <arch>, with what a machine made from it needs. Sets B_NAME
+# (the image's name: never the record's, <name>@<source>), B_ID (the definition it was built from), B_BACKEND, B_KEY, B_DISK (a tart build: its VM's name),
 # B_USER, B_AT, B_TESTED (true|false), and from the root image's definition, when it is still
 # there, B_SSHKEY, B_BOOT_USER and B_BOOT_PW (tart: the stock image's account). Fails when there
 # is no build, or its disk is gone.
 build_read() {
   local name="$1" arch="$2" f tested root
-  B_NAME="$name" B_ID="" B_BACKEND="" B_KEY="" B_DISK="" B_USER="" B_AT="" B_TESTED=false
+  B_NAME="${name%@*}" B_ID="" B_BACKEND="" B_KEY="" B_DISK="" B_USER="" B_AT="" B_TESTED=false
   B_SSHKEY="" B_BOOT_USER="" B_BOOT_PW=""
   f=$(meta_file "$name" "$arch")
   [[ -f "$f" ]] || return 1
@@ -98,6 +103,36 @@ meta_write_build() {
            | .iso = (strenv(ISO) | select(. != ""))
            | .tested_key = null | .exports = []' > "$(meta_file "$name" "$arch").tmp"
   mv "$(meta_file "$name" "$arch").tmp" "$(meta_file "$name" "$arch")"
+  _meta_settle "$id" "$arch"
+}
+
+# Which record is a definition's changes when a higher source starts or stops defining the name
+# (img_bname). Once <id> has the name's own record, the one it had while it was shadowed goes.
+_meta_settle() {
+  local name
+  name=$(img_bname "$1")
+  [[ "$name" == *@* ]] || rm -f "$(meta_file "$name@$(img_src "$1")" "$2")"
+}
+
+# Record <id>'s build <key> when it is there and <id>'s record does not say so: the name's other
+# record has it (a higher source began, or stopped, defining the name), the definition moved to
+# another source, or it is an earlier build the definition is back at. Never built again: machines
+# and other images' builds are overlays on that disk. The record that names the key is taken
+# whole (when it was built, tested, its exports); with none, a new one is written.
+# Usage: build_adopt <id> <arch> <key> <parent id|"">
+build_adopt() {
+  local id="$1" arch="$2" key="$3" parent="$4" name f to
+  name=$(img_bname "$id")
+  to=$(meta_file "$name" "$arch")
+  for f in "$(meta_dir "$name" "$arch")"/meta*.yml; do
+    [[ -f "$f" && "$(yq -r '.cache_key // ""' "$f" 2>/dev/null)" == "$key" ]] || continue
+    ID="$id" yq '.id = strenv(ID)' "$f" > "$to.tmp"
+    mv "$to.tmp" "$to"
+    _meta_settle "$id" "$arch"
+    return 0
+  done
+  meta_write_build "$id" "$arch" "$key" "$parent"
+  [[ "$(img_backend "$id")" != tart ]] || meta_set "$name" "$arch" '.disk = strenv(v)' "$(tart_vm_build "$(img_name "$id")" "$key")"
 }
 
 # Set one field of a build's meta.yml: meta_set <name> <arch> <yq assignment using $v> <value>
@@ -214,7 +249,7 @@ cmd_image_list() {
 # What a build of <id> reads, one record per line, fields joined by $ANFS_US. `image show` prints
 # them and gives them as --json, so the two cannot differ:
 #   answer <file>                    the root's answer file (qemu), there or not
-#   var <name> <value>               the root's vars:
+#   var <name> <value> <base64>      the root's vars:; <value> has \n for a newline, to be one line
 #   iso <arch> <id> <file> <state>   the ISO each arch installs from: present | missing | unknown
 #   base <oci image>                 tart
 #   step <label> <image> <file>      the provision steps, the root's first, each image's anfs
@@ -233,7 +268,9 @@ _image_plan() {
   else
     f=$(img_answer_file "$id") && anfs_row answer "$f"
     while IFS= read -r line; do
-      [[ "$line" == *=* ]] && anfs_row var "${line%%=*}" "${line#*=}"
+      [[ "$line" == *=* ]] || continue
+      file=$(var_value "$line")
+      anfs_row var "${line%%=*}" "${file//$'\n'/\\n}" "${line#*=}"
     done < <(img_vars "$id")
     while IFS= read -r arch; do
       iso=$(img_iso_id "$id" "$arch") file="" state=unknown
@@ -260,7 +297,7 @@ _image_plan() {
 # `pmm image show <image>`: the definition, everything a build of it reads (with --json, the same
 # as one object), then its builds
 cmd_image_show() {
-  local id name bname arch chain f key held current plan kind a b c d last=""
+  local id name bname arch chain f key held current plan kind a b c d last="" w=16
   id=$(img_canon_or_die "$1")
   name=$(img_name "$id") bname=$(img_bname "$id")
   plan=$(_image_plan "$id")
@@ -278,15 +315,19 @@ cmd_image_show() {
     [[ "$1" == "$last" ]] && printf '  %-11s %s\n' "" "$2" || printf '  %-11s %s\n' "$1" "$2"
     last="$1"
   }
+  # the steps' paths line up after the longest label
+  while IFS="$ANFS_US" read -r kind a b; do
+    [[ "$kind" != step || ${#a} -le $w ]] || w=${#a}
+  done <<< "$plan"
   while IFS="$ANFS_US" read -r kind a b c d; do
     case "$kind" in
       answer) _plan_line answer "$(tilde "$a")$([[ -f "$a" ]] || echo "  (missing)")" ;;
       var)    _plan_line vars "$a=$b" ;;
       iso)    _plan_line "iso $a" "${b:-(none)}$([[ -z "$c" ]] || echo "  ($(tilde "$c"), $d)")$([[ -z "$b" || "$d" != unknown ]] || echo "  (not in the catalogue)")" ;;
       base)   _plan_line base "$a" ;;
-      step)   if [[ -z "$b" ]]; then _plan_line provision "$(printf '%-16s (pmm) %s' "$a" "$(tilde "$c")")"
-              elif [[ -z "$c" ]]; then _plan_line provision "$(printf '%-16s (pmm) %s' "$a" "$b: image.yml anfs:")"
-              else _plan_line provision "$(printf '%-16s %s' "$a" "$(tilde "$c")")"
+      step)   if [[ -z "$b" ]]; then _plan_line provision "$(printf '%-*s (pmm) %s' "$w" "$a" "$(tilde "$c")")"
+              elif [[ -z "$c" ]]; then _plan_line provision "$(printf '%-*s (pmm) %s' "$w" "$a" "$b: image.yml anfs:")"
+              else _plan_line provision "$(printf '%-*s %s' "$w" "$a" "$(tilde "$c")")"
               fi ;;
       test)   _plan_line test "$(tilde "$a")" ;;
       logs)   grep -q "^test$ANFS_US" <<< "$plan" || _plan_line test "(none: image test has nothing to run)"
@@ -328,7 +369,7 @@ _image_show_json() {
       base)   base=$(_js "$a") ;;
       test)   test=$(_js "$a") ;;
       logs)   logs=$(_js "$a") ;;
-      var)    vars+="${vars:+,}$(_anfs_json_str "$a"):$(_anfs_json_str "$b")" ;;
+      var)    vars+="${vars:+,}$(_anfs_json_str "$a"):$(_anfs_json_str "$(var_value "=$c")")" ;;
       iso)    isos+="${isos:+,}$(_anfs_json_str "$a"):{\"id\":$(_js "$b"),\"file\":$(_js "$c"),\"state\":$(_js "$d")}" ;;
       step)   steps+="${steps:+,}{\"step\":$(_js "$a"),\"image\":$(_js "$b"),\"file\":$(_js "$c")}" ;;
     esac
@@ -379,9 +420,15 @@ cmd_image_remove() {
 # `pmm image prune`: delete superseded build disks that no other build and no machine is on, and
 # stale build workspaces. The ISOs are not pmm's alone: `pmm iso remove`, `pmm iso prune`
 cmd_image_prune() {
-  local f dir keys d d_key freed=0
+  local f dir keys d d_key src freed=0
   for dir in "$PMM_DATA_HOME"/images/*/*/; do
     dir="${dir%/}"
+    # a shadowed definition's record, when the definition is gone, is nothing's
+    for f in "$dir"/meta@*.yml; do
+      [[ -f "$f" ]] || continue
+      src="${f##*/meta@}"
+      canon "${src%.yml}/$(basename "$(dirname "$dir")")" >/dev/null 2>&1 || rm -f "$f"
+    done
     # the current build of each definition of the name: the effective one's, and a shadowed one's
     keys=" "
     for f in "$dir"/meta*.yml; do

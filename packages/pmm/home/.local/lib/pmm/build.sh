@@ -10,7 +10,10 @@
 
 PMM_IMAGE_BUILD_VERSION=pmm-image-build-v1
 
-# The cache key of <id>'s build for <arch> (its parent must be built: its key is part of this one)
+# The cache key of <id>'s build for <arch> (its parent must be built: its key is part of this one).
+# Of image.yml it leaves out what this arch's build does not read, or reads another way:
+# description, machine:, timeouts:, the arch list, and iso: (the ids; this arch's ISO is in the
+# key by its pinned sum, so another arch's ISO, or a renamed id, changes nothing).
 build_key() {
   local id="$1" arch="$2" dir parent pkey s f
   dir=$(img_dir "$id")
@@ -21,7 +24,7 @@ build_key() {
   fi
   {
     echo "$PMM_IMAGE_BUILD_VERSION"
-    yq -o=json -I0 'del(.description, .machine) | sort_keys(..)' "$dir/image.yml"
+    yq -o=json -I0 'del(.description, .machine, .iso, .arch, .timeouts) | sort_keys(..)' "$dir/image.yml"
     echo "arch $arch"
     if [[ -z "$parent" ]]; then
       echo "iso $(iso_sha256 "$(img_iso_id "$id" "$arch")")"
@@ -107,17 +110,25 @@ cmd_image_build() {
 # Usage: build_one <id> <arch> <force> <console>
 build_one() {
   local id="$1" arch="$2" force="$3" console="$4"
-  local name parent key dir
+  local name parent key on
   name=$(img_bname "$id")
   parent=$(img_parent "$id") || parent=""
   [[ -z "$parent" ]] || build_one "$parent" "$arch" false "$console"
 
   key=$(build_key "$id" "$arch") || die "$id: its parent has no $arch build"
-  dir=$(meta_dir "$name" "$arch")
-  if ! $force && [[ "$(meta_get "$name" "$arch" .cache_key)" == "$key" && "$(meta_get "$name" "$arch" .id)" == "$id" ]] &&
-     build_present "$name" "$arch" "$key" "$(img_backend "$id")"; then
+  if ! $force && build_present "$name" "$arch" "$key" "$(img_backend "$id")"; then
+    # the build is there, whichever record names it: the key is everything that went into it
+    if [[ "$(meta_get "$name" "$arch" .cache_key)" != "$key" || "$(meta_get "$name" "$arch" .id)" != "$id" ]]; then
+      build_adopt "$id" "$arch" "$key" "$parent"
+    fi
     echo "$id ($arch) is up to date ($key)"
     return 0
+  fi
+  # -f builds the same key again, and the new disk takes the place of the one that is there:
+  # never under a machine or another image's build, which are overlays on it
+  if [[ "$(img_backend "$id")" == qemu && -f "$(meta_dir "$name" "$arch")/$key.qcow2" ]]; then
+    on=$( { holders_of "$(img_name "$id")" "$arch" "$key"; dependents_of_disk "$(meta_dir "$name" "$arch")/$key.qcow2"; } | paste -sd' ' -)
+    [[ -z "$on" ]] || die "$id ($arch): $on built on, or running from, its build $key; remove them first (-f replaces the disk)"
   fi
 
   case "$(img_backend "$id")" in

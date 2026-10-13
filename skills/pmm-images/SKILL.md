@@ -141,9 +141,9 @@ systemctl enable nginx
 
 - A step that fails stops the build, and the end of its output is shown (`-v` shows it all; the
   whole log is in the `logs` directory `image show` prints).
-- Don't start what must not run during the build, and don't clean up: every build ends with
-  pmm's finalize step (package caches, logs, ssh host keys, machine-id), which an image cannot
-  skip or replace.
+- Don't start what must not run during the build, and don't clean up: every qemu build ends
+  with pmm's finalize step (package caches, logs, ssh host keys, machine-id), which an image
+  cannot skip or replace. (A tart build has none: it ends with a reboot.)
 - Only `*.sh` run today; `validate` warns about anything else in `provision/`, and about an
   empty step.
 - An image must leave DHCP running on every ethernet interface: pmm configures nothing in a
@@ -170,15 +170,24 @@ your image is core's plus your steps. `pmm run debian-13` and every image of you
 as `shadowed`; both are built (core's build is recorded beside yours), and
 `pmm image show debian-13` lists the steps of each.
 
+- Adding the override does not rebuild core's: its build is found by its key and stays the disk
+  that machines and other images are already on. Machines made before it stay on core's build
+  until `pmm reset <machine>`.
+- Removing the override (delete the directory) makes `debian-13` core's again, on that same
+  build. Yours is then superseded: `pmm image prune` deletes it once no machine is on it.
+- `pmm image build -f debian-13` is refused while a machine or another image's build is on the
+  disk it would replace. Change the definition instead (a new key is a new disk), or remove
+  what is on it first.
+
 This adds to an image. To change what its **installer** does (partitioning, the mirror, the
 package set), make a root under a new name with `--copy`.
 
 ## Builds and the key
 
 `pmm image build <image>` builds its parents first and is a no-op while the **build key** is
-unchanged: a hash of `image.yml` (without `description` and `machine`), the answer file, the
-steps, `files/`, the ISO's pinned sum, pmm's finalize step and the parent's key. `README.md` is
-not in it. `pmm image list` says `stale` when the definition changed since the build. A machine
+unchanged: a hash of `image.yml` (without `description`, `machine`, `timeouts`, and the `arch`
+and `iso` lists), the answer file, the steps, `files/`, the pinned sum of the ISO this arch
+installs from, pmm's finalize step and the parent's key. `README.md` is not in it. `pmm image list` says `stale` when the definition changed since the build. A machine
 stays on the build it was made from until `pmm reset <machine>`.
 
 ## Workflow
@@ -204,7 +213,8 @@ stays on the build it was made from until `pmm reset <machine>`.
 | `scripts/ is never run` / `scripts: is gone` | rename the directory `provision/`; delete the key |
 | `memory: is build.memory now` | move `cpus`, `memory`, `disk` under `build:` |
 | `from: <x> not found in its source or below` | the parent is in a higher-priority source, or misspelt |
-| `distro: is ignored on a from: image` | delete it: a child's distro, arch and ISO are its root's |
+| `distro: is ignored on a from: image` | delete it: a child's distro, arch, ISO, `vars:` and `user:` are its root's |
+| `build.mem is not a setting` | `build:` has `cpus`, `memory` (MB) and `disk` (`20G`) |
 
 Only report an image as working after `pmm image validate` passes and `pmm image build --test`
 built and tested it. If you could not run the build, say so.

@@ -129,7 +129,7 @@ An <image> is `name` or `source/name`, resolved like a machine: local ($PMM_IMAG
 the anfs sources in order.
 
 Image: machines/images/<name>/ in a source, or in $PMM_IMAGES_HOME. The directory holds
-everything a build reads except pmm's finalize step; `pmm image show` lists it, `pmm image new`
+everything a build reads except pmm's finalize step (qemu); `pmm image show` lists it, `pmm image new`
 starts one
   image.yml      backend: qemu (default) | tart
                  distro: debian | fedora | macos     arch: [arm64, amd64]
@@ -162,11 +162,13 @@ starts one
   test.sh        what `pmm image test` runs: the image's, else the nearest up its from: chain
   README.md      what the image is for; never read by a build
 
-Every build ends with pmm's finalize step (package caches, logs, ssh host keys regenerated on
-first boot, machine-id). Builds are cached by a hash of image.yml (but description: and
-machine:), the answer file, the steps, files/, the ISO's sha256 and the parent's build; `image
-build` is a no-op while that hash is unchanged. A build a machine or a snapshot is on is kept:
-`image prune` leaves it, `image remove` refuses.
+Every qemu build ends with pmm's finalize step (package caches, logs, ssh host keys regenerated
+on first boot, machine-id); a tart build ends with a reboot. Builds are cached by a hash of
+image.yml (but description:, machine:, timeouts: and the arch and iso lists), the answer file,
+the steps, files/, this arch's ISO's sha256 and the parent's build; `image build` is a no-op
+while that hash is unchanged. A build a machine, a snapshot or another image's build is on is
+kept: `image prune` leaves it, `image remove` refuses, and so does `image build -f`, which would
+replace its disk.
 
 Access: each root image gets its own ssh key ($PMM_DATA_HOME/keys/<image>); the user's
 password is locked unless user.password_hash is set.

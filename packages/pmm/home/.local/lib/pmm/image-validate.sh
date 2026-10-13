@@ -34,8 +34,8 @@ validate_image() {
   from=$(img_get "$id" .from)
   if [[ -n "$from" ]]; then
     img_chain "$id" >/dev/null 2>"$PMM_STATE_HOME/.chain.err" || { _v_err "$(cat "$PMM_STATE_HOME/.chain.err")"; return; }
-    for f in distro iso base arch; do
-      [[ -n "$(img_get "$id" ".$f")" ]] && _v_warn "$f: is ignored on a from: image (its root's applies)"
+    for f in distro iso base arch vars user; do
+      [[ "$(yq -r "has(\"$f\")" "$yml")" != true ]] || _v_warn "$f: is ignored on a from: image (its root's applies)"
     done
     [[ "$(img_backend "$(img_root "$id")")" == "$backend" ]] || _v_err "backend $backend differs from its root's"
   else
@@ -85,6 +85,24 @@ validate_image() {
   for f in cpus memory disk; do
     [[ -z "$(img_get "$id" ".$f")" ]] || _v_err "$f: is build.$f now (build: {cpus, memory, disk}: what the build runs with)"
   done
+  # build: what the build runs with. A key nothing reads, or a value qemu or tart would choke on
+  # mid-build, is said here
+  if [[ "$(yq -r 'has("build")' "$yml")" == true ]]; then
+    if [[ "$(yq -r '.build | tag' "$yml")" != "!!map" ]]; then
+      _v_err "build: is a map (build: {cpus, memory, disk})"
+    else
+      while IFS='=' read -r f a; do
+        case "$f" in
+          cpus)   [[ "$a" =~ ^[1-9][0-9]*$ ]] || _v_err "build.cpus '$a' is not a number" ;;
+          memory) [[ "$a" =~ ^[1-9][0-9]*$ ]] || _v_err "build.memory '$a' is not a number of MB (4096)" ;;
+          disk)   if [[ "$backend" == tart ]]; then [[ "$a" =~ ^[1-9][0-9]*G$ ]] || _v_err "build.disk '$a' is not a size in G (80G)"
+                  else [[ "$a" =~ ^[1-9][0-9]*[MG]$ ]] || _v_err "build.disk '$a' is not a size (20G)"
+                  fi ;;
+          *)      _v_err "build.$f is not a setting (cpus, memory, disk)" ;;
+        esac
+      done < <(yq -r '.build | to_entries | .[] | .key + "=" + (.value | tostring)' "$yml")
+    fi
+  fi
   if img_has_anfs "$id"; then
     case "$(img_get "$id" .anfs.sources pushed)" in host|pushed) ;; *) _v_err "anfs.sources must be host or pushed" ;; esac
   fi

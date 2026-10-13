@@ -27,9 +27,14 @@ tart_vm_build() { echo "pmm-image-$1-$2"; }
 # Every VM that is <name>'s: its builds, one in progress, a test's copy. Not another image's
 # whose name starts with this one's.
 _tart_image_vms() {
-  local names
+  local names vm rest
   names=$(_tart_names) || true
-  grep -E "^pmm-image-$1-([0-9a-f]{16}|building|test)\$" <<< "$names" || true
+  # the name is compared as text: a . in it is not a pattern's
+  while IFS= read -r vm; do
+    rest="${vm#"pmm-image-$1-"}"
+    [[ "$vm" != "$rest" && "$rest" =~ ^([0-9a-f]{16}|building|test)$ ]] && echo "$vm"
+  done <<< "$names"
+  return 0
 }
 
 _tart_names() {
@@ -167,7 +172,7 @@ tart_build() {
   sshkey=$(img_key "$id")
   user=$(img_user "$id")
   vm="pmm-image-$name-building"
-  log="$PMM_STATE_HOME/logs/$name-$arch"
+  log="$PMM_STATE_HOME/logs/$bname-$arch"
   mkdir -p "$log" "$(meta_dir "$bname" "$arch")"
   start=$(date +%s)
 
@@ -223,10 +228,12 @@ tart_build() {
   tart rename "$vm" "$built"
   # superseded builds: nothing is an overlay on a tart build (clones are independent). The build
   # of a parent of the same name (from: its own name) is not one: it is that definition's current
-  local keep="$built"
+  local keep=""
   [[ -z "$parent" || "$(img_name "$parent")" != "$name" ]] ||
-    keep+="|$(tart_vm_build "$name" "$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)")"
-  _tart_names | grep -E "^pmm-image-$name-[0-9a-f]{16}\$" | grep -vxE "$keep" | while read -r s; do tart delete "$s" >/dev/null 2>&1 || true; done || true
+    keep=$(tart_vm_build "$name" "$(meta_get "$(img_bname "$parent")" "$arch" .cache_key)")
+  _tart_image_vms "$name" | while read -r s; do
+    [[ "$s" == "$built" || "$s" == "$keep" || "$s" == *-building || "$s" == *-test ]] || tart delete "$s" >/dev/null 2>&1 || true
+  done || true
   meta_write_build "$id" "$arch" "$key" "$parent"
   meta_set "$bname" "$arch" '.disk = strenv(v)' "$built"
   echo "Built $id (tart) in $(( $(date +%s) - start ))s: $built"
@@ -244,7 +251,7 @@ tart_test() {
   sshkey=$(img_key "$id")
   user=$(img_user "$id")
   vm="pmm-image-$name-test"
-  log="$PMM_STATE_HOME/logs/$name-arm64"
+  log="$PMM_STATE_HOME/logs/$(img_bname "$id")-arm64"
   mkdir -p "$log"
   tart delete "$vm" >/dev/null 2>&1 || true
   tart clone "$built" "$vm"

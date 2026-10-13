@@ -48,6 +48,11 @@ user: {name: dev}')"
   [ "$(tpl_get KS_PASSWORD)" = --lock ]
   [ "$(tpl_get SSH_PUBKEY)" = "ssh-ed25519 AAAA k" ]
   [ "$(tpl_get IMAGE)" = d ] && [ "$(tpl_get ARCH)" = arm64 ]
+  # a value with lines of its own is one variable, whatever its lines look like
+  printf 'vars:\n  RECIPE: |\n    one\n    X=two\n' >> "$PMM_IMAGES_HOME/e/image.yml"
+  tpl_load local/e arm64 "$T/k.pub"
+  [ "$(tpl_get RECIPE)" = "one"$'\n'"X=two" ]
+  ! tpl_get X
   # one image's variables are not the next one's; HOSTNAME is the image's name unless set
   tpl_load local/e arm64 "$T/k.pub"
   ! tpl_get TIMEZONE
