@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # anfs: install ISOs — one store, one downloader, one catalogue
 #
-# pim builds images from ISOs, ventoy puts them on a stick, pmm boots machines from them. They
+# pmm builds images from ISOs and boots machines from them, ventoy puts them on a stick. They
 # are the same files, so they are kept once ($ANFS_ISO_HOME), fetched one way, and named in one
 # catalogue that the sources layer like everything else.
 #

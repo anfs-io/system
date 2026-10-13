@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # lib/anfs/iso.sh: the ISO store, its downloader and the layered catalogue. `curl` is a stub that
-# serves files from $WEB by their URL's path. pim, pmm and ventoy are its users.
+# serves files from $WEB by their URL's path. pmm and ventoy are its users.
 # Run: bats packages/anfs/tests/
 
 setup() {

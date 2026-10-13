@@ -8,7 +8,7 @@
 #   anfs implode [--all]             and $HOME compared with what it was before install.sh
 #
 # Usage: packages/anfs/tests/roundtrip-macos [--all]   (Apple silicon; the box is the pmm
-#        machine anfs-test-macos, from pim's image of that name, built on first use)
+#        machine anfs-test-macos, from the image of that name, built on first use)
 #   --all  implode with --all; before that, stack/bash makes Homebrew's bash the login shell, and
 #          implode --all must refuse until it is changed back (the login-shell guard)
 #
@@ -57,7 +57,7 @@ echo owner | sudo -S -p '' -v 2>/dev/null
 export SUDO_ASKPASS=/tmp/askpass
 [ -x /opt/homebrew/bin/brew ] && eval "\$(/opt/homebrew/bin/brew shellenv)"
 export PATH="\$HOME/.local/bin:\$PATH"
-export PIM_INSTALL=validate PMM_INSTALL=validate
+export PMM_INSTALL=validate
 $1
 GUEST
 }
@@ -100,8 +100,8 @@ check "ppm: acme/hello stowed and runs"               'acme-hello | grep -q "hel
 check "ppm: acme/acme-infra pulled in stack/fnox"   'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"stack/fnox\")"'
 check "ppm: acme/acme-mac installed its cask"         'ppm list --installed --json | yq -p json -e ".[] | select(.package == \"acme/acme-mac\")" && [ -d /Applications/Rectangle.app ]'
 check "cli: help and completion from the declarations" 'anfs help | grep -q "implode \[-y\]" && ppm __complete "" | grep -q "^implode" && ppm completion zsh | grep -q "ppm __complete"'
-check "pim: acme/hello validates with its from: parent" 'pim validate acme/hello debian-13'
-check "pmm: acme/hello validates against pim's image" 'pmm validate acme/hello'
+check "pmm: the image acme/hello validates with its from: parent" 'pmm image validate acme/hello debian-13'
+check "pmm: the machine acme/hello validates against its image" 'pmm validate acme/hello'
 check "psm: acme-hello installed for pi"              'psm skills ls --json | yq -p json -e ".[] | select(.status == \"ok\" and .config == \"acme\" and .skill == \"acme-hello\")"'
 check "wsm: org installed before tech"                'wsm path acme/main/org >/dev/null && wsm path acme/main/tech >/dev/null'
 if grep -q "pcm install" <<< "$acme_out" && box 'pcm list' >/dev/null 2>&1; then

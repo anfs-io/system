@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # lib/anfs/catalog.sh: the definitions of one kind across the sources, and resolving a name to
-# one. pcm (services) and pim (images) are its users; their own suites cover it through them.
+# one. pcm (services) and pmm (images, machines) are its users; their own suites cover it through them.
 # Run: bats packages/anfs/tests/
 
 setup() {

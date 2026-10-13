@@ -1,7 +1,7 @@
 # acme — fixture org source for anfs tests
 
 A stand-in for a real org repo (lgat): one source holding every resource kind, so a single
-`anfs src add` + `anfs install acme` exercises all four tools.
+`anfs src add` + `anfs install acme` exercises every tool.
 
 | Dir | Tool | What |
 | --- | --- | --- |

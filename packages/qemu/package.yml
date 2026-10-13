@@ -1,6 +1,6 @@
-version: 0.1.0
+version: 0.1.1
 author: rjayroach
-# What pim runs on: qemu and its firmware, socat (QMP), bsdtar (reads ISOs, writes the initrd
+# What pmm runs on: qemu and its firmware, socat (QMP), bsdtar (reads ISOs, writes the initrd
 # cpio; macOS ships it as /usr/bin/bsdtar), ssh. ppm never removes system packages.
 brew:
   macos: [qemu, socat]

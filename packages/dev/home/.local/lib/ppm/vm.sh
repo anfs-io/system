@@ -9,8 +9,8 @@
 # macOS itself, where the most fragile paths live (the Xcode CLT, the Homebrew prefix, casks).
 #
 # The boxes are pmm machines, as the containers are pcm services: target <t> is the anfs repo's
-# machines/anfs-test-<t>, from the pim image of the same name (tart backend). Building is pim's
-# and every other command but install is pmm's own. This command only adds what is about testing
+# machines/anfs-test-<t>, from the image of the same name (tart backend). Every command but
+# install is pmm's own. This command only adds what is about testing
 # anfs: linking the mounted sources into a test user's anfs and running install.sh from them. A macOS guest gets no nested virtualization, so pcm's podman
 # machine cannot start in it.
 
@@ -20,7 +20,7 @@ cli_group vm "Disposable macOS VMs (pmm machines, tart) for testing anfs install
 Users: owner (admin, password 'owner'), other (no admin). Sources are
 mounted read-only. Apple allows two macOS guests running at once."
 cli_cmd "vm list" "Running boxes" --alias ls
-cli_cmd "vm build" "Build the box's image (pim build; a first pull is ~25GB)" \
+cli_cmd "vm build" "Build the box's image (pmm image build; a first pull is ~25GB)" \
   --opt "-f --force: Rebuild" --arg "target"
 cli_cmd "vm up" "Start it: pmm up anfs-test-<target>; options go to pmm up (--share P)" \
   --alias start --passthrough --arg "target"
@@ -30,33 +30,33 @@ cli_cmd "vm install" "Run install.sh from the mounted sources: [owner|other] [--
 (--pushed: from GitHub)" --passthrough --arg "target" --arg "[word...]"
 cli_cmd "vm snapshot" "Save the box (no name lists its snapshots)" --arg "target" --arg "[snapshot]"
 cli_cmd "vm reset" "Recreate it from a snapshot, or from its image's current build" --arg "target" --arg "[snapshot]"
-cli_cmd "vm remove" "Remove it and its snapshots (the image's build stays: pim remove)" --alias rm --arg "target"
+cli_cmd "vm remove" "Remove it and its snapshots (the image's build stays: pmm image remove)" --alias rm --arg "target"
 cli_cmd "vm ip" "The box's address" --arg "target"
 
-_vm_pim() {
-  command -v pim >/dev/null 2>&1 && command -v pmm >/dev/null 2>&1 ||
-    { echo "ppm vm needs pim and pmm (ppm install core/anfs)" >&2; exit 1; }
+_vm_pmm() {
+  command -v pmm >/dev/null 2>&1 ||
+    { echo "ppm vm needs pmm (ppm install core/anfs)" >&2; exit 1; }
 }
-cmd_vm_list()     { _vm_pim; pmm ps; }
+cmd_vm_list()     { _vm_pmm; pmm ps; }
 cmd_vm_build() {
-  _vm_pim
+  _vm_pmm
   _vm_target "$1" || return 1
-  if ${CLI_OPT[force]:-false}; then pim build -f "anfs-test-$1"; else pim build "anfs-test-$1"; fi
+  if ${CLI_OPT[force]:-false}; then pmm image build -f "anfs-test-$1"; else pmm image build "anfs-test-$1"; fi
 }
-cmd_vm_up()       { _vm_pim; _vm_target "$1" && pmm up "${@:2}" "anfs-test-$1"; }
-cmd_vm_down()     { _vm_pim; _vm_target "$1" && pmm down "anfs-test-$1"; }
-cmd_vm_shell()    { _vm_pim; _vm_target "$1" && _vm_user "${2:-owner}" && pmm shell "anfs-test-$1" -u "${2:-owner}"; }
-cmd_vm_install()  { _vm_pim; _vm_install "$@"; }
+cmd_vm_up()       { _vm_pmm; _vm_target "$1" && pmm up "${@:2}" "anfs-test-$1"; }
+cmd_vm_down()     { _vm_pmm; _vm_target "$1" && pmm down "anfs-test-$1"; }
+cmd_vm_shell()    { _vm_pmm; _vm_target "$1" && _vm_user "${2:-owner}" && pmm shell "anfs-test-$1" -u "${2:-owner}"; }
+cmd_vm_install()  { _vm_pmm; _vm_install "$@"; }
 cmd_vm_snapshot() {
-  _vm_pim
+  _vm_pmm
   _vm_target "$1" || return 1
   if [[ -n "${2:-}" ]]; then pmm snapshot create "anfs-test-$1" "$2"; else pmm snapshot list "anfs-test-$1"; fi
 }
-cmd_vm_reset()    { _vm_pim; _vm_target "$1" && pmm reset -y "anfs-test-$1" ${2:+"$2"}; }
-cmd_vm_remove()   { _vm_pim; _vm_target "$1" && pmm remove -y "anfs-test-$1"; }
+cmd_vm_reset()    { _vm_pmm; _vm_target "$1" && pmm reset -y "anfs-test-$1" ${2:+"$2"}; }
+cmd_vm_remove()   { _vm_pmm; _vm_target "$1" && pmm remove -y "anfs-test-$1"; }
 # A tool reads another's list with --json: the address is pmm list's, null while the box is down
 cmd_vm_ip() {
-  _vm_pim
+  _vm_pmm
   _vm_target "$1" || return 1
   local ip
   ip=$(N="anfs-test-$1" pmm list --json | N="anfs-test-$1" yq -p json -r '.[] | select(.name == strenv(N) and .state == "running") | .address')

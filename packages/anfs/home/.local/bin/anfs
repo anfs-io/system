@@ -78,7 +78,7 @@ what is missing. No step named means all of them." \
   ${_onboard_opts[@]+"${_onboard_opts[@]}"} \
   --arg "[step...]"
 cli_cmd implode "Remove everything the toolkit put on this machine:
-wsm, psm, pmm, pim, pcm, then ppm (which removes the tools and the
+wsm, psm, pmm, pcm, then ppm (which removes the tools and the
 software they run on), then the sources. Space contents
 are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,

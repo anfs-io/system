@@ -14,7 +14,7 @@ A source is a git repo (or a local directory) that may hold any of:
 | `spaces/` | `wsm` | workspaces of spaces (`spaces/<ws>/<space>/space.yml`; see wsm) |
 
 `anfs` owns the sources (`anfs src`) and the commands that span the tools: `anfs install
-<source>` installs everything a source holds, tool by tool (ppm, pcm, pim, pmm, psm, wsm), and `anfs
+<source>` installs everything a source holds, tool by tool (ppm, pcm, pmm, psm, wsm), and `anfs
 implode` runs every tool's `implode` in reverse, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
 `psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
@@ -29,61 +29,12 @@ What the tools share lives in `lib/anfs/` and nothing else does: paths (`paths.s
 source lists and clones (`sources.sh`), and finding resources plus ordering them by dependency
 (`resolve.sh`). What `install` *does* stays in each tool.
 
-## pim: VM images
-
-pim builds, verifies and publishes VM images defined in `machines/images/<name>/` of any source (or
-`~/.config/pmm/machines/images/`, the implicit `local` source). `pim help` documents the definition;
-the shape:
-
-```
-machines/images/<name>/
-  image.yml       backend (qemu|tart), distro, arch, iso.<arch>.{url,sha256} | from: <image> | base
-  preseed.cfg | kickstart.ks   optional answer file (${VAR} templated; defaults ship with pim)
-  scripts/*.sh    run as root over ssh after the install, in name order
-  files/          copied to the guest for the scripts
-  verify.sh       what `pim verify` runs on a throwaway boot
-```
-
-- **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
-  and the rendered answer file (plus the image's public key) is appended to the initrd as one
-  more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
-  dependency on the host. The installer powers the VM off (`-no-reboot`), then pim boots the disk.
-- **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
-  dependency: to the same or a lower-priority source, so `lgat/machines/images/app` may build on
-  `core/machines/images/debian-13` but not the reverse. Naming its own name is the next layer down.
-- **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
-  sha256, the answer file, the scripts, `files/`, pim's finalize step and the parent's key.
-  `pim build` is a no-op while the key is unchanged; `meta.yml` beside each build records it.
-- **Every build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first boot
-  by a unit pim installs), machine-id. A published image is a new machine wherever it boots.
-- **Access is by key only.** Each root image has its own ed25519 key in `$PIM_DATA_HOME/keys/`;
-  the user's password is locked unless `user.password_hash` is set. ssh is forwarded on
-  127.0.0.1 only.
-- **qemu**: hvf on macOS and kvm on Linux for a guest of the host's arch, TCG emulation
-  otherwise (works, slowly). arm64 guests boot UEFI (a per-disk copy of the vars).
-- **tart** (macOS guests, Apple silicon only) builds from an OCI base image instead of an ISO.
-- **Running an image is pmm's** (below). pim's part of that is three things:
-  - `pim builds [image]`: the current build of each image and arch, with what a tool running
-    machines from it needs (keys in "Lists and --json").
-  - **Holds.** `pim hold|release <image> <arch> <key> <holder>` (plumbing, not in help) puts an
-    empty file at `images/<name>/<arch>/holds/<key>/<holder>`. `pim clean` keeps a held disk and
-    `pim remove` refuses a held image without `-f`, exactly as for a build another image is an
-    overlay on. pim does not know who the holders are.
-  - `machine:` in `image.yml` (`{profile: medium, min: {cpus, memory, disk}}`) is carried for pmm
-    and never read by pim, as a package's `meta:` is by ppm. It is left out of the cache key.
-  - `up`, `down`, `shell`, `ps`, `snapshot` and `reset` went to pmm; for one release
-    `lib/pim/moved.sh` answers them with where they went and exit 64.
-- `cpus`, `memory` and `disk` in `image.yml` are the build's: what the installer runs with and the
-  size of the image's disk. What a machine gets is its own setting or its profile's.
-- **Out of scope:** deploying to hypervisors or clouds (Proxmox, AWS). pim's job ends at a
-  verified build or a published qcow2; deployment targets are a later kind of their own.
-- `pim install` (what `anfs install` runs) builds; `PIM_INSTALL=validate` only validates, which
-  is what the Linux round trip uses (no KVM in a podman box).
-
 ## pmm: machines
 
-pmm runs machines from pim's builds, the way instances run from an AMI: any number per image,
-each with its own name, disk and settings. `pmm help` documents the definition; the shape:
+pmm is the one tool for machines: it runs them, and `pmm image ...` builds what they run from
+(pim, which used to build the images, was folded in). An image is built once and any number of
+machines run from it, the way instances run from an AMI, each with its own name, disk and
+settings. `pmm help` documents the definitions; the shape:
 
 ```
 machines/<name>/machine.yml    image (or media), profile, cpus, memory, disk, shares, ports, user, arch
@@ -116,9 +67,9 @@ machines/networks/<name>/      a network (network.yml)
   image, arch, backend, build key, user and ssh key, and everything after it is made reads that, so
   a machine does not need its image's definition, or its own, to be stopped, reached or removed.
   `pmm reset` moves it onto the image's current build; `pmm show` says when there is a newer one.
-- **A qemu machine is a qcow2 overlay on the build**, so it holds it (`pmm:<machine>`; each
-  snapshot holds the build it was taken on, `pmm:<machine>@<snapshot>`). **A tart machine is a
-  clone**, `pmm-<name>` in tart's store, and holds nothing.
+- **A qemu machine is a qcow2 overlay on the build**, so the build is kept while the machine, or
+  a snapshot taken on it, exists (Images, below). **A tart machine is a clone**, `pmm-<name>` in
+  tart's store, and keeps nothing.
 - **Making a machine builds its image first** when its build is not current (`pmm image build`).
   Several minutes the first time.
 - **Profiles** are found like every other resource: the first source in priority order whose
@@ -126,17 +77,19 @@ machines/networks/<name>/      a network (network.yml)
   `large` and `xlarge`. A setting is the first of: the machine's own, its profile's, the profile
   its image names (`machine.profile`), then 2 cpus and 2048 MB (a tart machine: what its build
   has). An image's `machine.min` fails `validate`, `run` and `up`.
-- **What pmm takes from pim.** Metadata by command: `pim builds --json` and `pim path`, read at
-  `create` and `reset`. Machinery by sourcing: `core.sh`, `qemu.sh`, `ssh.sh` and `tart.sh` from
-  `~/.local/lib/pim`, since building an image means booting one. **Those four files must not
-  define a `cmd_` function** (it would become a pmm command), and what they offer for starting
-  and stopping a VM takes names and directories, never an image id. pim knows nothing about pmm.
+- **One catalogue per process** (`catalog.sh`), and pmm has two: `bin/pmm` loads the images' for
+  `pmm image ...` and the machines' otherwise. What the machine side needs of an image
+  (`image_def_dir`, `image_build`, `image_ensure_built` in `settings.sh`) is asked in a subshell
+  that loads the images' catalogue. `__complete` loads neither.
 - **Apple allows two macOS guests running at once.** `pmm up` counts tart's running macOS guests,
   whoever started them, and refuses a third before it clones or boots anything.
-- `pmm install` (what `anfs install` runs) makes and starts defined machines; `PMM_INSTALL=create` only makes them
-  and `PMM_INSTALL=validate` only validates, which is what the round trips use.
-- `pmm migrate` (run by the package's `post_install`) takes over the VMs pim ran before machines
-  were pmm's: disks are moved, tart VMs renamed, a running one is shut down first.
+- `pmm install` (what `anfs install` runs) makes and starts defined machines; `pmm install
+  source/` builds the source's images, installs its networks, then its machines.
+  `PMM_INSTALL=create` builds and makes but starts nothing, and `PMM_INSTALL=validate` only
+  validates, which is what the round trips use (no KVM in a podman box).
+- **The sockets of running machines** (QMP, the guest agent) are in `PMM_SOCK_DIR`, by default
+  `/tmp/pmm-<uid>`, which `implode` deletes. Anything that runs pmm beside a real one (the bats
+  helper, the e2e) sets it to a directory of its own.
 - **Media and blank machines** (`lib/pmm/media.sh`). `media:` lists what a person would plug in:
   an `.iso` is a CD, any other file a USB drive (a Ventoy stick's image), each a path or an id in
   the ISO catalogue. Media in the definition boot after the disk, so an empty disk falls through
@@ -147,6 +100,67 @@ machines/networks/<name>/      a network (network.yml)
   else VNC on 127.0.0.1 (`PMM_DISPLAY=window|vnc` decides otherwise). pmm knows nothing about
   ventoy: its image is a file like any other (`--media "$(ventoy path)"`).
 - **Not yet:** extra disks; networks on macOS; installing a blank machine unattended.
+
+### Images
+
+`pmm image list|show|build|test|export|remove|prune|path|cd|validate`. An image is
+`machines/images/<name>/` in any source, or in `~/.config/pmm/machines/images/` (the implicit
+`local` source, `PMM_IMAGES_HOME`). `pmm help` documents the definition; the shape:
+
+```
+machines/images/<name>/
+  image.yml       backend (qemu|tart), distro, arch, iso.<arch>.{url,sha256} | from: <image> | base
+  preseed.cfg | kickstart.ks   optional answer file (${VAR} templated; defaults ship with pmm)
+  scripts/*.sh    run as root over ssh after the install, in name order
+  files/          copied to the guest for the scripts
+  test.sh         what `pmm image test` runs on a throwaway boot
+```
+
+- **Root images install from an ISO, unattended.** The kernel and initrd are read out of the ISO
+  and the rendered answer file (plus the image's public key) is appended to the initrd as one
+  more cpio archive, which the kernel unpacks with the rest: no HTTP server, no network
+  dependency on the host. The installer powers the VM off (`-no-reboot`), then pmm boots the disk.
+- **`from:` images are qcow2 overlays** on their parent's build. `from:` resolves like a
+  dependency: to the same or a lower-priority source, so `lgat/machines/images/app` may build on
+  `core/machines/images/debian-13` but not the reverse. Naming its own name is the next layer down.
+- **Builds are cached by key**: a hash of the definition (minus `description`), the arch, the ISO
+  sha256, the answer file, the scripts, `files/`, pmm's finalize step and the parent's key.
+  `pmm image build` is a no-op while the key is unchanged; `meta.yml` beside each build records
+  it, with `tested_key` (the build `image test` last passed) and `exports`.
+- **Every build ends with `finalize.sh`**: caches, logs, ssh host keys (regenerated at first boot
+  by a unit pmm installs), machine-id. An exported image is a new machine wherever it boots.
+- **`test` is not `validate`.** `image validate` checks a definition without booting anything;
+  `image test` (and `image build --test`) boots a throwaway copy of the build and runs `test.sh`.
+  `image export` writes the build, and any `from:` chain under it, as one standalone qcow2.
+- **Access is by key only.** Each root image has its own ed25519 key in `$PMM_DATA_HOME/keys/`;
+  the user's password is locked unless `user.password_hash` is set. ssh is forwarded on
+  127.0.0.1 only.
+- **qemu**: hvf on macOS and kvm on Linux for a guest of the host's arch, TCG emulation
+  otherwise (works, slowly). arm64 guests boot UEFI (a per-disk copy of the vars). A guest of the
+  host's own arch that falls back to TCG (Linux: `/dev/kvm` missing or not writable, which is a
+  user outside the `kvm` group) is warned about once, by `image build`, `run` and `up`
+  (`qemu_accel_warn`); a foreign-arch guest is TCG by design and is not.
+- **tart** (macOS guests, Apple silicon only) builds from an OCI base image instead of an ISO. A
+  build is the VM `pmm-image-<name>-<key>` in tart's store; machines are `pmm-<name>`.
+- **What is on a build is found by a scan, not recorded.** `holders_of` (`registry.sh`) reads
+  every machine's `state.yml` and every snapshot's copy of it for the build key it is on: `web1`,
+  `web1@s1`. `image prune` keeps such a build, `image remove` refuses it without `-f`, exactly as
+  for a build another image is an overlay on, and `image list`'s `held` is the same answer.
+- **`image list` is one row per built arch**, or one row with a null arch for an image with no
+  build. `state` is `built`, `stale` (the definition changed since, or is gone), `unbuilt` or
+  `shadowed`.
+- `machine:` in `image.yml` (`{profile: medium, min: {cpus, memory, disk}}`) is for the machines
+  run from it and never read by a build, so it is left out of the cache key.
+- `cpus`, `memory` and `disk` in `image.yml` are the build's: what the installer runs with and the
+  size of the image's disk. What a machine gets is its own setting or its profile's.
+- **Where things are**: builds in `$PMM_DATA_HOME/images/<name>/<arch>/`, keys in
+  `$PMM_DATA_HOME/keys/<name>/`, exports in `$PMM_DATA_HOME/exports/`, build workspaces and logs
+  in `$PMM_STATE_HOME/{build,logs}`, ISOs in anfs's store (`lib/anfs/iso.sh`). Settings that are
+  only about images are `PMM_IMAGE_*` (`PMM_IMAGE_INSTALL_TIMEOUT`, `PMM_IMAGE_SSH_TIMEOUT`).
+- What a provision script sees is still `PIM_IMAGE`, `PIM_ARCH`, `PIM_USER`, `PIM_FILES` and
+  `PIM_SSH_PUBKEY`: the names are replaced with the provisioner contract, not before.
+- **Out of scope:** deploying to hypervisors or clouds (Proxmox, AWS). pmm's job with an image
+  ends at a tested build or an exported qcow2; deployment targets are a later kind of their own.
 
 ### Networks (Linux)
 
@@ -174,10 +188,10 @@ domain: lab               # optional
   `state.yml` across `reset`; on a nat or isolated network it also gets an address to keep (its
   own, or the lowest free one; DHCP's own range is the upper half of the subnet), reserved in
   libvirt under the machine's name (`virsh net-update ... ip-dhcp-host`). Nothing is configured in
-  the guest, so **an image must run DHCP on every ethernet interface** (pim's Debian default does:
+  the guest, so **an image must run DHCP on every ethernet interface** (pmm's Debian default does:
   dhcpcd's service instead of ifupdown's one stanza).
 - **ssh goes to the first interface whose address pmm knows**, and that machine has no user-mode
-  nic (`qemu_argv` with no port; `PIM_SSH_HOST` in pim's ssh.sh). A machine whose interfaces are
+  nic (`qemu_argv` with no port; `PMM_SSH_HOST` in ssh.sh). A machine whose interfaces are
   all bridged keeps the user-mode nic and its forwarded port; `pmm show` asks the guest agent for
   the LAN's address.
 - **A machine's networks are installed with it**, as its image is built with it; `pmm install
@@ -257,7 +271,7 @@ This repo (`core/`) contains:
   suites and the end-to-end round trip (Testing).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
-- `packages/{pcm,pim,pmm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
+- `packages/{pcm,pmm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
 - `packages/{podman,varlock,node,qemu}` — the software the tools run on, part of the base install
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
@@ -473,7 +487,7 @@ anfs_callbacks_ls        [tool]                    # tool, name, ok|stale, handl
   `source/ws/space`). wsm's are tied to the outcome, not the command: `wsm new` emits `install`
   for a space it installs, a re-install of what is installed emits nothing, `--dry-run` emits
   nothing, and `implode` emits `remove` for every level.
-  psm, pcm, pim and pmm emit nothing yet: add an emitter when there is a listener.
+  psm, pcm and pmm emit nothing yet: add an emitter when there is a listener.
 - A package that listens to another tool registers from its own `install.sh`:
 
   ```bash
@@ -506,10 +520,10 @@ and names the columns, and the library picks the form.
   not passed on to a tool this one runs. `anfs_result k v ...` is the `--json` answer of a command
   that changes something; `anfs_json_on` asks whether it was given.
 - **A tool reads another tool's list with `--json`, never by column.** pvm reads
-  `wsm ls --json`; pmm reads `pim builds --json`; the round trips read `ppm list --json`,
-  `pim list --json`, `pmm list --json` and `psm skills ls --json`. Keys may be added to a list; renaming or removing one breaks its
-  readers. The piped form is for a person's own pipes. There is no special flag for another
-  tool's benefit: `pcm list --names` and `pim list --names` are gone, and `ppm container` and
+  `wsm ls --json`; the round trips read `ppm list --json`, `pmm list --json`,
+  `pmm image list --json` and `psm skills ls --json`. Keys may be added to a list; renaming or
+  removing one breaks its readers. The piped form is for a person's own pipes. There is no
+  special flag for another tool's benefit: `pcm list --names` is gone, and `ppm container` and
   `ppm vm` read `list --json` like any reader (`ppm vm ip` is `pmm list`'s `address`).
 - Detail views (`pcm inspect`, `ppm show`) are not tables and do not go through this.
 
@@ -521,14 +535,13 @@ The keys, which are the interface:
 | `wsm list -r` | `path`, `url`, `state` |
 | `ppm list`, `ppm list --installed` | `package`, `installed` (the version, null when not installed) |
 | `pcm list` | `name`, `source`, `status` |
-| `pim list` | `name`, `source`, `status` |
-| `pim builds` | `name`, `source`, `arch`, `backend`, `key`, `disk` (a tart build: its VM's name), `user`, `sshkey`, `held` (a list), `boot_user`, `boot_password` (tart: the stock image's account) |
 | `pmm list` | `name`, `source` (null: run from an image, or the definition is gone), `image`, `state` (`running`, `stopped`, `defined`, `shadowed`), `address` |
 | `psm skills list` | `status`, `config`, `skill`, `repo` |
 | `psm repo list` | `config`, `repo`, `note` |
 | `anfs callbacks` | `tool`, `listener`, `state`, `handler` |
 | `anfs src list` | `alias`, `url`, `list` (`user`, `system`), `status`, `provides` (a list) |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
+| `pmm image list` | `name`, `source` (null: the definition is gone), `arch` (null: not built), `state` (`built`, `stale`, `unbuilt`, `shadowed`), `key`, `disk` (a tart build: its VM's name), `backend`, `user`, `sshkey`, `held` (a list: `web1`, `web1@s1`), `built` (when), `tested` (true when this build passed `image test`) |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 | `pmm network list` | `name`, `source` (null: made with `network create`, or the definition is gone), `kind`, `subnet` (a bridged network: its bridge), `state` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `machines` (comma-separated) |
 
@@ -565,8 +578,8 @@ cli_dispatch "$@"
   too many arguments are refused the same way by every tool, with exit 64:
 
   ```
-  pim: unknown option '--bogus'
-  pim: usage: pim build [-f] [-v] [--arch ARCH] [--console] [--verify] <image>...
+  pmm: unknown option '--bogus'
+  pmm: usage: pmm image build [-f] [-v] [--arch ARCH] [--console] [--test] <image>...
   ```
 - `cli_usage_err "message"` is for what a declaration cannot say (`--to` is required). An unknown
   command exits 64 too.
@@ -581,11 +594,14 @@ cli_dispatch "$@"
   `psm path`. *Only* `cmd_` functions run, so a tool's internals are never reachable from its
   command line, and a command can never shadow a system binary in package hooks (`install`, `file`).
 - A tool whose tests source its libraries directly keeps its declarations in a library file
-  (`lib/pim/commands.sh`, `lib/pmm/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
+  (`lib/pmm/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
 
 **The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
 `show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm skills list`,
-`pvm link remove`, `ppm container remove`). pcm and pmm keep `up`/`down`/`ps`, the names of what
+`pvm link remove`, `ppm container remove`, `pmm image list`). `image` is the group for what a
+tool's main object runs from, and `pmm image` is the reference for it: besides the shared verbs,
+`build`, `test` (boot it and run its test; `validate` only reads the definition), `export` and
+`prune`. pcm and pmm keep `up`/`down`/`ps`, the names of what
 they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image); wsm's `status` is a different question from `ps`.
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
 says what would happen.
@@ -630,7 +646,7 @@ aliases of these; don't write another):
 - **`lib/anfs/catalog.sh`** finds the definitions of one kind across the sources and resolves a
   name to one: `catalog_load <kind> <marker> <local alias> <local dir>`, then `catalog_canon`,
   `catalog_dir`, `catalog_all_ids`, `catalog_effective_ids`. pcm (`containers`, `compose.yml`) and
-  pim (`images`, `image.yml`) and pmm (`machines`, `machine.yml`) are built on it; a new tool with
+  pmm (`machines`, `machine.yml`; `machines/images`, `image.yml`) are built on it; a new tool with
   definitions in sources uses it too.
   One catalogue per process: a tool with two kinds loads one, uses it, then loads the other.
 
@@ -649,7 +665,7 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   warn/error/debug line plus one `start:` line per invocation, whether or not `-d` is on. `anfs log
   [-f] [tool]` prints or follows it. Past 1 MB it becomes `anfs.log.1`.
 - `ANFS_LOG=off` writes no file. Test helpers set it; a test that sources a tool's libraries
-  directly must source `log.sh` first (pim's and ppm's do), since the tool's `warn`/`die` call it.
+  directly must source `log.sh` first (pmm's and ppm's do), since the tool's `warn`/`die` call it.
 
 ## Key Files
 
@@ -918,12 +934,12 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # every entry point, and the one file here that must run under bash 3.2
   log.sh       # anfs_info/warn/die/fail/debug, the log file (anfs log), ANFS_DEBUG, ANFS_TRACE
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
-  catalog.sh   # the definitions of one kind across the sources (pcm's services, pim's images):
+  catalog.sh   # the definitions of one kind across the sources (pcm's services, pmm's images):
                # catalog_load, catalog_canon, catalog_all_ids
   iso.sh       # install ISOs: the store ($ANFS_ISO_HOME, ~/.cache/anfs/isos), anfs_iso_fetch (resume,
                # mirrors, sha256 or the publisher's checksum file), and the catalogue layered over the
                # sources (isos/isos.yml, ~/.config/anfs/isos.yml first): anfs_iso_ids, anfs_iso_fetch_id.
-               # pim (its images pin a sha256), pmm (media:) and stack's ventoy use it
+               # pmm (its images pin a sha256; media:) and stack's ventoy use it
   table.sh     # anfs_row, anfs_table (aligned on a terminal, tab-separated piped, --json),
                # anfs_result, anfs_json_on
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),
@@ -977,7 +993,7 @@ source "$HOME/.local/lib/anfs/bash.sh"
   They run on a vanilla Mac before Homebrew's bash exists, so no bash 4+ syntax in them. Each says
   so in its header, and `packages/anfs/tests/bash.bats` parses them under `/bin/bash`. They may
   call functions from bash 5 libraries, as long as that only happens once the real `ppm` runs.
-- Code that predates the floor (wsm, ppm's `packages.sh`, pim's `image.sh`) still uses parallel
+- Code that predates the floor (wsm, ppm's `packages.sh`, pmm's `image.sh`) still uses parallel
   arrays. Convert it when it is next changed, not for its own sake.
 - **Do not run `ppm install -r core/anfs`** to pick up a new `lib/anfs` file. `-r` removes the
   package first, which unlinks `lib/anfs`, and ppm cannot run without it to put it back.
@@ -999,16 +1015,16 @@ Unit tests are bats, no network (local bare repos over file://):
 ```
 bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
-                             # Run bats with </dev/null: pim's ssh stub reads stdin, and a test
+                             # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
-bats packages/pim/tests      # pim: sources, templates, validate, qemu argv, build (qemu/ssh stubbed), builds and holds
-bats packages/pmm/tests      # pmm: sources, profiles, validate, run/up/exec/snapshots/reset/remove, the macOS
-                             # limit, migrate, networks and interfaces (qemu, ssh, tart and virsh
-                             # stubbed; pim is the real one)
+bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, list, what is on a
+                             # build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
+                             # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart
+                             # and virsh are stubbed, and PMM_SOCK_DIR is the suite's own
 ```
 
 End to end, on a fresh Linux box:
@@ -1031,16 +1047,18 @@ packages/anfs/tests/roundtrip-macos [--all]
 pcm cannot run containers in the macOS VM: a macOS guest gets no nested virtualization, so the
 podman machine cannot start (the check is that pcm reports it and implode leaves nothing).
 
-pim and pmm, for real (qemu, hvf/kvm; about 3 minutes each for Debian on Apple silicon):
+pmm, for real (qemu, hvf/kvm; a few minutes for Debian on Apple silicon):
 
 ```
-packages/pim/tests/e2e [debian|fedora|all]
-    # validate, build --verify, a cache-hit rebuild, publish -c, qemu-img check, rm, implode
 packages/pmm/tests/e2e [debian|fedora]
-    # pim build; two machines from the one image (a profile, a share, run), exec, down,
-    # up again (the disk persists), snapshot/reset, reset onto the build, the hold (pim rm is
-    # refused), rm, implode
+    # the image: validate, build --test, a cache-hit rebuild, export -c, qemu-img check; then two
+    # machines from the one build (a profile, a share, run), exec, down, up again (the disk and
+    # the settings persist), snapshot/reset, reset onto the build, the build kept while a machine
+    # or a snapshot is on it (image remove is refused), prune, rm, implode
 ```
+
+It runs the working tree's pmm under a temp `HOME` with its own `PMM_SOCK_DIR`; only the ISO
+store is the real one.
 
 - `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
   `containers/anfs-test-<distro>/Containerfile`) with podman alone, so changing anfs — pcm
@@ -1060,7 +1078,7 @@ packages/pmm/tests/e2e [debian|fedora]
 `core/dev` provides the throwaway machines to validate them on. `ppm container` (Debian, Fedora; the
 boxes are pcm services, `containers/anfs-test-<distro>`) and
 `ppm vm` (macOS on Apple silicon; the boxes are pmm machines, `machines/anfs-test-<target>`, from
-the pim image of the same name on the tart backend) share one contract: two test users, `owner` (sudo with
+the image of the same name on the tart backend) share one contract: two test users, `owner` (sudo with
 a password) and `other` (none), and the host's source repos mounted **read-only at `/src/<alias>`**,
 so a box tests the working tree rather than the pushed repos. `ppm user` makes a throwaway user on
 the host instead, which is the cheapest way to exercise the non-owner Homebrew path.
@@ -1071,14 +1089,14 @@ and test the pushed repo instead of the mount.
 
 `ppm vm` differs from `ppm container` in four places, each forced by the platform rather than by
 taste (the first two live in the image, `machines/images/anfs-test-macos/scripts/10-provision.sh`; the
-second two in the tart backend: pim's `tart.sh`, and pmm's machine and snapshot code over it):
+second two in the tart backend: pmm's `tart.sh`, and its machine and snapshot code over it):
 
 - **`/src` comes from `/etc/synthetic.conf`**, realized at boot. tart mounts shares under
   `/Volumes/My Shared Files/<name>`, and `collect_repos` splits source lines on whitespace, so a
   path with spaces is unusable; `/` is read-only, so the link cannot be made directly.
 - **A snapshot recreates the box rather than restarting it.** `tart clone` of a stopped VM captures
   its state correctly, but the restarted original has been observed to come back without those
-  writes. pim's tart backend (`_tart_shutdown`, which pmm uses) also shuts the guest down from inside and waits, because `tart stop` can
+  writes. The tart backend (`_tart_shutdown`) also shuts the guest down from inside and waits, because `tart stop` can
   return while writes are still buffered and the clone then catches an older APFS checkpoint.
 - **Provisioning raises sudo's `timestamp_timeout`.** `_system_sudo` primes the cache then uses
   `sudo -n`, but macOS defaults to 5 minutes with per-tty tickets and there is no tty over ssh, so
@@ -1086,7 +1104,7 @@ second two in the tart backend: pim's `tart.sh`, and pmm's machine and snapshot 
 - **ssh re-parses the remote command line** where `podman exec` passes argv straight through, so
   multi-word values travel as env vars, not positional arguments.
 
-pim and pmm run under `set -euo pipefail`, so every best-effort `tart` call needs an explicit guard
+pmm runs under `set -euo pipefail`, so every best-effort `tart` call needs an explicit guard
 (`tart delete` on a missing VM exits 2 and would otherwise kill the command mid-run). The same
 option is why **a list is never piped into `grep -q`**: grep leaves at its first match, the writer
 is cut short, and pipefail turns a match into a failure, now and then (`tart_exists` reads the

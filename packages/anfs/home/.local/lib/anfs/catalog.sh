@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # anfs: a catalogue — the definitions of one kind across the sources, and resolving a name to one
 #
-# pcm's services and pim's images are found the same way: every source may hold a directory of a
+# pcm's services and pmm's images are found the same way: every source may hold a directory of a
 # kind (containers/, machines/images/), each definition is a directory in it with a marker file
 # (compose.yml, image.yml), and a tool has a place of its own for hand-made ones that comes first.
 # A definition's id is `source/name`; a plain name is the highest-priority source that has it.
@@ -15,7 +15,7 @@
 #   catalog_canon <spec> [min]       name or source/name -> id; a plain name is searched from
 #                                    priority index <min> (default 0), so a definition can be
 #                                    looked up in the same or a lower-priority source than
-#                                    another (pim's from:)
+#                                    another (an image's from:)
 #   catalog_all_ids                  every id, in priority order, shadowed ones included
 #   catalog_effective_ids            the id each plain name resolves to, one per name
 #
