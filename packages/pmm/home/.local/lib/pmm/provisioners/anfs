@@ -92,6 +92,12 @@ case "$verb" in
     pkgs=$(yq -p yaml -r '[.packages] | flatten | .[] | select(. != null)' "$step" 2>/dev/null | paste -sd' ' -)
     args="${repo:+ --repo $(shq "$repo")}${pkgs:+ $pkgs}"
     script="${ANFS_IMAGE_WORK:?}/install.sh"
+    # What starts every install. su -l from a session that is already one gets no new login
+    # session, and so no XDG_RUNTIME_DIR: without it a hook finds no systemd user session
+    # (core/podman's socket), though the user's is running
+    # shellcheck disable=SC2016
+    head='set -euo pipefail
+[ -n "${XDG_RUNTIME_DIR:-}" ] || [ ! -d "/run/user/$(id -u)" ] || export XDG_RUNTIME_DIR="/run/user/$(id -u)"'
     case "$m" in
       host)
         # shellcheck disable=SC2086
@@ -110,14 +116,14 @@ case "$verb" in
         # shellcheck disable=SC2086
         $ANFS_IMAGE_GUEST_EXEC chown -R "$user:" "$home/.local"
         {
-          echo 'set -euo pipefail'
+          echo "$head"
           echo 'mkdir -p ~/.config/anfs'
           printf 'cat > ~/.config/anfs/user.list <<LIST\n%sLIST\n' "$list"
           echo "bash ~/.local/share/anfs/sources/core/install.sh$args"
         } > "$script" ;;
       pushed)
         {
-          echo 'set -euo pipefail'
+          echo "$head"
           echo "curl -fsSL $(shq "$(get .installer "$INSTALLER")") | bash -s --$args"
         } > "$script" ;;
     esac

@@ -340,6 +340,8 @@ exec chown -R u: /home/u/.local
 exec su -l u -c bash -l -s" ]
   grep -qx "bash ~/.local/share/anfs/sources/core/install.sh --repo 'git@x:me/dots.git' stack/zsh stack/git" "$FIX/script"
   grep -qxF '$HOME/.local/share/anfs/sources/s1  s1' "$FIX/script"
+  [ "$(head -n1 "$FIX/script")" = 'set -euo pipefail' ]
+  grep -q 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' "$FIX/script"
   # pushed: nothing is copied; install.sh is fetched in the guest, from where the step says
   : > "$FIX/guest"
   printf 'installer: https://x/install.sh\n' > "$T/50-kit.anfs"
