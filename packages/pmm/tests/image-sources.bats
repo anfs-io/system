@@ -143,6 +143,7 @@ base: ghcr.io/x/macos:latest"
   run cli_call "image show" m
   [[ "$output" == *"  base        ghcr.io/x/macos:latest"* ]]
   [[ "$output" != *"answer"* ]]
+  [[ "$output" != *"finalize"* ]]     # a tart build ends with a reboot, not pmm's finalize step
   [[ "$output" == *"  test        (none: image test has nothing to run)"* ]]
 }
 
