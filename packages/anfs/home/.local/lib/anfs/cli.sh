@@ -319,13 +319,16 @@ _cli_parse() {
 # line is checked like any other, and the caller's own options and arguments are put back after.
 # This is how one command runs another, and how a test runs one.
 cli_call() {
-  local name="${CLI_ALIAS_TO[$1]:-$1}" saved rc
+  local name="${CLI_ALIAS_TO[$1]:-$1}" saved rc caller="${CLI_COMMAND:-}"
   local -a pos=("${CLI_POS[@]}")
   shift
   saved=$(declare -p CLI_OPT)
-  CLI_COMMAND="$name" _cli_parse "$name" "$@"
+  # the running command, while it runs: its own usage line is what cli_usage_err prints
+  CLI_COMMAND="$name"
+  _cli_parse "$name" "$@"
   "cmd_${name//[ -]/_}" "${CLI_POS[@]}"
   rc=$?
+  CLI_COMMAND="$caller"
   eval "${saved/#declare -A/declare -gA}"
   CLI_POS=("${pos[@]}")
   return "$rc"
