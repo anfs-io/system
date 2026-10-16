@@ -1,0 +1,5 @@
+version: 0.1.0
+author: rjayroach
+# wsm is what links point into, and what tells pvm when a level is installed or removed
+depends:
+  - wsm
