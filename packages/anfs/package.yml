@@ -1,8 +1,8 @@
 version: 0.2.9
 author: rjayroach
-# core/anfs is the toolkit: the anfs command and the libraries every tool shares (this package),
-# plus every tool and the software they run on. install.sh stows this package and core/ppm, then
-# `ppm install core/anfs` brings the rest in as dependencies, tracked like any other, so
-# `anfs implode` takes them out again. The tools don't declare a dependency back on anfs: like
-# stow and yq it is base software, always present.
-depends: [ppm, podman, varlock, node, qemu, pcm, pmm, psm, wsm]
+# core/anfs is the anfs command and the libraries every tool shares. It depends on what the anfs
+# command itself runs and nothing else: ppm, for `anfs src install` and the stacks. The toolkit
+# (every tool and the software they run on) is the stack core/system (stacks/system/stack.yml),
+# which install.sh installs with `anfs install system` and `anfs implode` removes. The tools don't
+# declare a dependency back on anfs: like stow and yq it is base software, always present.
+depends: [ppm]

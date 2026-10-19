@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# anfs install script — bootstraps the anfs toolkit (ppm, pcm, psm, wsm and the anfs command)
+# anfs install script — bootstraps the anfs toolkit (the stack core/system: ppm, pcm, psm, wsm and
+# the anfs command)
 #
 # BOOTSTRAP SET: this runs under whatever bash started it, which on a vanilla Mac is 3.2, before
 # Homebrew's bash exists. It and the ppm libraries it sources (PPM_BOOTSTRAP_LIBS) must stay
@@ -28,10 +29,10 @@
 #   8. With --repo: adds your customization repo as the "user" source (highest priority) and
 #      installs its anfs package, which replaces the seeded user.list with a link into it
 #   9. Runs 'anfs src update', installs your login shell's package from stack (bash or zsh:
-#      without it nothing puts Homebrew on an interactive shell's PATH), any requested packages,
-#      then 'ppm install core/anfs':
-#      the whole toolkit — pcm, psm, wsm and the software they run on (podman, varlock, node) —
-#      tracked like any package, so `anfs implode` can take it all out again
+#      without it nothing puts Homebrew on an interactive shell's PATH), then 'anfs install
+#      system': the stack core/system, the whole toolkit — pcm, psm, wsm and the software they
+#      run on (podman, varlock, node) — tracked like any package and recorded as a stack, so
+#      `anfs implode` can take it all out again. Then any requested packages
 #
 # FILES CREATED:
 #   ~/.local/share/anfs/sources/<alias>/  one clone per source; anfs/ is the toolkit's own repo
@@ -428,13 +429,13 @@ install_shell() {
 
 
 install_packages() {
+  # The toolkit is the stack core/system: ppm, pcm, psm, wsm and the software they run on, each
+  # tracked by ppm (re-stowing the base packages) and recorded by anfs, so implode reverses it
+  anfs install system -y
   local pkg
   for pkg in "$@"; do
     ppm install "$pkg"
   done
-  # The toolkit: core/anfs depends on ppm, pcm, psm, wsm and the software they run on, so this
-  # installs them all and records them in the tracker (re-stowing the base packages)
-  ppm install core/anfs
 }
 
 
