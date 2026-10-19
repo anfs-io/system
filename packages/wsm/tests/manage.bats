@@ -14,30 +14,32 @@ setup() {
 @test "ls lists every source, workspace and space, with where each is installed" {
   run wsm ls
   [ "$status" -eq 0 ]
-  [[ "$output" == *$'acme/\t-'* ]]
-  [[ "$output" == *$'acme/main\t-'* ]]
-  [[ "$output" == *$'acme/main/finance\t-'* ]]
+  [[ "$output" == *$'acme/\t-\tsource\t-'* ]]
+  [[ "$output" == *$'acme/main\t-\tworkspace\t-'* ]]
+  [[ "$output" == *$'acme/main/finance\t-\tspace\t-'* ]]
   [[ "$output" == *$'acme/spikes/tech\t-'* ]]
+  ANFS_TABLE=aligned run wsm ls
+  [[ "${lines[0]}" == "SPACE"*"STATUS"*"LEVEL"*"DIR" ]]
   wsm install acme/main >/dev/null
   run wsm ls
-  [[ "$output" == *$'acme/\t~/spaces/acme'* ]]
-  [[ "$output" == *$'acme/main/tech\t~/spaces/acme/main/tech'* ]]
+  [[ "$output" == *$'acme/\t-\tsource\t~/spaces/acme'* ]]
+  [[ "$output" == *$'acme/main/tech\t-\tspace\t~/spaces/acme/main/tech'* ]]
   [[ "$output" == *$'acme/spikes/tech\t-'* ]]
   rm -r "$HOME/spaces/acme/main/finance"
   run wsm ls
-  [[ "$output" == *$'acme/main/finance\t~/spaces/acme/main/finance\tspace\tstale'* ]]
+  [[ "$output" == *$'acme/main/finance\tstale\tspace\t~/spaces/acme/main/finance'* ]]
 }
 
-@test "ls --json is what other tools read: id, dir, level, note, with whole paths and null" {
+@test "ls --json is what other tools read: space, status, level, dir, with whole paths and null" {
   wsm install acme/main >/dev/null
   run wsm ls --json
   [ "$status" -eq 0 ]
   local json="$output"
-  run yq -p json -r '.[] | select(.id == "acme/main/tech") | .dir + " " + .level + " " + (.note | tag)' <<< "$json"
+  run yq -p json -r '.[] | select(.space == "acme/main/tech") | .dir + " " + .level + " " + (.status | tag)' <<< "$json"
   [ "$output" = "$HOME/spaces/acme/main/tech space !!null" ]
-  run yq -p json -r '.[] | select(.id == "acme/") | .level' <<< "$json"
+  run yq -p json -r '.[] | select(.space == "acme/") | .level' <<< "$json"
   [ "$output" = "source" ]
-  run yq -p json -r '.[] | select(.id == "acme/spikes") | (.dir | tag) + " " + .level' <<< "$json"
+  run yq -p json -r '.[] | select(.space == "acme/spikes") | (.dir | tag) + " " + .level' <<< "$json"
   [ "$output" = "!!null workspace" ]
   # The option is taken before the command too
   run wsm --json ls acme/spikes
@@ -57,7 +59,7 @@ setup() {
   [ "$status" -eq 1 ]
 }
 
-@test "ls -r lists the repositories space.yml files declare, with their state" {
+@test "repo ls lists the repositories space.yml files declare, with their state" {
   local a b
   a=$(mkbare alpha) b=$(mkbare beta)
   space_def acme main/tech <<YML
@@ -71,16 +73,51 @@ repositories:
     path: beta
 YML
   wsm install acme/main/tech >/dev/null
-  run wsm ls -r
+  run wsm repo ls
   [ "$status" -eq 0 ]
-  [[ "$output" == *$'acme/main/tech/repos/alpha\t'"$a"$'\tclean'* ]]
-  [[ "$output" == *$'acme/spikes/tech/beta\t'"$b"$'\tnot installed'* ]]
+  [[ "$output" == *$'acme/main/tech/repos/alpha\tclean\t'"$a"* ]]
+  [[ "$output" == *$'acme/spikes/tech/beta\tnot installed\t'"$b"* ]]
+  ANFS_TABLE=aligned run wsm repo ls
+  [[ "${lines[0]}" == "REPOSITORY"*"STATUS"*"URL" ]]
+  run wsm repo ls --json
+  run yq -p json -r '.[0] | keys | join(" ")' <<< "$output"
+  [ "$output" = "repository status url" ]
   echo x > "$HOME/spaces/acme/main/tech/repos/alpha/new"
-  run wsm ls --repositories acme/main
+  run wsm repo ls acme/main
   [[ "$output" == *"dirty"* && "$output" != *"beta"* ]]
   rm -rf "$HOME/spaces/acme/main/tech/repos/alpha"
-  run wsm ls -r acme/main/tech
+  run wsm repo ls acme/main/tech
   [[ "$output" == *"missing"* ]]
+  run wsm ls -r
+  [ "$status" -eq 64 ]
+}
+
+@test "repo install clones what an installed level declares and is missing; stows nothing" {
+  local a b
+  a=$(mkbare alpha) b=$(mkbare beta)
+  wsm install acme/main/tech >/dev/null
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+    path: repos/alpha
+YML
+  space_def acme spikes/tech <<YML
+repositories:
+  - url: $b
+    path: beta
+YML
+  echo new > "$BATS_TEST_TMPDIR/srcs/acme/spaces/main/tech/NEWFILE"
+  run wsm repo install -n
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would clone repos/alpha"* ]]
+  [ ! -e "$HOME/spaces/acme/main/tech/repos/alpha" ]
+  run wsm repo install
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/spaces/acme/main/tech/repos/alpha/.git" ]
+  [ ! -e "$HOME/spaces/acme/spikes" ]
+  [ ! -e "$HOME/spaces/acme/main/tech/NEWFILE" ]
+  run wsm repo install acme/main/tech
+  [[ "$output" == *"present repos/alpha"* ]]
 }
 
 @test "path resolves space, ws/space and source/ws/space, then a workspace" {

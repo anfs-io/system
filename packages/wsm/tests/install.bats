@@ -404,8 +404,8 @@ YML
   run wsm install acme/main/tech
   [ "$status" -eq 0 ]
   [ -d "$HOME/spaces/acme/main/tech/alpha/.git" ] && [ -d "$HOME/spaces/acme/main/tech/beta/.git" ]
-  run wsm ls -r acme/main/tech
-  [[ "$output" == *"acme/main/tech/alpha"*clean* ]]
+  run wsm repo ls acme/main/tech
+  [[ "$output" == *"acme/main/tech/alpha"$'\t'clean* ]]
 
   mkdir -p "$BATS_TEST_TMPDIR/other"
   git clone -q --bare "$a" "$BATS_TEST_TMPDIR/other/alpha.git"

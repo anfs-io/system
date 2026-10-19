@@ -41,7 +41,9 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs install <s
 
 | Command | What it does |
 | --- | --- |
-| `wsm ls [SPEC] [-r\|--repositories]` | Every source, workspace and space the sources define, with where each is installed (`-` if not); or the repositories their `space.yml` files declare, and their state |
+| `wsm ls [SPEC]` | Every source, workspace and space the sources define, with where each is installed (`-` if not): `SPACE STATUS LEVEL DIR` |
+| `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
+| `wsm repo install [SPEC] [--dry-run]` | Clones what the installed levels under `SPEC` declare and is missing; stows nothing, pulls nothing (the clone half of `install`) |
 | `wsm install [SPEC [DIR]] [--dry-run]` | Stows levels into `DIR/<source>/<ws>/<space>` and clones their repositories, dependencies first. With no `SPEC`, the level at `.`, which must hold a `space.yml` |
 | `wsm remove SPEC...` | Unstows installed spaces, and the workspace or source the spec names; cloned repos and your own files stay |
 | `wsm new [[SOURCE/]WS/]SPACE` | Creates a space in a source; installs it when its workspace is installed |
@@ -66,8 +68,8 @@ only a `space.yml` stows that and clones its repositories.
 ambiguous query lists the candidates and exits 2. With `-s`, a source-qualified query needs
 nothing installed: `wsm cd -s lgat/spikes` is `<lgat>/spaces/spikes`.
 
-`SPEC` for ls is `source/`, `source/ws` or `source/ws/space`, narrowing the list to that subtree.
-`ls -r` reports each repository as `clean`, `dirty`, `missing`, `not a repo` or `not installed`.
+`SPEC` for ls and repo ls is `source/`, `source/ws` or `source/ws/space`, narrowing the list to that
+subtree. `repo ls` reports each repository as `clean`, `dirty`, `missing`, `not a repo` or `not installed`.
 
 `wsm cd` needs the shell function in `~/.config/sh/wsm.sh`: a subshell cannot change its parent's
 directory, so the binary prints the path and the shell does the `cd`.

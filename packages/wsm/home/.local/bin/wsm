@@ -88,8 +88,7 @@ ANFS_RESOLVE_FIRST=true
 CLI_TOOL=wsm
 CLI_EX_USAGE=64
 CLI_VERSION="$WSM_VERSION"
-cli_cmd list "The sources' workspaces and spaces, and where each is installed" --alias ls \
-  --opt "-r --repositories: The repositories their space.yml files declare, and their state" --arg "[spec]"
+cli_cmd list "The sources' workspaces and spaces, and where each is installed" --alias ls --arg "[spec]"
 cli_cmd install "Stow levels into DIR/<source>/<ws>/<space> and clone their
 repositories, dependencies first. SPEC is source/, source/ws,
 source/ws/space, ws or ws/space; none is the level at ." \
@@ -105,6 +104,10 @@ cli_cmd cd "Change to an installed space or workspace (requires the wsm shell fu
 cli_cmd path "Print that path; no QUERY means the level containing ." \
   --opt "-s --source: Its directory in the source" --arg "[query]"
 cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask"
+cli_group repo "The repositories the levels' space.yml files declare"
+cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls --arg "[spec]"
+cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing;
+nothing is stowed, nothing is pulled" --opt "-n --dry-run: Say what would be done" --arg "[spec]"
 cli_standard
 
 cmd_cd() {
@@ -1198,14 +1201,14 @@ _in_filter() {
 
 # One row for a level: its id, and where it is installed (- when it is not)
 _ls_row() {
-  local id="$1" d level=space note=""
+  local id="$1" d level=space status=""
   case "$id" in */) level=source ;; */*/*) ;; *) level=workspace ;; esac
   d=$(_installed_dir "${id%/}")
-  [[ -z "$d" || -d "$d" ]] || note=stale
-  anfs_row "$id" "$d" "$level" "$note"
+  [[ -z "$d" || -d "$d" ]] || status=stale
+  anfs_row "$id" "$status" "$level" "$d"
 }
 
-# One row per repository a level's space.yml declares: where it goes, its url and its state
+# One row per repository a level's space.yml declares: where it goes, its state and its url
 _ls_repositories() {
   local id="$1" from="$2" file="$2/space.yml" d url path ref state
   [[ -f "$file" ]] || return 0
@@ -1219,67 +1222,85 @@ _ls_repositories() {
       state=$(gitsrc_dir_status "$d/$path")
       [[ "$state" != local ]] || state="not a repo"
     fi
-    anfs_row "${id%/}/$path" "$url" "$state"
+    anfs_row "${id%/}/$path" "$state" "$url"
   done < <(_repo_entries "$file")
 }
 
-# `wsm ls [SPEC] [-r|--repositories]`: every source, workspace and space the sources define, each
-# with where it is installed; SPEC (source/, source/ws, source/ws/space) narrows it to that
-# subtree. With -r, the repositories their space.yml files declare instead, and their state.
-cmd_list() {
-  local repos=${CLI_OPT[repositories]:-false} filter="${1:-}"
-  if [[ -n "$filter" ]]; then
-    _valid_name "${filter%/}" && [[ $(_parts "${filter%/}") -le 3 ]] || cli_usage_err "'$filter' is not a level"
+# Check <filter> and load what _each_level reads; in the caller's shell, not a subshell
+_levels_load() {
+  if [[ -n "$1" ]]; then
+    _valid_name "${1%/}" && [[ $(_parts "${1%/}") -le 3 ]] || cli_usage_err "'$1' is not a level"
   fi
   _require_yq
   _installed_load
   anfs_sources spaces
+}
 
-  local i name sd w s rows="" j
+# Run <fn> <id> <dir in the source> for every level the sources define under <filter> (all when
+# empty): sources (id ends in /), workspaces, spaces, in that order. After _levels_load.
+_each_level() {
+  local filter="$1" fn="$2" i name sd w s
   for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
     name="${ANFS_SRC_NAMES[$i]}" sd="${ANFS_SRC_DIRS[$i]}/spaces"
     [[ -z "$filter" ]] || _in_filter "$name/" "$filter" || [[ "${filter%%/*}" == "$name" ]] || continue
-    if _in_filter "$name/" "$filter"; then
-      if $repos; then rows="$rows$(_ls_repositories "$name/" "$sd")"$'\n'
-      else rows="$rows$(_ls_row "$name/")"$'\n'
-      fi
-    fi
+    ! _in_filter "$name/" "$filter" || "$fn" "$name/" "$sd"
     for w in "$sd"/*/; do
       w="${w%/}"
       _is_level "$w" || continue
       w="${w##*/}"
-      if _in_filter "$name/$w" "$filter"; then
-        if $repos; then rows="$rows$(_ls_repositories "$name/$w" "$sd/$w")"$'\n'
-        else rows="$rows$(_ls_row "$name/$w")"$'\n'
-        fi
-      fi
+      ! _in_filter "$name/$w" "$filter" || "$fn" "$name/$w" "$sd/$w"
       for s in "$sd/$w"/*/; do
         s="${s%/}"
         _is_level "$s" || continue
         s="${s##*/}"
-        _in_filter "$name/$w/$s" "$filter" || continue
-        if $repos; then rows="$rows$(_ls_repositories "$name/$w/$s" "$sd/$w/$s")"$'\n'
-        else rows="$rows$(_ls_row "$name/$w/$s")"$'\n'
-        fi
+        ! _in_filter "$name/$w/$s" "$filter" || "$fn" "$name/$w/$s" "$sd/$w/$s"
       done
     done
   done
+}
+
+# `wsm ls [SPEC]`: every source, workspace and space the sources define, each with where it is
+# installed; SPEC (source/, source/ws, source/ws/space) narrows it to that subtree.
+cmd_list() {
+  local filter="${1:-}" rows j
+  _levels_load "$filter"
+  rows=$(_each_level "$filter" _ls_row)
   # Installed spaces their source no longer defines
-  if ! $repos; then
-    for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-      _in_filter "${INST_ID[$j]}" "$filter" || continue
-      [[ -d "$(_src_dir "${INST_SRC[$j]}")/spaces/${INST_WS[$j]}/${INST_SPACE[$j]}" ]] && continue
-      rows="$rows$(anfs_row "${INST_ID[$j]}" "${INST_DIR[$j]}" space "not in the source")"$'\n'
-    done
-  fi
+  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
+    _in_filter "${INST_ID[$j]}" "$filter" || continue
+    [[ -d "$(_src_dir "${INST_SRC[$j]}")/spaces/${INST_WS[$j]}/${INST_SPACE[$j]}" ]] && continue
+    rows="$rows"$'\n'"$(anfs_row "${INST_ID[$j]}" "not in the source" space "${INST_DIR[$j]}")"
+  done
   rows=$(printf '%s' "$rows" | grep . || true)
   [[ -n "$rows" || -z "$filter" ]] || fail "$EX_NOTFOUND" "nothing defined under $filter"
   # The lists other tools read: with --json (lib/anfs/table.sh), never by column
-  if $repos; then
-    printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY URL STATE" "path url state"
-  else
-    printf '%s' "${rows:+$rows$'\n'}" | anfs_table "ID DIR LEVEL NOTE" "id dir level note"
-  fi
+  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "SPACE STATUS LEVEL DIR" "space status level dir"
+}
+
+# `wsm repo ls [SPEC]`: the repositories the space.yml files under SPEC declare, and their state
+cmd_repo_list() {
+  local filter="${1:-}" rows
+  _levels_load "$filter"
+  rows=$(_each_level "$filter" _ls_repositories | grep . || true)
+  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY STATUS URL" "repository status url"
+}
+
+# One installed level's repositories (repo install): a level not installed is skipped
+REPO_FAILED=0
+_repo_install_level() {
+  local d
+  d=$(_installed_dir "${1%/}")
+  [[ -n "$d" && -d "$d" ]] || return 0
+  echo "${1%/}"
+  _level_repositories "$d" "$2" "$REPO_DRY" || REPO_FAILED=$((REPO_FAILED + 1))
+}
+
+# `wsm repo install [SPEC] [-n]`: the clone half of install, for the levels already installed
+cmd_repo_install() {
+  REPO_DRY=${CLI_OPT[dry-run]:-false} REPO_FAILED=0
+  _levels_load "${1:-}"
+  _each_level "${1:-}" _repo_install_level
+  [[ $REPO_FAILED -eq 0 ]]
 }
 
 # `wsm new [[SOURCE/]WS/]SPACE`: the parts left out come from where you are, in a source checkout
