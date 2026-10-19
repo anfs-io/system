@@ -809,7 +809,7 @@ The keys, which are the interface:
 | Command | Keys |
 | --- | --- |
 | `ppm list`, `ppm list --installed` | `package` (`source/name`), `installed` (the version, null when not installed) |
-| `pcm list` | `container` (`source/name`), `status` (`running`, `stopped`, either with `, shadowed`, or `shadowed`; null: never started) |
+| `pcm list` | `container` (`source/name`), `status` (`running`, `stopped`, either with `, shadowed`, or `shadowed`; null: never started); `version`, `description`, `upstream`, `license`, `url`, `memory` (from `container.yml`) |
 | `pmm list` | `machine` (`source/name`; the plain name: run from an image, or the definition is gone), `status` (`running`, `stopped`, `defined`, `shadowed`), `image`, `address` |
 | `pmm image list` | `image` (`source/name`; the plain name: the definition is gone), `status` (`built`, `stale`, `unbuilt`, `shadowed`), `arch` (null: not built), `key`, `disk` (a tart build: its VM's name), `backend`, `user`, `sshkey`, `held` (a list: `web1`, `web1@s1`), `built` (when), `tested` (true when this build passed `image test`) |
 | `pmm network list` | `network` (`source/name`; the plain name: made with `network create`, or the definition is gone), `status` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `kind`, `subnet` (a bridged network: its bridge), `machines` (comma-separated) |
