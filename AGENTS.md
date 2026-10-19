@@ -522,6 +522,36 @@ help` documents the commands.
 - `remove`/`implode` unstow, then take any recorded link still pointing at the source's file, then
   the empty directories; clones and the user's files stay.
 
+## The toolkit API (anfs rpc)
+
+`anfs rpc [--grant read|write]` is the toolkit as an API, for a program (anfs-ui) rather than a
+person: a JSON request per line on stdin, a JSON answer per line on stdout, until EOF. bash and
+yq only. Plan 02 puts it behind a socket; the grant comes from the caller's `container.yml`
+(`toolkit: read|write`).
+
+| Request | Answer |
+| --- | --- |
+| `{"run":["ppm","list"]}` | `{"exit":0,"data":<the --json output, parsed>}`, or `{"exit":0,"out":"..."}` for text |
+| `{"run":[...],"stream":true}` | `{"out":"<line>"}` per line of stdout and stderr, then `{"exit":N}` |
+| `{"run":[...],"yes":true}` | the same with `-y` (before a `--`, else last) |
+| `{"watch":true}` | `{"event":"start",...}` / `{"event":"end",...,"exit":N}` per tool run, from `anfs.log`, until stdin closes; other requests are still answered |
+| `{"version":true}` | `{"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}`, the installed tools |
+| anything else | `{"error":"..."}`; the next line is still read |
+
+- **Only the toolkit's tools**: `run[0]` is `anfs`, one of `ANFS_TOOLS` or `pvm`, run from
+  `$ANFS_BIN_DIR` (never `PATH`); the rest is an argv, never a shell string or `eval`. Refused:
+  `anfs rpc`, any tool's `implode`.
+- **The grant**: a read is a tool's `list|ls`, `show`, `status`, `path`, `validate`, `--version`,
+  `version` (in a group too, `pmm image list`; through anfs, `anfs package list`), plus `watch`
+  and `version`. Everything else is a write, refused under `--grant read` (the default).
+- **Each run**: stdin `/dev/null`, `ANFS_RPC=1`, a timeout of `ANFS_RPC_TIMEOUT` seconds (60;
+  `{"exit":124,...}`; a stream has none). A read gets `--json` and `ANFS_LOG=off` (a poll is not
+  an event). A failure is `{"exit":N,"error":"<last stderr line>"}`.
+- **77, needs a terminal**: a confirm without `yes`, or sudo that cannot run unattended (under
+  `ANFS_RPC` there is never a terminal), answers
+  `{"exit":77,"needs":"terminal","command":[...],"error":"..."}`, for a UI to say "run this in a
+  terminal".
+
 ## Repository Layout
 
 Every source is cloned once under `~/.local/share/anfs/sources/`:
@@ -975,7 +1005,9 @@ them, and `cli_before_command` fills them from `CLI_OPT` once the line is read. 
 functions in the bootstrap files did not change.
 
 **Exit codes:** 0 done; 1 what was asked for is not there or could not be done; 2 ambiguous;
-64 used wrongly; 69 something this needs is missing; 73 already exists; 75 locked.
+64 used wrongly; 69 something this needs is missing; 73 already exists; 75 locked (busy);
+77 needs a person at a terminal (`anfs_confirm` with no terminal and no `-y`, sudo with no
+terminal and no `SUDO_ASKPASS`: ppm's `_system_sudo`, anfs's `implode --all`).
 
 **Completion asks the tool.** `<tool> __complete <words...>` answers from the declarations: the
 last word is the one being typed, and the answer is candidates, one per line,
@@ -1025,7 +1057,9 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   them after the command, with its other flags. Debugging is `ANFS_DEBUG` (every tool) or
   `<TOOL>_DEBUG` (one); `-d` exports `ANFS_DEBUG`, so a tool run by a callback debugs too.
 - **The log is always written**: `~/.local/state/anfs/anfs.log`, one file for every tool, every
-  warn/error/debug line plus one `start:` line per invocation, whether or not `-d` is on. `anfs log
+  warn/error/debug line plus a `start: <id> <args>` and an `end: <id> <exit>` line per invocation
+  (id `<pid>-<epoch>`; the end line is an EXIT trap chained with the tool's own, so a tool that
+  sets `trap ... EXIT` inside a command loses it), whether or not `-d` is on. `anfs log
   [-f] [tool]` prints or follows it. Past 1 MB it becomes `anfs.log.1`.
 - `ANFS_LOG=off` writes no file. Test helpers set it; a test that sources a tool's libraries
   directly must source `log.sh` first (pmm's and ppm's do), since the tool's `warn`/`die` call it.
