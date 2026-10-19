@@ -42,7 +42,9 @@ cmd_implode() {
       tart delete "$vm" >/dev/null 2>&1 || true
     done || true
   fi
-  for dir in "$PMM_DATA_HOME" "$PMM_STATE_HOME" "$PMM_CACHE_HOME" "$PMM_CONFIG_HOME" "${PMM_SOCK_DIR:-/tmp/pmm-$(id -u)}"; do
+  local sock
+  sock=$(sock_dir_path) || exit 1
+  for dir in "$PMM_DATA_HOME" "$PMM_STATE_HOME" "$PMM_CACHE_HOME" "$PMM_CONFIG_HOME" "$sock"; do
     [[ -e "$dir" ]] || continue
     chmod -R u+w "$dir" 2>/dev/null || true
     rm -rf "${dir:?}"

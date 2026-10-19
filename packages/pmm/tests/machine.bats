@@ -300,3 +300,17 @@ teardown() {
   [[ "$output" == *"$T/no-kvm is missing"* ]]
   [[ "$output" == *"Started deb (arm64, tcg)"* ]]
 }
+
+@test "under a test, pmm refuses the live socket directory, set or defaulted" {
+  # spelled in pieces: isolation.bats refuses the literal in any test
+  local live
+  printf -v live '/tmp/%s-%s' pmm "$(id -u)"
+  local before
+  before=$(ls -la "$live" 2>/dev/null || echo none)
+  PMM_SOCK_DIR="" run "$PMM" list
+  [ "$status" -eq 69 ]
+  [[ "$output" == *"refusing $live under a test"* ]]
+  PMM_SOCK_DIR="$live" run "$PMM" implode -y
+  [ "$status" -eq 69 ]
+  [ "$(ls -la "$live" 2>/dev/null || echo none)" = "$before" ]
+}

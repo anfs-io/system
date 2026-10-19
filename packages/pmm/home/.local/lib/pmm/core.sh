@@ -51,8 +51,22 @@ now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # tests and the e2e set it, because the default is where a real pmm on the same host keeps the
 # sockets of its running machines, and implode deletes the directory.
 sock_dir() {
-  local d="${PMM_SOCK_DIR:-/tmp/pmm-$(id -u)}"
+  local d
+  d=$(sock_dir_path) || return 1
   mkdir -p "$d" && chmod 700 "$d"
+  echo "$d"
+}
+
+# PMM_SOCK_DIR, else the live default. Under bats (BATS_TEST_TMPDIR) the live directory is
+# refused, set or defaulted: a suite that forgot to set PMM_SOCK_DIR would otherwise reach the
+# sockets of the machines running on the host, which no grep of the tests can see.
+sock_dir_path() {
+  local live="/tmp/pmm-$(id -u)" d="${PMM_SOCK_DIR:-}"
+  d="${d:-$live}"
+  if [[ -n "${BATS_TEST_TMPDIR:-}" && "${d%/}" == "$live" ]]; then
+    anfs_warn "refusing $live under a test: set PMM_SOCK_DIR to a directory of the test's"
+    return 1
+  fi
   echo "$d"
 }
 

@@ -757,8 +757,10 @@ and all):
   in `anfs help`.
 - The tool is `~/.local/bin/<tool>`, as `anfs install` runs it. One that is not there is
   `pmm is not installed (ppm install core/pmm)`, exit 69.
-- `sh/anfs.sh`'s `anfs` function sends `anfs package ...` through ppm's function, so `anfs package
-  cd` and the reload after an install work as `ppm`'s do.
+- `sh/anfs.sh`'s `anfs` function sends each of the six through the tool's own shell function when
+  it has one, so `anfs package cd` and the reload after an install work as `ppm`'s do, and `anfs
+  space cd`, `anfs machine cd` as `wsm`'s and `pmm`'s. A global option first (`anfs -d package
+  ...`) skips the function and goes to anfs, which still runs the tool.
 
 **Commands from packages: `anfs <name>` runs `anfs-<name>`.** For a name anfs does not declare,
 anfs execs the executable `~/.local/bin/anfs-<name>` with the rest of the line. That is the only
@@ -1257,8 +1259,9 @@ the source `core` (its images, and the catalogue their ISOs are in); only the IS
 real one.
 
 **Jobs testing at once** (anfs-dev's `anfs work`: a job is `~/work/<job>/`, worktrees on one
-branch). `anfs work run <job> -- <cmd>` sets the job's variables, from its number `n`, and the
-tests use them when they are set:
+branch). `anfs work run <job> [repo] -- <cmd>` sets the job's variables, from its number `n`, and
+runs the command in the job's directory or that repo's worktree (`anfs work run a core -- bats
+packages/pmm/tests`); the tests use the variables when they are set:
 
 | Variable | Value | Used by |
 | --- | --- | --- |
@@ -1275,7 +1278,9 @@ tests use them when they are set:
 - **No test may name `/tmp/pmm-<uid>`, point a `*_HOME` at a real home, write under the real `~`,
   or kill by pattern** (`pkill`, `killall`). `packages/anfs/tests/isolation.bats` greps every
   suite's bats files, helpers, stubs and e2e scripts for those; the round trips and the harness,
-  whose `~` is a box's, are not covered.
+  whose `~` is a box's, are not covered. What no grep sees, a suite that never sets
+  `PMM_SOCK_DIR`, pmm refuses itself: under bats (`BATS_TEST_TMPDIR` set) the live directory, set
+  or defaulted, is exit 69 before any command (`sock_dir_path`, `lib/pmm/core.sh`).
 
 - `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
   `containers/anfs-test-<distro>/Containerfile`) with podman alone, so changing anfs — pcm

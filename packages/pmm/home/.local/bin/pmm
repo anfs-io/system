@@ -256,4 +256,7 @@ case "$cmd" in
   *) load_machines ;;
 esac
 
+# A test that forgot PMM_SOCK_DIR is stopped here, before any command (core.sh, sock_dir_path)
+[[ -z "${BATS_TEST_TMPDIR:-}" ]] || sock_dir_path >/dev/null || exit 69
+
 cli_dispatch "$cmd" "$@"
