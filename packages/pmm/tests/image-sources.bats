@@ -14,11 +14,13 @@ setup() { setup_images; }
   [ "$(canon acme/web)" = acme/web ]
   [ "$(canon db)" = acme/db ]
   run cmd_image_list
-  [[ "$output" == *"web"$'\t'"local"$'\t'"-"$'\t'"unbuilt"* ]]
-  [[ "$output" == *"web"$'\t'"acme"$'\t'"-"$'\t'"shadowed"* ]]
+  [[ "$output" == *"local/web"$'\t'"unbuilt"$'\t'"-"* ]]
+  [[ "$output" == *"acme/web"$'\t'"shadowed"$'\t'"-"* ]]
+  ANFS_TABLE=aligned run cmd_image_list
+  [[ "${lines[0]}" == "IMAGE"*"STATUS"*"ARCH"*"KEY"* ]]
   ANFS_JSON=true run cmd_image_list
-  run yq -p json -r '.[] | select(.state == "shadowed") | .name + "@" + .source' <<< "$output"
-  [ "$output" = "web@acme" ]
+  run yq -p json -r '.[] | select(.status == "shadowed") | .image' <<< "$output"
+  [ "$output" = "acme/web" ]
   run cli_call "image path" acme/db
   [ "$output" = "$HOME/.local/share/anfs/sources/acme/machines/images/db" ]
   run cli_call "image list" --names

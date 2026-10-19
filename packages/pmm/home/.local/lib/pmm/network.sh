@@ -411,9 +411,10 @@ validate_network_quiet() {
 
 # --- commands -----------------------------------------------------------------------------------
 
-# `pmm network list`: NAME SOURCE KIND SUBNET STATE MACHINES. STATE: active, inactive (installed,
-# not started), missing (installed, and gone from the host), defined (not installed), shadowed.
-# One made with `network create`, or whose definition is gone, has no source.
+# `pmm network list`: NETWORK STATUS KIND SUBNET MACHINES. NETWORK is source/name; one made with
+# `network create`, or whose definition is gone, has no source and is its plain name. STATUS:
+# active, inactive (installed, not started), missing (installed, and gone from the host), defined
+# (not installed), shadowed.
 cmd_network_list() {
   local id name d
   local -A seen=()
@@ -421,20 +422,20 @@ cmd_network_list() {
     while IFS= read -r id; do
       name="${id#*/}"
       if [[ "$(net_canon "$name")" != "$id" ]]; then
-        anfs_row "$name" "${id%%/*}" "$(net_get "$id" .kind)" "$(net_get "$id" .subnet "$(net_get "$id" .interface)")" shadowed ""
+        anfs_row "$name" "$id" shadowed "$(net_get "$id" .kind)" "$(net_get "$id" .subnet "$(net_get "$id" .interface)")" ""
         continue
       fi
       seen[$name]=1
-      anfs_row "$name" "${id%%/*}" "$(net_get "$id" .kind)" "$(net_get "$id" .subnet "$(net_get "$id" .interface)")" \
-        "$(net_installed "$name" && net_status "$name" || echo defined)" "$(net_machines "$name" | paste -sd, -)"
+      anfs_row "$name" "$id" "$(net_installed "$name" && net_status "$name" || echo defined)" \
+        "$(net_get "$id" .kind)" "$(net_get "$id" .subnet "$(net_get "$id" .interface)")" "$(net_machines "$name" | paste -sd, -)"
     done < <(net_all_ids)
     for d in "$PMM_DATA_HOME"/networks/*/; do
       [[ -f "${d}state.yml" ]] || continue
       name=$(basename "$d")
       [[ -z "${seen[$name]:-}" ]] || continue
-      anfs_row "$name" "" "$(net_setting "$name" kind)" "$(net_setting "$name" subnet | grep . || net_setting "$name" interface)" "$(net_status "$name")" "$(net_machines "$name" | paste -sd, -)"
+      anfs_row "$name" "$name" "$(net_status "$name")" "$(net_setting "$name" kind)" "$(net_setting "$name" subnet | grep . || net_setting "$name" interface)" "$(net_machines "$name" | paste -sd, -)"
     done
-  } | LC_ALL=C sort -s -t$'\t' -k1,1 | anfs_table "NAME SOURCE KIND SUBNET STATE MACHINES" "name source kind subnet state machines"
+  } | anfs_sorted | anfs_table "NETWORK STATUS KIND SUBNET MACHINES" "network status kind subnet machines"
 }
 
 # `pmm network show <network>`: what it is and who is on it, then its settings as the YAML a

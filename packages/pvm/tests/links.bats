@@ -156,7 +156,7 @@ setup() {
   run pvm link ls
   [ "${#lines[@]}" -eq 6 ]
   run pvm link ls --json
-  run yq -p json -r '.[] | select(.vault == "other") | .state' <<< "$output"
+  run yq -p json -r '.[] | select(.vault == "other") | .status' <<< "$output"
   [ "$output" = "ok" ]
 }
 
@@ -250,7 +250,7 @@ setup() {
   yq -i 'del(.links[] | select(.source == "product"))' notes/pvm.yml
   run pvm link validate --json
   [ "$status" -eq 1 ]
-  run yq -p json -r '.[0] | .state + " " + .link' <<< "$output"
+  run yq -p json -r '.[0] | .status + " " + .link' <<< "$output"
   [ "$output" = "orphan $LINK" ]
 }
 

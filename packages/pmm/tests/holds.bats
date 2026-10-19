@@ -31,12 +31,11 @@ setup() {
   ANFS_JSON=true run cli_call "image list"
   echo "$output"
   [ "$status" -eq 0 ]
-  [ "$(yq -p json -r '.[0] | keys | join(" ")' <<< "$output")" = "name source arch state key disk backend user sshkey held built tested" ]
+  [ "$(yq -p json -r '.[0] | keys | join(" ")' <<< "$output")" = "image status arch key disk backend user sshkey held built tested" ]
   [ "$(yq -p json -r 'length' <<< "$output")" = 2 ]
-  [ "$(yq -p json -r '.[0].name' <<< "$output")" = d ]
-  [ "$(yq -p json -r '.[0].source' <<< "$output")" = local ]
+  [ "$(yq -p json -r '.[0].image' <<< "$output")" = local/d ]
   [ "$(yq -p json -r '.[0].arch' <<< "$output")" = arm64 ]
-  [ "$(yq -p json -r '.[0].state' <<< "$output")" = built ]
+  [ "$(yq -p json -r '.[0].status' <<< "$output")" = built ]
   [ "$(yq -p json -r '.[0].backend' <<< "$output")" = qemu ]
   [ "$(yq -p json -r '.[0].key' <<< "$output")" = "$KEY" ]
   [ "$(yq -p json -r '.[0].disk' <<< "$output")" = "$PMM_DATA_HOME/images/d/arm64/$KEY.qcow2" ]
@@ -45,7 +44,7 @@ setup() {
   [ "$(yq -p json -r '.[0].held | length' <<< "$output")" = 0 ]
   [ "$(yq -p json -r '.[0].built' <<< "$output")" = "$(meta_get d arm64 .built_at)" ]
   [ "$(yq -p json -r '.[0].tested' <<< "$output")" = false ]
-  [ "$(yq -p json -r '.[1] | .name + " " + .state + " " + (.arch | tag) + " " + (.key | tag)' <<< "$output")" = "e unbuilt !!null !!null" ]
+  [ "$(yq -p json -r '.[1] | .image + " " + .status + " " + (.arch | tag) + " " + (.key | tag)' <<< "$output")" = "local/e unbuilt !!null !!null" ]
   ANFS_JSON=true run cli_call "image list" e
   [ "$(yq -p json -r 'length' <<< "$output")" = 1 ]
   ANFS_JSON=true run cli_call "image list" nothing
@@ -59,19 +58,19 @@ setup() {
   meta_write_build local/d amd64 "$k2" ""
   meta_set d arm64 '.tested_key = strenv(v)' "$KEY"
   ANFS_JSON=true run cli_call "image list" d
-  [ "$(yq -p json -r '[.[] | .arch + ":" + .state + ":" + .tested] | join(" ")' <<< "$output")" = "arm64:built:true amd64:built:false" ]
+  [ "$(yq -p json -r '[.[] | .arch + ":" + .status + ":" + .tested] | join(" ")' <<< "$output")" = "arm64:built:true amd64:built:false" ]
   mkdir -p "$PMM_IMAGES_HOME/d/provision"; echo 'echo new' > "$PMM_IMAGES_HOME/d/provision/50-new.sh"
   ANFS_JSON=true run cli_call "image list" d
-  [ "$(yq -p json -r '[.[] | .state + ":" + .tested] | join(" ")' <<< "$output")" = "stale:true stale:false" ]
+  [ "$(yq -p json -r '[.[] | .status + ":" + .tested] | join(" ")' <<< "$output")" = "stale:true stale:false" ]
   run cli_call "image show" d
   [[ "$output" == *"stale     the definition changed since (pmm image build d)"* ]]
 }
 
-@test "list: a build whose definition is gone lists with no source" {
+@test "list: a build whose definition is gone lists by its plain name" {
   rm -rf "$PMM_IMAGES_HOME/d"
   load_images
   ANFS_JSON=true run cli_call "image list"
-  [ "$(yq -p json -r '.[0] | .name + " " + (.source | tag) + " " + .state + " " + .key' <<< "$output")" = "d !!null stale $KEY" ]
+  [ "$(yq -p json -r '.[0] | .image + " " + .status + " " + .key' <<< "$output")" = "d stale $KEY" ]
 }
 
 @test "held: the machines and snapshots on a build, by what their records say; no file is kept" {

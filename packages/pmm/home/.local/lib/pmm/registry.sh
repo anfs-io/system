@@ -195,10 +195,10 @@ _build_state() {
   fi
 }
 
-# `pmm image list [image...]`: every image, one row per built arch. STATE: built, stale (the
-# definition changed since the build), unbuilt, shadowed (a higher-priority source defines the
-# name). An unbuilt or shadowed image is one row with no arch. A build whose definition is gone
-# is listed with no source, as stale. Read with --json (lib/anfs/table.sh); the keys are the
+# `pmm image list [image...]`: every image, one row per built arch, IMAGE (source/name) first.
+# STATUS: built, stale (the definition changed since the build), unbuilt, shadowed (a
+# higher-priority source defines the name). An unbuilt or shadowed image is one row with no arch.
+# A build whose definition is gone is listed by its plain name, as stale. Read with --json (lib/anfs/table.sh); the keys are the
 # interface.
 cmd_image_list() {
   local id name arch f n only=" " arg
@@ -213,7 +213,7 @@ cmd_image_list() {
   fi
 
   _image_row() {  # <source> <state>: the build in B_*
-    anfs_row "$B_NAME" "$1" "$arch" "$2" "$B_KEY" "$B_DISK" "$B_BACKEND" "$B_USER" "$B_SSHKEY" \
+    anfs_row "$B_NAME" "${1:+$1/}$B_NAME" "$2" "$arch" "$B_KEY" "$B_DISK" "$B_BACKEND" "$B_USER" "$B_SSHKEY" \
       "$(holders_of "$B_NAME" "$arch" "$B_KEY" | paste -sd' ' -)" "$B_AT" "$B_TESTED"
   }
   {
@@ -221,7 +221,7 @@ cmd_image_list() {
       name=$(img_name "$id")
       [[ "$only" == " " || "$only" == *" $name "* ]] || continue
       if [[ "$(canon "$name")" != "$id" ]]; then
-        anfs_row "$name" "$(img_src "$id")" "" shadowed "" "" "$(img_backend "$id")" "" "" "" "" ""
+        anfs_row "$name" "$id" shadowed "" "" "" "$(img_backend "$id")" "" "" "" "" ""
         continue
       fi
       seen[$name]=1
@@ -231,7 +231,7 @@ cmd_image_list() {
         _image_row "$(img_src "$id")" "$(_build_state "$id" "$arch")"
         n=$((n + 1))
       done
-      [[ $n -gt 0 ]] || anfs_row "$name" "$(img_src "$id")" "" unbuilt "" "" "$(img_backend "$id")" "$(img_user "$id" 2>/dev/null || true)" "" "" "" ""
+      [[ $n -gt 0 ]] || anfs_row "$name" "$id" unbuilt "" "" "" "$(img_backend "$id")" "$(img_user "$id" 2>/dev/null || true)" "" "" "" ""
     done
     for f in "$PMM_DATA_HOME"/images/*/*/meta.yml; do
       [[ -f "$f" ]] || continue
@@ -241,9 +241,9 @@ cmd_image_list() {
       build_read "$name" "$arch" || continue
       _image_row "" stale
     done
-  } | LC_ALL=C sort -s -t"$ANFS_US" -k1,1 |
-    anfs_table "NAME SOURCE ARCH STATE KEY DISK BACKEND USER SSHKEY HELD BUILT TESTED" \
-      "name source arch state key disk backend user sshkey held[] built tested"
+  } | anfs_sorted |
+    anfs_table "IMAGE STATUS ARCH KEY DISK BACKEND USER SSHKEY HELD BUILT TESTED" \
+      "image status arch key disk backend user sshkey held[] built tested"
 }
 
 # What a build of <id> reads, one record per line, fields joined by $ANFS_US. `image show` prints

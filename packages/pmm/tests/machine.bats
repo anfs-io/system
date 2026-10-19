@@ -39,7 +39,7 @@ teardown() {
   ! grep -q qemu-system "$PMM_CALLS"
   [ "$(mach_state web1)" = stopped ]
   ANFS_JSON=true run cmd_list
-  [ "$(yq -p json -r '.[] | select(.name == "web1") | (.source // "null") + " " + .image + " " + .state' <<< "$output")" = "null local/deb stopped" ]
+  [ "$(yq -p json -r '.[] | select(.machine == "web1") | .status + " " + .image' <<< "$output")" = "stopped local/deb" ]
   run cli_call path web1
   [ "$status" -ne 0 ]
   [[ "$output" == *"web1 has no definition"* ]]
@@ -161,7 +161,7 @@ teardown() {
   ANFS_JSON=true run cmd_ps
   [ "$(yq -p json -r '.[] | .name + " " + .ssh' <<< "$output" | paste -sd, -)" = "a 127.0.0.1:$PMM_SSH_PORT_BASE,b 127.0.0.1:$((PMM_SSH_PORT_BASE + 1))" ]
   ANFS_JSON=true run cmd_list
-  [ "$(yq -p json -r '.[] | select(.name == "a") | .state + " " + .address' <<< "$output")" = "running 127.0.0.1:$PMM_SSH_PORT_BASE" ]
+  [ "$(yq -p json -r '.[] | select(.machine == "local/a") | .status + " " + .address' <<< "$output")" = "running 127.0.0.1:$PMM_SSH_PORT_BASE" ]
   run cli_call up a
   [[ "$output" == *"a is running (127.0.0.1:$PMM_SSH_PORT_BASE"* ]]
   run cli_call down a b

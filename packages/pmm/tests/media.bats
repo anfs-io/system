@@ -52,7 +52,7 @@ argv() { grep "^qemu-system" "$PMM_CALLS" | tail -n1; }
   [[ "$output" == *"image       none"* ]]
   [[ "$output" == *"media       $T/pve.iso"* ]]
   ANFS_JSON=true run cmd_list
-  [ "$(yq -p json -r '.[] | select(.name == "nas") | .image // "null"' <<< "$output")" = null ]
+  [ "$(yq -p json -r '.[] | select(.machine == "nas") | .image // "null"' <<< "$output")" = null ]
   run cli_call run --name x
   [ "$status" -eq 64 ]
   run cli_call run --media "$T/pve.iso"

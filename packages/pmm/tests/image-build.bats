@@ -265,5 +265,5 @@ setup() {
   [[ "$output" == *"Pruned (0 superseded disks)"* ]]
   [ -f "$d/$pkey.qcow2" ] && [ -f "$d/$key.qcow2" ]
   ANFS_JSON=true run cmd_image_list debian-13
-  [ "$(yq -p json -r '[.[] | .source + ":" + .state] | join(" ")' <<< "$output")" = "user:built core:shadowed" ]
+  [ "$(yq -p json -r '[.[] | (.image | sub("/.*"; "")) + ":" + .status] | join(" ")' <<< "$output")" = "user:built core:shadowed" ]
 }

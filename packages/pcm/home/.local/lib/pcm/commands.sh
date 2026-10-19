@@ -2,7 +2,7 @@
 # pcm library: the commands, declared (lib/anfs/cli.sh). Usage lines, help, the check of what was
 # typed and tab completion all come from here. Sourced by ~/.local/bin/pcm, and by the tests.
 
-cli_cmd list "Services: NAME SOURCE STATUS (running, stopped, shadowed)" --alias ls
+cli_cmd list "Services: CONTAINER STATUS (running, stopped, shadowed)" --alias ls
 cli_cmd show "Definition, dependencies, data, containers, ports and mounts
 (declared ones when nothing is created)" --arg "service"
 cli_cmd path "Print the path of a service definition" --arg "service"

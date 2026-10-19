@@ -22,10 +22,12 @@ setup() {
   state_write "$(state_file db)" local/deb arm64 qemu aaaaaaaaaaaaaaaa /x.qcow2 pmm /k
   ANFS_JSON=true run cmd_list
   echo "$output"
-  [ "$(yq -p json -r '.[] | select(.name == "web" and .source == "local") | .state' <<< "$output")" = defined ]
-  [ "$(yq -p json -r '.[] | select(.name == "web" and .source == "acme") | .state' <<< "$output")" = shadowed ]
-  [ "$(yq -p json -r '.[] | select(.name == "db") | .state + " " + .image' <<< "$output")" = "stopped local/deb" ]
-  [ "$(yq -p json -r '.[] | select(.name == "old") | .source' <<< "$output")" = null ]
+  [ "$(yq -p json -r '.[] | select(.machine == "local/web") | .status' <<< "$output")" = defined ]
+  [ "$(yq -p json -r '.[] | select(.machine == "acme/web") | .status' <<< "$output")" = shadowed ]
+  [ "$(yq -p json -r '.[] | select(.machine == "acme/db") | .status + " " + .image' <<< "$output")" = "stopped local/deb" ]
+  [ "$(yq -p json -r '.[] | select(.machine == "old") | .status' <<< "$output")" = stopped ]
+  ANFS_TABLE=aligned run cmd_list
+  [[ "${lines[0]}" == "MACHINE"*"STATUS"*"IMAGE"*"ADDRESS" ]]
   run cmd_path db
   [ "$output" = "$HOME/.local/share/anfs/sources/acme/machines/db" ]
   run cmd_path old

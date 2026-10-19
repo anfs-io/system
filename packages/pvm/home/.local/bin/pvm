@@ -448,7 +448,7 @@ cmd_list() {
       continue
     fi
     printf '%s\n' "${REG_NAME[$i]}$US${REG_ID[$i]}$US$state$US${REG_PATH[$i]}"
-  done | anfs_table "NAME ID STATE PATH" "name id state path"
+  done | anfs_table "NAME ID STATUS PATH" "name id status path"
 }
 
 cmd_scan() {
@@ -704,7 +704,7 @@ cmd_show() {
 # --- Links --------------------------------------------------------------------------------
 #
 # A link is <level's directory>/<as> -> <vault>/<source>. The level's directory comes from wsm
-# (`wsm ls --json`: id and dir, null when the level is not installed), so pvm.yml holds no
+# (`wsm ls --json`: space and dir, null when the level is not installed), so pvm.yml holds no
 # absolute path and works on another machine. One tool reads another's list as JSON, never by
 # column (lib/anfs/table.sh).
 
@@ -720,7 +720,7 @@ _wsm_load() {
     [[ -n "$id" ]] || continue
     WSM_KNOWN[$id]=1
     WSM_DIR[$id]="$dir"
-  done < <(wsm ls --json 2>/dev/null | yq -p json -r ".[] | .id + \"$US\" + (.dir // \"\")" 2>/dev/null || true)
+  done < <(wsm ls --json 2>/dev/null | yq -p json -r ".[] | .space + \"$US\" + (.dir // \"\")" 2>/dev/null || true)
   WSM_LOADED=true
 }
 
@@ -879,7 +879,7 @@ cmd_link_add() {
   fi
   local rc=0
   _link_make "$LK_ROOT" "$vid" "$LK_SRC" "$to" "$name" || rc=1
-  anfs_result source "$LK_SRC" target "$to" as "$name" state "$LS_STATE" link "$LS_PATH"
+  anfs_result source "$LK_SRC" target "$to" as "$name" status "$LS_STATE" link "$LS_PATH"
   return "$rc"
 }
 
@@ -938,7 +938,7 @@ cmd_link_list() {
     # With PATH: the links at or below it, and the ones that hold it
     [[ -z "$rel" || "$src" == . || "$src" == "$rel" || "$src" == "$rel"/* || "$rel" == "$src"/* ]] || continue
     printf '%s\n' "$src$US$tgt$US$as$US$state$US$path$US$vault"
-  done | anfs_table "SOURCE TARGET AS STATE LINK VAULT" "source target as state link vault"
+  done | anfs_table "SOURCE TARGET AS STATUS LINK VAULT" "source target as status link vault"
 }
 
 cmd_link_apply() {
@@ -1017,7 +1017,7 @@ cmd_link_validate() {
   n=${#rows[@]}
   if [[ $n -gt 0 ]]; then
     printf '%s\n' "${rows[@]}"
-  fi | anfs_table "SOURCE TARGET AS STATE LINK VAULT" "source target as state link vault"
+  fi | anfs_table "SOURCE TARGET AS STATUS LINK VAULT" "source target as status link vault"
   if [[ $n -eq 0 ]]; then
     say "all links ok"
     return 0

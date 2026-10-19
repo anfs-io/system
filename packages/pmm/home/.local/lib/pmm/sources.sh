@@ -43,9 +43,10 @@ mach_find() {
   [[ "$(state_get "$spec" '.settings | tag')" != '!!map' ]] || M_ID="$PMM_RUN_SOURCE/$spec"
 }
 
-# `pmm list`: NAME SOURCE IMAGE STATE ADDRESS. STATE: running, stopped, defined (not made yet),
-# shadowed (a higher-priority source defines the name). A machine run from an image, or one
-# whose definition is gone, has no source. A tool that wants the names reads `pmm list --json` (lib/anfs/table.sh).
+# `pmm list`: MACHINE STATUS IMAGE ADDRESS, by name then priority. MACHINE is source/name; a
+# machine run from an image, or one whose definition is gone, has no source and is its plain name.
+# STATUS: running, stopped, defined (not made yet), shadowed (a higher-priority source defines the
+# name). A tool that wants the names reads `pmm list --json` (lib/anfs/table.sh).
 cmd_list() {
   local id name d
   local -A seen=()
@@ -53,19 +54,19 @@ cmd_list() {
     while IFS= read -r id; do
       name=$(mach_name "$id")
       if [[ "$(canon "$name")" != "$id" ]]; then
-        anfs_row "$name" "$(mach_src "$id")" "$(mach_get "$id" .image)" shadowed ""
+        anfs_row "$name" "$(mach_src "$id")/$name" shadowed "$(mach_get "$id" .image)" ""
         continue
       fi
       seen[$name]=1
-      anfs_row "$name" "$(mach_src "$id")" "$(mach_image "$name" "$id")" "$(mach_state "$name")" "$(mach_address "$name")"
+      anfs_row "$name" "$(mach_src "$id")/$name" "$(mach_state "$name")" "$(mach_image "$name" "$id")" "$(mach_address "$name")"
     done < <(all_ids)
     for d in "$PMM_DATA_HOME"/machines/*/; do
       [[ -f "${d}state.yml" ]] || continue
       name=$(basename "$d")
       [[ -z "${seen[$name]:-}" ]] || continue
-      anfs_row "$name" "" "$(state_get "$name" .image)" "$(mach_state "$name")" "$(mach_address "$name")"
+      anfs_row "$name" "$name" "$(mach_state "$name")" "$(state_get "$name" .image)" "$(mach_address "$name")"
     done
-  } | LC_ALL=C sort -s -t$'\t' -k1,1 | anfs_table "NAME SOURCE IMAGE STATE ADDRESS" "name source image state address"
+  } | anfs_sorted | anfs_table "MACHINE STATUS IMAGE ADDRESS" "machine status image address"
 }
 
 cmd_path() {

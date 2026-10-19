@@ -74,7 +74,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   grep -qx "allow pmm-lab" "$PMM_BRIDGE_CONF"
   [ "$(net_state_get lab .kind)" = nat ]
   ANFS_JSON=true run cmd_network_list
-  [ "$(yq -p json -r '.[] | .name + " " + .kind + " " + .subnet + " " + .state' <<< "$output")" = "lab nat 10.20.0.0/24 active" ]
+  [ "$(yq -p json -r '.[] | .network + " " + .kind + " " + .subnet + " " + .status' <<< "$output")" = "local/lab nat 10.20.0.0/24 active" ]
   # again: nothing new, and a stopped one is started
   echo inactive > "$VIRSH_STUB/pmm-lab.state"
   run cli_call "network install" lab
@@ -132,7 +132,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ -z "$(net_state_get lab .id)" ]
   [ "$(net_status lab)" = active ]
   ANFS_JSON=true run cmd_network_list
-  [ "$(yq -p json -r '.[] | .name + " " + (.source // "null") + " " + .kind + " " + .subnet + " " + .state' <<< "$output")" = "lab null nat 10.20.0.0/24 active" ]
+  [ "$(yq -p json -r '.[] | .network + " " + .kind + " " + .subnet + " " + .status' <<< "$output")" = "lab nat 10.20.0.0/24 active" ]
   # show prints it as the YAML a definition holds
   run cli_call "network show" lab
   echo "$output"
@@ -158,7 +158,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   host_bridge br0
   cli_call "network create" lan --kind bridged --interface br0 >/dev/null
   ANFS_JSON=true run cmd_network_list
-  [ "$(yq -p json -r '.[] | select(.name == "lan") | .kind + " " + .subnet' <<< "$output")" = "bridged br0" ]
+  [ "$(yq -p json -r '.[] | select(.network == "lan") | .kind + " " + .subnet' <<< "$output")" = "bridged br0" ]
   run cli_call "network show" lan
   [ "$(sed -n '/^# machines\/networks\/lan\/network.yml$/,$p' <<< "$output" | yq -r '.kind + " " + .interface')" = "bridged br0" ]
   # a machine's definition names one like any other
@@ -276,8 +276,8 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [[ "$line" == *"netdev=net0,mac=$(state_get plain .mac) -display none"* ]]
   [ "$(state_get plain .mac)" != "$(state_get edge .mac)" ]
   ANFS_JSON=true run cmd_list
-  [ "$(yq -p json -r '.[] | select(.name == "web1") | .address' <<< "$output")" = 10.20.0.11 ]
-  [ "$(yq -p json -r '.[] | select(.name == "edge") | .address' <<< "$output")" = "127.0.0.1:$PMM_SSH_PORT_BASE" ]
+  [ "$(yq -p json -r '.[] | select(.machine == "local/web1") | .address' <<< "$output")" = 10.20.0.11 ]
+  [ "$(yq -p json -r '.[] | select(.machine == "local/edge") | .address' <<< "$output")" = "127.0.0.1:$PMM_SSH_PORT_BASE" ]
   run cmd_show web1
   [[ "$output" == *"interface   lab 10.20.0.11 $m0"* ]]
   [[ "$output" == *"interface   lan (from the LAN) $m1"* ]]
@@ -310,7 +310,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ "$(net_status iso)" = active ]
   [ "$(state_get web '.interfaces[0].address')" = 10.20.0.2 ]
   ANFS_JSON=true run cmd_network_list
-  [ "$(yq -p json -r '.[] | select(.name == "lab") | .source + " " + .machines' <<< "$output")" = "acme web" ]
+  [ "$(yq -p json -r '.[] | select(.network == "acme/lab") | .machines' <<< "$output")" = "web" ]
 }
 
 @test "implode takes the networks with it" {

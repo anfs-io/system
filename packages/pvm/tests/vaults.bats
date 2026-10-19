@@ -90,7 +90,7 @@ setup() { pvm_setup; }
   rm -rf b
   run pvm ls --json
   [ "$status" -eq 0 ]
-  run yq -p json -r '.[] | .name + "=" + .state' <<< "$output"
+  run yq -p json -r '.[] | .name + "=" + .status' <<< "$output"
   [ "${lines[0]}" = "a=ok" ]
   [ "${lines[1]}" = "b=stale" ]
 }

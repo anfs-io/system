@@ -24,7 +24,7 @@ is_service() {
   canon "$1" >/dev/null
 }
 
-# `pcm list`: NAME SOURCE STATUS, by name then priority. STATUS: running or stopped when that
+# `pcm list`: CONTAINER (source/name) STATUS, by name then priority. STATUS: running or stopped when that
 # definition's containers exist (from the io.pcm.id label), shadowed when a higher-priority
 # source defines the name. Blank STATUS if podman is unreachable; list never fails on it.
 # A tool that wants the names reads `pcm list --json` (lib/anfs/table.sh).
@@ -75,8 +75,8 @@ cmd_list() {
   # The table is anfs's (lib/anfs/table.sh): aligned on a terminal, --json for a tool that reads it
   local name _prio src
   while IFS='|' read -r name _prio src status; do
-    [[ -z "$name" ]] || anfs_row "$name" "$src" "$status"
-  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) | anfs_table "NAME SOURCE STATUS" "name source status"
+    [[ -z "$name" ]] || anfs_row "$src/$name" "$status"
+  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) | anfs_table "CONTAINER STATUS" "container status"
 }
 
 cmd_path() {

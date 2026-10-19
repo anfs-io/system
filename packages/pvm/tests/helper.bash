@@ -32,7 +32,7 @@ pvm_setup() {
 case " $* " in *" ls "*) ;; *) exit 0 ;; esac
 awk -F'\t' '
   BEGIN { printf "[" }
-  { printf "%s{\"id\":\"%s\",\"dir\":%s}", (NR > 1 ? "," : ""), $1, ($2 == "-" ? "null" : "\"" $2 "\"") }
+  { printf "%s{\"space\":\"%s\",\"dir\":%s}", (NR > 1 ? "," : ""), $1, ($2 == "-" ? "null" : "\"" $2 "\"") }
   END { print "]" }
 ' "$WSM_LEVELS"
 STUB
