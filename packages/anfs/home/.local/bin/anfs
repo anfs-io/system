@@ -21,7 +21,8 @@
 #   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
 #                                      your own repo, and the steps installed packages bring
 #                                      (lib/anfs/onboard.sh; the contract is lib/ppm/onboard.sh)
-#   implode [-y] [--all]               every tool's implode, then anfs itself; --all also what
+#   implode [-y] [--all]               the other stacks, the tools' implodes, the system stack,
+#                                      then anfs itself; --all also what
 #                                      install.sh added (Homebrew when it installed it)
 #
 # Tools: each tool by what it manages (`anfs machine ...` is `pmm ...`, exec'd), its name an alias:
@@ -112,10 +113,10 @@ what is missing. No step named means all of them." \
   --opt "--repo REPO: Your repo: local, new (also published, by a package that can), or a git URL" \
   ${_onboard_opts[@]+"${_onboard_opts[@]}"} \
   --arg "[step...]"
-cli_cmd implode "Remove everything the toolkit put on this machine:
-wsm, psm, pmm, pcm, then ppm (which removes the tools and the
-software they run on), then the sources. Space contents
-are kept. It ends by listing what anfs's installer added
+cli_cmd implode "Remove everything the toolkit put on this machine: the other
+installed stacks (last installed first), each installed tool's
+implode (wsm, psm, pmm, pcm), the system stack, ppm's implode,
+then the sources. Space contents are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,
 Homebrew if it installed it)." \
   --opt "-y --yes: Do not ask" \
@@ -261,7 +262,7 @@ cmd_log() {
 tool() {
   local bin="$ANFS_BIN_DIR/$1"
   shift
-  [[ -x "$bin" ]] || die "$(basename "$bin") is not installed (ppm install core/anfs)"
+  [[ -x "$bin" ]] || die "$(basename "$bin") is not installed (ppm install core/$(basename "$bin"))"
   "$bin" "$@"
 }
 
@@ -328,6 +329,11 @@ cmd_src_install() {
       [[ -d "$(gitsrc_dir "$src")/$tld" ]] && specs+=("$src/")
     done
     [[ ${#specs[@]} -gt 0 ]] || continue
+    # Not every tool is in the system stack (pmm is not): one that is missing is skipped, said so
+    if [[ ! -x "$ANFS_BIN_DIR/$t" ]]; then
+      echo "== $t is not installed: skipping ${specs[*]} $tld (ppm install core/$t)" >&2
+      continue
+    fi
     echo "== $t install ${specs[*]}"
     case "$t" in
       ppm) tool ppm install -y "${specs[@]}" || rc=1 ;;
@@ -337,15 +343,38 @@ cmd_src_install() {
   return $rc
 }
 
+# Implode is `anfs remove system` and what comes after the tools. In order:
+#   1. every other installed stack, the last installed first, so none holds a toolkit resource
+#   2. each installed tool's implode but ppm's (wsm psm pmm pcm): their state, and what they hold
+#      outside a stack. A tool that is not installed is skipped (pmm on a default install).
+#   3. `anfs remove system`: ppm removes the toolkit's packages, keeping core/ppm and core/anfs
+#   4. ppm implode: those two, the packages installed outside a stack, ppm's own dirs. With no
+#      system record (a machine installed before stacks) it is what removes the toolkit.
+#   5. the sources, anfs's dirs, the links; with --all the bootstrap
 cmd_implode() {
   local yes=${CLI_OPT[yes]:-false} all=${CLI_OPT[all]:-false}
 
-  # Read before anything is deleted: the record lives in anfs's state dir
+  # Read before anything is deleted: the records live in anfs's state dir
   _record_load
+  local system="" q t
+  local -a others=()
+  if declare -F stack_installed_reverse >/dev/null; then
+    while IFS= read -r q; do
+      [[ -n "$q" ]] || continue
+      if [[ -z "$system" && "${q#*/}" == system ]]; then system="$q"; else others+=("$q"); fi
+    done < <(stack_installed_reverse)
+  fi
+  local tools=""
+  for t in $ANFS_TOOLS; do [[ "$t" == ppm ]] || tools="$t $tools"; done
 
-  local reversed="" t
-  for t in $ANFS_TOOLS; do reversed="$t $reversed"; done
-  echo "anfs implode runs, in order: ${reversed% } implode (each lists what it removes),"
+  echo "anfs implode runs, in order:"
+  [[ ${#others[@]} -eq 0 ]] || echo "  anfs remove ${others[*]} (the other installed stacks, last installed first)"
+  echo "  ${tools% } implode (each installed tool's; each lists what it removes)"
+  if [[ -n "$system" ]]; then
+    echo "  anfs remove $system (the toolkit's packages), then ppm implode"
+  else
+    echo "  ppm implode (no system stack recorded: it removes the toolkit)"
+  fi
   echo "then deletes the sources ($(_tilde "$ANFS_DATA_HOME")), $(_tilde "$ANFS_CONFIG_HOME") and $(_tilde "$ANFS_CACHE_HOME")."
   echo "Space contents are kept."
   if $all; then
@@ -355,14 +384,24 @@ cmd_implode() {
   $all && { _login_shell_guard || return 1; }
   $yes || confirm "implode removes the whole toolkit" "Implode anfs?"
 
-  # Reverse install order: spaces and skills and containers before the software under them; ppm
-  # last, since removing its packages removes the other tools' commands
   local rc=0
-  for t in $reversed; do
-    [[ -x "$ANFS_BIN_DIR/$t" ]] || continue
-    echo "== $t implode"
-    "$ANFS_BIN_DIR/$t" implode -y || { echo "anfs: $t implode failed; continuing" >&2; rc=1; }
+  # A stack's remove exits on failure: each in a subshell, so the rest still runs
+  for q in ${others[@]+"${others[@]}"}; do
+    echo "== anfs remove $q"
+    ( stack_remove true "" "$q" ) || { echo "anfs: remove $q failed; continuing" >&2; rc=1; }
   done
+  # Spaces, skills and containers before the software under them
+  for t in $tools; do
+    _implode_tool "$t" || rc=1
+  done
+  if [[ -n "$system" ]]; then
+    echo "== anfs remove $system"
+    # ppm and anfs stay for ppm implode: removing ppm's package would leave its dirs behind
+    ( STACK_REMOVE_KEEP="packages|core/ppm packages|core/anfs" stack_remove true "" "$system" ) ||
+      { echo "anfs: remove $system failed; continuing" >&2; rc=1; }
+  fi
+  # The packages left, and ppm itself; without a system record, the whole toolkit (the fallback)
+  _implode_tool ppm || rc=1
 
   local dir
   for dir in "$ANFS_DATA_HOME" "$ANFS_CONFIG_HOME" "$ANFS_CACHE_HOME" "$ANFS_LIB_DIR"; do
@@ -386,6 +425,13 @@ cmd_implode() {
   fi
   [[ $rc -eq 0 ]] && echo "anfs imploded. Open a new shell."
   return $rc
+}
+
+# <tool> implode -y, when the tool is installed; a missing one is never called
+_implode_tool() {
+  [[ -x "$ANFS_BIN_DIR/$1" ]] || return 0
+  echo "== $1 implode"
+  "$ANFS_BIN_DIR/$1" implode -y </dev/null || { echo "anfs: $1 implode failed; continuing" >&2; return 1; }
 }
 
 # --- the bootstrap record ($ANFS_BOOTSTRAP_RECORD, written by install.sh) -------------------------

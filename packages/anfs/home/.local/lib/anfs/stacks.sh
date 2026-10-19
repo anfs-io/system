@@ -448,7 +448,8 @@ _stack_installed_name() {
 }
 
 # `anfs remove <stack>...`: what the records say these installed, that was not there before and
-# no other record holds; in reverse order
+# no other record holds; in reverse order. STACK_REMOVE_KEEP ("kind|resource" words) is kept too:
+# implode's, for ppm and anfs, which ppm implode removes after
 stack_remove() {
   local yes="$1" target="$2" spec q
   shift 2
@@ -466,6 +467,7 @@ stack_remove() {
       [[ -n "$k" && -z "${seen[$k|$r]:-}" ]] || continue
       seen[$k|$r]=1
       if [[ "$b" == true ]]; then keep+=("$k $r: there before $q"); continue; fi
+      if [[ " ${STACK_REMOVE_KEEP:-} " == *" $k|$r "* ]]; then keep+=("$k $r: removed last"); continue; fi
       if _stack_holder "$held" "$k|$r"; then keep+=("$k $r: $REPLY holds it"); continue; fi
       if ! stack_actual "$k" "$r"; then keep+=("$k $r: already gone"); continue; fi
       rows+=("$k"$'\t'"$r")
@@ -510,6 +512,16 @@ stack_remove() {
     echo "anfs: a tool failed; the records are kept (remove again once it is fixed)" >&2
   fi
   return $rc
+}
+
+# The installed stacks (their records), the last installed first: reverse install order
+stack_installed_reverse() {
+  local f q
+  for f in "$ANFS_STACKS_STATE"/*/*.yml; do
+    [[ -f "$f" ]] || continue
+    q="${f#"$ANFS_STACKS_STATE"/}" q="${q%.yml}"
+    printf '%s\t%s\n' "$(yq -r '.installed_at // ""' "$f")" "$q"
+  done | LC_ALL=C sort -r | cut -f2
 }
 
 # installed, partial or - for stack <q>, after stack_have_load
