@@ -1,0 +1,161 @@
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#f6f6f4, #16171a);
+  --surface: light-dark(#fff, #1f2125);
+  --line: light-dark(#e2e2de, #32353b);
+  --text: light-dark(#1d1e20, #e6e6e3);
+  --muted: light-dark(#75777c, #8b8e95);
+  --good: light-dark(#1a7f4b, #4cc38a);
+  --warn: light-dark(#a15c00, #e2a336);
+  --bad: light-dark(#c0362c, #f0766b);
+  --mute: light-dark(#b4b6ba, #565a62);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, sans-serif;
+}
+
+a { color: inherit; text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre { font: 12px/1.5 ui-monospace, monospace; }
+.muted { color: var(--muted); }
+
+nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 12px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+nav a { color: var(--muted); }
+nav a[aria-current] { color: var(--text); font-weight: 600; }
+nav .brand { color: var(--text); font-weight: 700; margin-right: 12px; }
+
+main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+/* Status colours: text for badges and legends, fill for bar segments. */
+.tone-good { color: var(--good); fill: var(--good); }
+.tone-warn { color: var(--warn); fill: var(--warn); }
+.tone-bad { color: var(--bad); fill: var(--bad); }
+.tone-mute { color: var(--muted); fill: var(--mute); }
+
+.badge { white-space: nowrap; }
+.badge::before { content: "● "; }
+
+.bar { display: block; width: 100%; height: 6px; border-radius: 3px; }
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.tile {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.tile-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+.tile-head strong { font-size: 26px; line-height: 1; }
+.tile p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.legend { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; }
+
+/* A table wider than the screen scrolls inside its own box, not the page. */
+.scroll {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 7px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
+tbody tr:last-child > * { border-bottom: 0; }
+td { overflow-wrap: break-word; }
+
+.matrix th:first-child { position: sticky; left: 0; background: var(--surface); }
+.matrix th[scope="row"] { font-weight: 600; white-space: nowrap; }
+.matrix th[scope="row"] span { font-weight: 400; font-size: 12px; margin-left: 6px; }
+.matrix td { width: 10%; min-width: 80px; }
+.matrix td a { display: block; }
+.matrix .bar { height: 4px; margin-top: 4px; }
+
+.page-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 16px; margin-bottom: 16px; }
+.page-head h1 { margin: 0; font-size: 20px; }
+.page-head code { color: var(--muted); }
+.page-head input {
+  flex: 1 1 260px;
+  max-width: 420px;
+  margin-left: auto;
+  padding: 6px 10px;
+  font: inherit;
+  color: inherit;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.panel > p { font-size: 12px; margin: 8px 2px; }
+.failure { border: 1px solid var(--bad); border-radius: 8px; padding: 12px 16px; background: var(--surface); }
+.failure pre { margin: 8px 0 0; white-space: pre-wrap; }
+
+td.action { text-align: right; white-space: nowrap; }
+td.action form { display: inline; margin-left: 8px; }
+button {
+  min-width: 68px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--muted); }
+.busy { color: var(--warn); font-size: 12px; }
+.reason { display: block; margin-top: 2px; color: var(--bad); font-size: 12px; font-weight: 400; }
+#jobs td a { display: block; }
+.output {
+  min-height: 120px;
+  margin: 0;
+  padding: 12px 16px;
+  white-space: pre-wrap;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+nav .activity { margin-left: auto; }
+
+@media (max-width: 700px) {
+  nav { flex-wrap: nowrap; overflow-x: auto; padding: 10px 12px; white-space: nowrap; }
+  nav .activity { margin-left: 0; }
+  main { padding: 12px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+  .tile { padding: 10px 12px; }
+  .tile-head strong { font-size: 22px; }
+  th, td { padding: 6px 8px; }
+  .matrix td { min-width: 64px; }
+  .page-head input { flex-basis: 100%; max-width: none; margin-left: 0; }
+  td.action form { margin-left: 4px; }
+
+  /* A listing row becomes a card: its first cell as the title, the rest
+     beneath it, status and button down the right-hand side. */
+  .panel thead { display: none; }
+  .panel tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 9px 12px; }
+  .panel tr[hidden] { display: none; }
+  .panel tr:not(:last-child) { border-bottom: 1px solid var(--line); }
+  .panel td { grid-column: 1; padding: 0; border: 0; color: var(--muted); font-size: 13px; }
+  .panel td:first-child { color: var(--text); font-size: 14px; font-weight: 600; }
+  .panel td.status { grid-column: 2; grid-row: 1; text-align: right; }
+  .panel td.action { grid-column: 2; grid-row: 2 / span 3; align-self: start; padding-top: 4px; }
+  .panel td:not(.status, .action):has(> .muted:only-child) { display: none; }
+  button { min-width: 76px; padding: 5px 12px; font-size: 13px; }
+}
