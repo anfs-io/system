@@ -378,8 +378,9 @@ help` documents the commands.
     relative, as stow's are, because stow treats an absolute link as foreign. It never takes
     clones, repository paths or what the source's `.gitignore` ignores.
   - `wsm status` lists the differences.
-  - `wsm ls [SPEC] [-r]` lists the defined levels with where each is installed, or their
-    repositories' git state. `wsm cd -s` goes to the source directory instead of the installed one.
+  - `wsm ls [SPEC]` lists the defined levels with where each is installed; `wsm repo ls [SPEC]`
+    their repositories' git state, and `wsm repo install [SPEC]` clones what an installed level
+    declares and is missing (install's clone half: nothing stowed, nothing pulled). `wsm cd -s` goes to the source directory instead of the installed one.
   - wsm never commits.
 - **Names nest**: `ANFS_NAME_PARTS=2`, so `main/tech` is a name and `lgat/main/tech` a qualified
   one. A bare `depends:` entry is a sibling in the same workspace. Spaces don't layer
@@ -659,31 +660,54 @@ and names the columns, and the library picks the form.
   not passed on to a tool this one runs. `anfs_result k v ...` is the `--json` answer of a command
   that changes something; `anfs_json_on` asks whether it was given.
 - **A tool reads another tool's list with `--json`, never by column.** pvm reads
-  `wsm ls --json`; the round trips read `ppm list --json`, `pmm list --json`,
-  `pmm image list --json` and `psm skills ls --json`. Keys may be added to a list; renaming or
+  `wsm ls --json`; anfs-dev's `anfs work` reads `wsm ls` and `wsm repo ls`, `ppm container` and
+  `ppm vm` read `pcm list` and `pmm list`; the round trips read `ppm list --json`, `pmm list
+  --json`, `pmm image list --json`, `pmm network list --json` and `psm ls --json`. Keys may be added to a list; renaming or
   removing one breaks its readers. The piped form is for a person's own pipes. There is no
   special flag for another tool's benefit: `pcm list --names` is gone, and `ppm container` and
   `ppm vm` read `list --json` like any reader (`ppm vm ip` is `pmm list`'s `address`).
 - Detail views (`pcm inspect`, `ppm show`) are not tables and do not go through this.
+- `anfs_sorted` sorts rows by a leading key field and drops it: a list by name whose first column
+  is `source/name` keeps a name's rows (the winner, then what it shadows) together.
+
+**Every list has one shape**, so whoever reads one tool's lists reads them all:
+
+1. **The first column is the resource**, headed by its kind in the singular, holding
+   `source/name`: `PACKAGE`, `CONTAINER`, `MACHINE`, `IMAGE`, `NETWORK`, `SKILL`, `SPACE`,
+   `REPOSITORY`, `SOURCE`, `ISO`. There is no separate `SOURCE` column. Its JSON key is the kind in
+   lower case (`container`, `skill`), the qualified value.
+2. **`STATUS`** (key `status`) wherever a list says what state a thing is in, in the second
+   column. Never `STATE` or `NOTE`.
+3. **`local` is a reserved source alias**: the tool's own config directory, the implicit source
+   pcm, pmm and psm have. `anfs src add` refuses it (64).
+4. **What has no definition has no source**: a machine made by `pmm run`, a network made with
+   `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
+   a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
+5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
+   callbacks`, onboard's, pvm's, `anfs work list`) take rule 2 only.
+
+`registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
+person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
+and `repo`, `iso list`'s `catalog`).
 
 The keys, which are the interface:
 
 | Command | Keys |
 | --- | --- |
-| `wsm list` | `id` (a source's ends in `/`), `dir`, `level` (`source`, `workspace`, `space`), `note` (`stale`, `not in the source`) |
-| `wsm list -r` | `path`, `url`, `state` |
-| `ppm list`, `ppm list --installed` | `package`, `installed` (the version, null when not installed) |
-| `pcm list` | `name`, `source`, `status` |
-| `pmm list` | `name`, `source` (null: run from an image, or the definition is gone), `image`, `state` (`running`, `stopped`, `defined`, `shadowed`), `address` |
-| `psm skills list` | `status`, `config`, `skill`, `repo` |
-| `psm repo list` | `config`, `repo`, `note` |
-| `anfs callbacks` | `tool`, `listener`, `state`, `handler` |
-| `anfs src list` | `alias`, `url`, `list` (`user`, `system`), `status`, `provides` (a list) |
-| `anfs iso list`, `pmm iso list`, `ventoy iso list` | `id` (null: a file no entry names, with `--all`), `name`, `architecture`, `file`, `state` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
+| `ppm list`, `ppm list --installed` | `package` (`source/name`), `installed` (the version, null when not installed) |
+| `pcm list` | `container` (`source/name`), `status` (`running`, `stopped`, either with `, shadowed`, or `shadowed`; null: never started) |
+| `pmm list` | `machine` (`source/name`; the plain name: run from an image, or the definition is gone), `status` (`running`, `stopped`, `defined`, `shadowed`), `image`, `address` |
+| `pmm image list` | `image` (`source/name`; the plain name: the definition is gone), `status` (`built`, `stale`, `unbuilt`, `shadowed`), `arch` (null: not built), `key`, `disk` (a tart build: its VM's name), `backend`, `user`, `sshkey`, `held` (a list: `web1`, `web1@s1`), `built` (when), `tested` (true when this build passed `image test`) |
+| `pmm network list` | `network` (`source/name`; the plain name: made with `network create`, or the definition is gone), `status` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `kind`, `subnet` (a bridged network: its bridge), `machines` (comma-separated) |
+| `psm list` | `skill` (`<config>/<skill>`: the source's alias, or the config's name; `<config>/*` for a whole repo), `status` (`ok`, `partial`, `missing`, `*`), `config`, `repo` |
+| `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
+| `wsm list` | `space` (the level: a source's ends in `/`), `status` (`stale`, `not in the source`), `level` (`source`, `workspace`, `space`), `dir` |
+| `wsm repo list` | `repository` (`<level>/<path>`), `status` (`clean`, `dirty`, `missing`, `not a repo`, `not installed`, `no path`), `url` |
+| `anfs src list` | `source` (the alias), `status`, `url`, `list` (`user`, `system`), `provides` (a list) |
+| `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
+| `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
-| `pmm image list` | `name`, `source` (null: the definition is gone), `arch` (null: not built), `state` (`built`, `stale`, `unbuilt`, `shadowed`), `key`, `disk` (a tart build: its VM's name), `backend`, `user`, `sshkey`, `held` (a list: `web1`, `web1@s1`), `built` (when), `tested` (true when this build passed `image test`) |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
-| `pmm network list` | `name`, `source` (null: made with `network create`, or the definition is gone), `kind`, `subnet` (a bridged network: its bridge), `state` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `machines` (comma-separated) |
 
 ### The Command Line (lib/anfs/cli.sh)
 
@@ -697,8 +721,8 @@ cli_cmd remove "Down, then delete everything pcm created for it" \
   --opt "-y --yes: Do not ask" \
   --opt "-f --force: Also remove what depends on it" \
   --arg "service..."
-cli_group skills "Declared skills and their state"
-cli_cmd "skills remove" "Remove skills" --alias rm --arg "skill..."
+cli_group repo "The repos skills come from"
+cli_cmd "repo remove" "Remove a repo's config" --alias rm --arg "dir"
 cli_standard                 # completion and help, last
 cli_dispatch "$@"
 ```
@@ -783,14 +807,19 @@ seam by which a package adds a command, and it is anfs's alone:
 - anfs-dev/dev's `anfs work` and `anfs hooks` are the first (`packages/dev/README.md` there).
 
 **The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
-`show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm skills list`,
-`pvm link remove`, `ppm container remove`, `pmm image list`). `image` is the group for what a
+`show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm repo list`,
+`wsm repo install`, `pvm link remove`, `ppm container remove`, `pmm image list`). `image` is the group for what a
 tool's main object runs from, and `pmm image` is the reference for it: besides the shared verbs,
 `build`, `test` (boot it and run its test; `validate` only reads the definition), `export` and
 `prune`. pcm and pmm keep `up`/`down`/`ps`, the names of what
 they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image); wsm's `status` is a different question from `ps`.
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
 says what would happen.
+
+A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`), never in a group
+of its own name; a group is for another kind of thing the tool manages (`psm repo`, `psm agents`,
+`wsm repo`, `pmm image`, `pmm network`). The same kind takes the same group name in every tool:
+`repo` is where a tool's repositories are listed and installed.
 
 **ppm's options are its commands' own**, like every tool's: `ppm install -f pkg` or
 `ppm install pkg -f`, and `ppm list -f` is refused. Its helpers still read `$force`, `$config`,
