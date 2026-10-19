@@ -111,7 +111,45 @@ SH
   "$TOOL" say info "two words"
   run grep -c ' start: ' "$LOG"
   [ "$output" = "1" ]
-  grep -q 'demo\[[0-9]*\] start: say info two words$' "$LOG"
+  grep -q 'demo\[[0-9]*\] start: [0-9]*-[0-9]* say info two words$' "$LOG"
+}
+
+@test "every invocation ends with an end line: the start line's id and the exit status" {
+  "$TOOL" say info x
+  run "$TOOL" say fail y
+  local id
+  id=$(awk '/ start: / { print $4; exit }' "$LOG")
+  [[ "$id" =~ ^[0-9]+-[0-9]+$ ]]
+  grep -q "demo\[${id%-*}\] end: $id 0\$" "$LOG"
+  [ "$(grep -c ' end: [0-9]*-[0-9]* 73$' "$LOG")" = 1 ]
+  [ "$(grep -c ' end: ' "$LOG")" = 2 ]
+}
+
+@test "the end line keeps the tool's own EXIT trap and its exit status" {
+  sed -i.bak 's|^CLI_TOOL=demo$|CLI_TOOL=demo; trap "echo cleaned >\&2" EXIT|' "$TOOL"
+  run "$TOOL" say fail z
+  [ "$status" -eq 73 ]
+  [[ "$output" == *cleaned* ]]
+  grep -q ' end: [0-9]*-[0-9]* 73$' "$LOG"
+}
+
+@test "anfs_confirm without a terminal and without -y exits 77, message unchanged" {
+  cat >> "$TOOL.ask" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$LIB/log.sh"
+source "$LIB/cli.sh"
+CLI_TOOL=demo
+cli_cmd rm "Asks" --opt "-y --yes: Do not ask"
+cmd_rm() { anfs_confirm "rm deletes it" "Remove?"; echo done; }
+cli_dispatch "\$@"
+SH
+  chmod +x "$TOOL.ask"
+  run "$TOOL.ask" rm </dev/null
+  [ "$status" -eq 77 ]
+  [ "$output" = "demo: rm deletes it; pass -y to confirm without a terminal" ]
+  run "$TOOL.ask" rm -y </dev/null
+  [ "$output" = done ]
 }
 
 @test "no colour codes in the log, or on a stderr that is not a terminal" {

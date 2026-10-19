@@ -23,6 +23,16 @@
 # anfs_log_start (cli.sh calls it) caps the file: past ANFS_LOG_MAX bytes (1 MB) it becomes
 # anfs.log.1, replacing the last one. ANFS_LOG=off writes no file; test helpers set it.
 #
+# Each invocation is a pair, matched by an id (<pid>-<epoch seconds>), so `anfs rpc`'s watch can
+# tell when a run ended and how:
+#
+#   2026-10-11T08:00:00-0400 ppm[4242] start: 4242-1791720000 install core/node
+#   2026-10-11T08:00:09-0400 ppm[4242] end: 4242-1791720000 0
+#
+# The end line comes from an EXIT trap anfs_log_start sets, run before the one the tool had set
+# by then (ppm's and wsm's are set when their files are sourced). A tool that sets its own EXIT
+# trap later, inside a command, replaces it: that run has no end line.
+#
 # Like everything in lib/anfs/ but bash.sh: functions only, no tool's code, the bash floor (5.2).
 
 _anfs_truthy() {
@@ -71,11 +81,29 @@ anfs_log_start() {
       mv -f "$ANFS_LOG_FILE" "$ANFS_LOG_FILE.1" 2>/dev/null || true
     fi
   fi
-  _anfs_log start "$*"
+  ANFS_LOG_ID="$$-$EPOCHSECONDS"
+  _anfs_log start "$ANFS_LOG_ID $*"
+  # The end line, chained with whatever EXIT trap the tool already had (trap -p prints it quoted:
+  # read back through _anfs_trap_grab rather than parsed)
+  local prev
+  _ANFS_EXIT_PREV="" prev=$(trap -p EXIT)
+  [[ -z "$prev" ]] || eval "_anfs_trap_grab ${prev#trap }"
+  trap '_anfs_log_end' EXIT
   if _anfs_truthy "${ANFS_TRACE:-}"; then
     PS4='+ ${BASH_SOURCE[0]##*/}:${LINENO}:${FUNCNAME[0]:-main}: '
     set -x
   fi
+}
+
+_anfs_trap_grab() { _ANFS_EXIT_PREV="${2:-}"; }
+
+# The EXIT trap: `end: <id> <exit>`, then the tool's own trap. Not from a subshell (BASHPID),
+# which would log a second end. The exit status stays the tool's.
+_anfs_log_end() {
+  local rc=$?
+  [[ "$BASHPID" != "$$" ]] || _anfs_log end "$ANFS_LOG_ID $rc"
+  if [[ -n "$_ANFS_EXIT_PREV" ]]; then eval "$_ANFS_EXIT_PREV"; fi
+  return "$rc"
 }
 
 anfs_info() { printf '%s\n' "$*"; }
