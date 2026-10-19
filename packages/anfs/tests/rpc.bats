@@ -209,3 +209,54 @@ EOF
   # only sudo -n was tried: no prompt
   [ "$(grep -c called "$BATS_TEST_TMPDIR/sudo.log")" -eq 1 ]
 }
+
+# --- the token (plan 02): the listener's TCP mode, driven directly, no listener -------------------
+
+tokens() {
+  local d="$HOME/.local/state/anfs/rpc"
+  mkdir -p "$d"
+  echo rtok > "$d/token.read"
+  echo wtok > "$d/token.write"
+}
+
+@test "--token: no token line, a wrong one or a malformed one: unauthorized, closed, nothing run" {
+  tokens
+  run -1 rpc --token <<<'{"run":["ppm","install","a"]}'
+  [ "$output" = '{"error":"unauthorized: the first line is {\"token\":\"...\"}"}' ]
+  run -1 rpc --token <<<'{"token":"nope"}
+{"run":["ppm","path","x"]}'
+  [ "${#lines[@]}" -eq 1 ] && [[ "${lines[0]}" == '{"error":"unauthorized'* ]]
+  run -1 rpc --token <<<'{"token":"rtok","run":["ppm","path","x"]}'
+  [[ "$output" == '{"error":"unauthorized'* ]]
+  run -1 rpc --token <<<'{"token":""}'
+  [[ "$output" == '{"error":"unauthorized'* ]]
+  [ ! -f "$ARGS" ]
+}
+
+@test "--token: no tokens on disk: nothing opens" {
+  run -1 rpc --token <<<'{"token":""}
+{"version":true}'
+  [[ "$output" == '{"error":"unauthorized'* ]]
+}
+
+@test "--token: the read token is the read grant, the write token the write grant (whatever --grant says)" {
+  tokens
+  run rpc --token --grant write <<<'{"token":"rtok"}
+{"run":["ppm","path","x"]}
+{"run":["ppm","install","a"]}'
+  [ "${lines[0]}" = '{"exit":0,"out":"/x/x"}' ]
+  [ "${lines[1]}" = '{"error":"refused: a write request (install) under --grant read"}' ]
+  run rpc --token <<<'{"token":"wtok"}
+{"run":["ppm","install","a"]}'
+  [ "$output" = '{"exit":0,"out":"installed"}' ]
+}
+
+@test "without --token (a unix socket) a first token line is read and ignored" {
+  run rpc <<<'{"token":"anything"}
+{"run":["ppm","path","x"]}'
+  [ "$output" = '{"exit":0,"out":"/x/x"}' ]
+  # only the first line: a later one is a request, and not one rpc knows
+  run rpc <<<'{"run":["ppm","path","x"]}
+{"token":"anything"}'
+  [ "${lines[1]}" = '{"error":"unknown request (run, watch or version)"}' ]
+}

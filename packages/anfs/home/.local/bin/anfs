@@ -57,6 +57,8 @@ source "$ANFS_LIB/resolve.sh"
 if [[ -f "$ANFS_LIB/stacks.sh" ]]; then source "$ANFS_LIB/stacks.sh"; fi
 # shellcheck source=/dev/null
 if [[ -f "$ANFS_LIB/iso.sh" ]]; then source "$ANFS_LIB/iso.sh"; fi
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/listener.sh" ]]; then source "$ANFS_LIB/listener.sh"; fi
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below
 # shellcheck source=/dev/null
@@ -128,7 +130,8 @@ cli_cmd log "Print the log every tool writes; of one tool when named" \
 cli_cmd rpc "The toolkit's API: a JSON request per line on stdin, a JSON
 answer per line on stdout (run, stream, yes, watch, version). Only
 the toolkit's tools, never a shell; a write needs --grant write" \
-  --opt "--grant GRANT: read (the default) or write"
+  --opt "--grant GRANT: read (the default) or write" \
+  --opt "--token: The first line must be {\"token\":\"...\"}; the token is the grant (the listener's TCP mode)"
 cli_standard
 
 # The tools, by what each manages: the whole line goes to the tool (_anfs_forward)
@@ -372,6 +375,7 @@ cmd_implode() {
   for t in $ANFS_TOOLS; do [[ "$t" == ppm ]] || tools="$t $tools"; done
 
   echo "anfs implode runs, in order:"
+  declare -F anfs_rpc_listener_remove >/dev/null && echo "  the toolkit API's listener: unloaded, its unit files and tokens deleted"
   [[ ${#others[@]} -eq 0 ]] || echo "  anfs remove ${others[*]} (the other installed stacks, last installed first)"
   echo "  ${tools% } implode (each installed tool's; each lists what it removes)"
   if [[ -n "$system" ]]; then
@@ -389,6 +393,12 @@ cmd_implode() {
   $yes || confirm "implode removes the whole toolkit" "Implode anfs?"
 
   local rc=0
+  # Nothing listening once implode starts: the listener first, before anything it would run
+  if declare -F anfs_rpc_listener_remove >/dev/null; then
+    echo "== the toolkit API's listener"
+    anfs_rpc_listener_remove
+    rm -rf "${ANFS_RPC_HOME:?}"
+  fi
   # A stack's remove exits on failure: each in a subshell, so the rest still runs
   for q in ${others[@]+"${others[@]}"}; do
     echo "== anfs remove $q"
@@ -778,6 +788,14 @@ _rpc_version() {
   printf '{"anfs":%s,"tools":{%s}}\n' "$REPLY" "${out#,}"
 }
 
+# The token of a {"token":"..."} line (a map whose only key is token, a string); fails otherwise
+_rpc_token() {
+  local t
+  t=$(printf '%s' "$1" | yq -p json -o tsv '[tag, (keys | join(",")), (.token | tag), .token]' 2>/dev/null) || return 1
+  [[ "$t" == $'!!map\ttoken\t!!str\t'* ]] || return 1
+  printf '%s\n' "${t#$'!!map\ttoken\t!!str\t'}"
+}
+
 # One request line
 _rpc_request() {
   local f="$RPC_TMP/req" n i
@@ -811,9 +829,24 @@ cmd_rpc() {
   command -v yq >/dev/null 2>&1 || { echo "anfs: yq is required" >&2; exit 69; }
   export ANFS_RPC=1
   RPC_TMP=$(mktemp -d "${TMPDIR:-/tmp}/anfs-rpc.XXXXXX")
-  local line
+  local line first=true token
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "${line//[[:space:]]/}" ]] || continue
+    # The first line may be {"token":"..."}: with --token it must be, and its token is the grant;
+    # without (a unix socket, a pipe), it is read and ignored
+    if $first; then
+      first=false
+      token=$(_rpc_token "$line") || token=""
+      if ${CLI_OPT[token]:-false}; then
+        if [[ -z "$token" ]] || ! RPC_GRANT=$(anfs_rpc_token_grant "$token" 2>/dev/null); then
+          _rpc_error "unauthorized: the first line is {\"token\":\"...\"}"
+          rm -rf "$RPC_TMP"
+          return 1
+        fi
+        continue
+      fi
+      [[ -z "$token" ]] || continue
+    fi
     _rpc_request "$line"
   done
   if [[ -n "$RPC_WATCH" ]]; then

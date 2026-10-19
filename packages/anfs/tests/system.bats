@@ -18,6 +18,8 @@ setup() {
   mkdir -p "$HOME/.local/lib" "$HOME/.local/bin" "$HOME/.config/anfs" "$ST" "$tools" "$SOURCES"
   ln -s "$REPO/packages/anfs/home/.local/lib/anfs" "$HOME/.local/lib/anfs"
   for t in bash yq; do ln -s "$(command -v "$t")" "$tools/$t"; done
+  # implode unloads the toolkit API's listener: never the real launchctl or systemctl
+  for t in launchctl systemctl; do printf '#!/bin/sh\necho "%s $*" >> "%s/svc.calls"\n' "$t" "$BATS_TEST_TMPDIR" > "$tools/$t"; chmod +x "$tools/$t"; done
   export PATH="$tools:/usr/bin:/bin:/usr/sbin:/sbin"
   unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME ANFS_JSON
   unset PPM_STATE_HOME PCM_STATE_HOME PMM_STATE_HOME PSM_STATE_HOME WSM_STATE_HOME ANFS_STATE_HOME
