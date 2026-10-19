@@ -203,7 +203,7 @@ tart_build() {
   pid=$(_tart_run "$vm" "$log/boot.log")
   BUILD_PID="$pid"
   TART_BUILDING="$vm"
-  trap _tart_build_cleanup EXIT
+  anfs_on_exit _tart_build_cleanup
   trap 'exit 130' INT TERM
   ip=$(tart ip "$vm" --wait 180 2>/dev/null) || die "$vm got no address; see $(tilde "$log/boot.log")"
   echo "Booted ($ip); installing the image's key for $BOOT_USER"
@@ -235,7 +235,7 @@ tart_build() {
   echo "Shutting down"
   _tart_shutdown "$vm" "$pid" "$sshkey" "$ip"
   BUILD_PID=""
-  trap - EXIT INT TERM
+  anfs_on_exit ''; trap - INT TERM
   TART_BUILDING=""
   built=$(tart_vm_build "$name" "$key")
   tart delete "$built" >/dev/null 2>&1 || true

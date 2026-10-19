@@ -168,7 +168,7 @@ _build_qemu() {
   rm -rf "$BUILD_W"
   mkdir -p "$BUILD_W"
   BUILD_PART="$dir/$key.qcow2.part"
-  trap _build_cleanup EXIT
+  anfs_on_exit _build_cleanup
   trap 'exit 130' INT TERM
   port=$(free_port)
   echo "$port" > "$BUILD_W/port"
@@ -248,7 +248,7 @@ _build_qemu() {
   [[ -f "$vars" ]] && mv "$vars" "$dir/$key-efivars.fd"
   meta_write_build "$id" "$arch" "$key" "$parent"
   _build_cleanup
-  trap - EXIT INT TERM
+  anfs_on_exit ''; trap - INT TERM
   rm -f "$sock"
   echo "Built $id ($arch) in $(( $(date +%s) - start ))s: $(tilde "$dir/$key.qcow2")"
 }

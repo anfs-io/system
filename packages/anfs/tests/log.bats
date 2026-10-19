@@ -133,6 +133,22 @@ SH
   grep -q ' end: [0-9]*-[0-9]* 73$' "$LOG"
 }
 
+@test "anfs_on_exit inside a command: its cleanup runs and the end line is kept" {
+  sed -i.bak 's|^    fail) anfs_fail 73 "\$2" ;;$|    fail) anfs_fail 73 "\$2" ;;\n    tidy) anfs_on_exit "echo tidied >\&2"; anfs_fail 73 "\$2" ;;|' "$TOOL"
+  grep -q 'tidy)' "$TOOL"
+  run "$TOOL" say tidy z
+  [ "$status" -eq 73 ]
+  [[ "$output" == *tidied* ]]
+  grep -q ' end: [0-9]*-[0-9]* 73$' "$LOG"
+}
+
+@test "anfs_on_exit before logging starts is a plain EXIT trap, and '' clears it" {
+  run bash -c "source '$LIB/log.sh'; anfs_on_exit 'echo bye'; true"
+  [ "$output" = bye ]
+  run bash -c "source '$LIB/log.sh'; anfs_on_exit 'echo bye'; anfs_on_exit ''; true"
+  [ -z "$output" ]
+}
+
 @test "anfs_confirm without a terminal and without -y exits 77, message unchanged" {
   cat >> "$TOOL.ask" <<SH
 #!/usr/bin/env bash

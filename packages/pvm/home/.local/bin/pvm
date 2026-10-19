@@ -39,6 +39,9 @@ source "$ANFS_LIB/bash.sh"
 source "$ANFS_LIB/paths.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/log.sh"
+# anfs_on_exit is log.sh's since 2026-10-19; an older installed lib gets a plain EXIT trap
+declare -F anfs_on_exit >/dev/null ||
+  anfs_on_exit() { if [[ -n "$1" ]]; then trap "$1" EXIT; else trap - EXIT; fi; }
 # shellcheck source=/dev/null
 source "$ANFS_LIB/cli.sh"
 # shellcheck source=/dev/null
@@ -238,7 +241,7 @@ _lock_try() {
   done
   printf '%(%s)T\n' -1 > "$PVM_LOCK/created" 2>/dev/null || true
   PVM_LOCK_HELD=true
-  trap _lock_release EXIT
+  anfs_on_exit _lock_release
   trap '_lock_release; exit 130' INT TERM HUP
 }
 
@@ -686,8 +689,7 @@ cmd_show() {
   # environment string may be
   local tmp space
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/pvm-show.XXXXXX")
-  # shellcheck disable=SC2064
-  trap "rm -rf '$tmp'" EXIT
+  anfs_on_exit "rm -rf '$tmp'"
   _fm_block "$D_PATH" > "$tmp/fm.yml"
   _doc_body "$D_PATH" > "$tmp/body"
   [[ -s "$tmp/fm.yml" ]] || echo '{}' > "$tmp/fm.yml"

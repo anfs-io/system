@@ -44,7 +44,7 @@ _ob_state()  { _ob_set _state "$1"; }
 _ob_facts_start() {
   local key
   OB_FACTS=$(mktemp "${TMPDIR:-/tmp}/anfs-onboard.XXXXXX")
-  trap 'rm -f "$OB_FACTS"' EXIT
+  anfs_on_exit 'rm -f "$OB_FACTS"'
   for key in "${!CLI_OPT[@]}"; do
     _ob_set "opt.$key" "${CLI_OPT[$key]}"
   done

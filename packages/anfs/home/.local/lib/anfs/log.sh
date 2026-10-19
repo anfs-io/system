@@ -31,7 +31,7 @@
 #
 # The end line comes from an EXIT trap anfs_log_start sets, run before the one the tool had set
 # by then (ppm's and wsm's are set when their files are sourced). A tool that sets its own EXIT
-# trap later, inside a command, replaces it: that run has no end line.
+# trap later, inside a command, uses anfs_on_exit instead, so the end line is kept.
 #
 # Like everything in lib/anfs/ but bash.sh: functions only, no tool's code, the bash floor (5.2).
 
@@ -96,6 +96,16 @@ anfs_log_start() {
 }
 
 _anfs_trap_grab() { _ANFS_EXIT_PREV="${2:-}"; }
+
+# A tool's own cleanup on exit, run after the end line: use it instead of `trap ... EXIT`, which
+# would replace the end line (and with it watch's end event). '' clears it. Before anfs_log_start
+# (a library sourced on its own, as the bats suites do) it is a plain EXIT trap.
+# Usage: anfs_on_exit 'rm -f "$tmp"'
+anfs_on_exit() {
+  _ANFS_EXIT_PREV="$1"
+  [[ -z "${_ANFS_LOG_STARTED:-}" ]] || return 0
+  if [[ -n "$1" ]]; then trap "$1" EXIT; else trap - EXIT; fi
+}
 
 # The EXIT trap: `end: <id> <exit>`, then the tool's own trap. Not from a subshell (BASHPID),
 # which would log a second end. The exit status stays the tool's.
