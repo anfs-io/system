@@ -25,7 +25,7 @@ setup() {
 @test "remove: without a terminal it needs -y, and deletes nothing" {
   mkdir -p "$PCM_VOLUMES_HOME/app"
   run cmd_remove app < /dev/null
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 77 ]
   [[ "$output" == *"pass -y"* ]]
   [ -d "$PCM_VOLUMES_HOME/app" ]
 }

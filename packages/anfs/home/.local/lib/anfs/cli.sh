@@ -80,6 +80,9 @@ declare -gA CLI_OPT=()
 CLI_POS=()
 # Exit status for an unknown command or a misused one: 64, EX_USAGE
 CLI_EX_USAGE="${CLI_EX_USAGE:-64}"
+# "This needs a person at a terminal": a confirm with no terminal and no -y, sudo that cannot run
+# unattended. `anfs rpc` reports it as needs: terminal.
+CLI_EX_TERMINAL=77
 # The command cli_dispatch is running, for cli_usage_err
 CLI_COMMAND=""
 # Top-level name -> the help section it is listed under (cli_section); the sections in order
@@ -423,14 +426,15 @@ cli_dispatch() {
 
 # Ask before something that cannot be undone, the same way in every tool. True at once with
 # -y/--yes (CLI_OPT[yes]). Without a terminal there is nobody to ask: it says what would have
-# happened and to pass -y, and exits 1. Anything but a y exits 1 too, with "nothing done".
+# happened and to pass -y, and exits 77 (CLI_EX_TERMINAL). Anything but a y exits 1, with
+# "nothing done".
 # Usage: anfs_confirm "<what this does>" "<the question>"
 anfs_confirm() {
   local answer
   ! ${CLI_OPT[yes]:-false} || return 0
   if [[ ! -t 0 ]]; then
     echo "$CLI_TOOL: $1; pass -y to confirm without a terminal" >&2
-    exit 1
+    exit "$CLI_EX_TERMINAL"
   fi
   read -r -p "$2 [y/N] " answer
   [[ "$answer" == [yY]* ]] && return 0

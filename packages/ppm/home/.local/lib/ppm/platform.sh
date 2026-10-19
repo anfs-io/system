@@ -148,7 +148,8 @@ system_pkg_install() {
   esac
 }
 
-# Get sudo credentials with a normal prompt; on failure report what an admin has to do.
+# Get sudo credentials with a normal prompt; on failure report what an admin has to do. With no
+# terminal and no SUDO_ASKPASS it exits 77 instead of prompting.
 # Returns 0 with the credential cache primed, so the caller's real command can use `sudo -n` and
 # never block an unattended install. $2 overrides the failure message for callers that need root
 # for something other than a package install (stack/bash registers brew's bash in /etc/shells).
@@ -157,11 +158,25 @@ _system_sudo() {
   local msg="${2:-Installing system packages needs sudo; ask an admin to install: $what}"
   # Not just primed once: every brew command resets sudo's cached credentials, so a hook after the
   # brew phase authenticates again (SUDO_ASKPASS, like Homebrew's own scripts, for unattended runs)
-  if command -v sudo >/dev/null 2>&1 && { sudo -n true 2>/dev/null || sudo ${SUDO_ASKPASS:+-A} -v; }; then
-    return 0
+  if command -v sudo >/dev/null 2>&1; then
+    sudo -n true 2>/dev/null && return 0
+    # Nobody to type a password and no askpass: exit 77, "needs a terminal" (anfs rpc's
+    # needs: terminal), rather than a prompt nobody sees
+    if [[ -z "${SUDO_ASKPASS:-}" ]] && ! _system_terminal; then
+      ppm_fail "$msg (it needs sudo: run it in a terminal, or set SUDO_ASKPASS)"
+      exit 77
+    fi
+    sudo ${SUDO_ASKPASS:+-A} -v && return 0
   fi
   ppm_fail "$msg"
   return 1
+}
+
+# True when a person can answer sudo: stdin is a terminal, or there is one to open (sudo asks on
+# /dev/tty). A run under `anfs rpc` (ANFS_RPC) never has one.
+_system_terminal() {
+  [[ -z "${ANFS_RPC:-}" ]] || return 1
+  [[ -t 0 ]] || { : </dev/tty; } 2>/dev/null
 }
 
 # Brew formulas from the arguments that are not installed (tap-qualified names match their last part)

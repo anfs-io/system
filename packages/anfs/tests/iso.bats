@@ -372,7 +372,7 @@ EOF
   iso pull debian
   echo stray > "$STORE/stray.iso"; echo sum > "$STORE/stray.iso.sha256"; echo half > "$STORE/gone.iso.part"
   run iso prune </dev/null
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 77 ]
   [[ "$output" == *"stray.iso"* ]]
   [[ "$output" == *"pass -y"* ]]
   [ -f "$STORE/stray.iso" ] && [ -f "$STORE/gone.iso.part" ]
@@ -468,7 +468,7 @@ EOF
   iso add https://x/debian.iso
   iso pull debian
   run iso remove mine debian </dev/null
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 77 ]
   [[ "$output" == *"mine.iso"*"no url"* ]]
   [[ "$output" == *"pass -y"* ]]
   [ -f "$STORE/mine.iso" ] && [ -f "$STORE/debian.iso" ]
