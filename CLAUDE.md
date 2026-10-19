@@ -1206,7 +1206,12 @@ so they are present before `ppm` first runs.
 
 ### Testing
 
-Unit tests are bats, no network (local bare repos over file://):
+Unit tests are bats, no network (local bare repos over file://). The whole set, several files at
+once, is `packages/anfs/tests/all` (about 30 s); while working, run only the file you touch.
+
+**pmm's and pcm's suites are off until further notice** (2026-10-19): too slow to run on every
+change. Their helpers skip every test and `tests/all` leaves them out; the person runs them by
+hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
 bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, bash.sh (the floor, the bootstrap set),

@@ -5,6 +5,7 @@
 # Usage: packages/anfs/tests/all [-j N] [tool...]   (default: every tool; N: the CPUs less two)
 # Prints one line per file as it finishes, then the failing tests' output; exits 1 if any failed.
 # Nothing here boots a VM or a box: the e2e scripts and the round trips are not bats files.
+# pmm and pcm are left out until further notice; ANFS_TESTS_PMM_PCM=1 puts them back.
 set -euo pipefail
 # the bash floor, from this tree (mapfile and the rest need 5)
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../home/.local/lib/anfs/bash.sh"
@@ -24,6 +25,18 @@ if (( $# )); then
   done
 else
   files=("$repo/packages/"*/tests/*.bats)
+fi
+# pmm's and pcm's suites are off until further notice (their helpers skip them too); the person
+# runs them by hand with ANFS_TESTS_PMM_PCM=1
+off=""
+if [[ "${ANFS_TESTS_PMM_PCM:-}" != 1 ]]; then
+  kept=()
+  for f in "${files[@]}"; do
+    case "$f" in "$repo"/packages/pmm/tests/*|"$repo"/packages/pcm/tests/*) ;; *) kept+=("$f") ;; esac
+  done
+  (( ${#kept[@]} )) || { echo "all: pmm and pcm tests are off (ANFS_TESTS_PMM_PCM=1 runs them)" >&2; exit 0; }
+  (( ${#kept[@]} == ${#files[@]} )) || off=" (pmm and pcm off)"
+  files=("${kept[@]}")
 fi
 
 # the slow files first (pmm's build and machine files take a minute or two), so the run is not
@@ -72,5 +85,5 @@ if (( fail )); then
   done
 fi
 echo
-echo "$pass passed, $fail failed, ${#files[@]} files, $jobs at a time, $(( $(date +%s) - t0 ))s"
+echo "$pass passed, $fail failed, ${#files[@]} files${off}, $jobs at a time, $(( $(date +%s) - t0 ))s"
 (( fail == 0 ))

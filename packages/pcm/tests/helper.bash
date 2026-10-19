@@ -1,6 +1,12 @@
 # Shared setup for pcm's bats tests: pcm's libs sourced from this checkout, every PCM_* dir in
 # the test temp dir, and podman stubbed out (tests never touch a real engine).
 
+# Off until further notice (2026-10-19): pcm's suites are too slow to run on every change. The
+# person runs them by hand (ROADMAP.md, "Last"); ANFS_TESTS_PMM_PCM=1 turns them back on.
+setup_file() {
+  [[ "${ANFS_TESTS_PMM_PCM:-}" == 1 ]] || skip "pcm tests are off (ANFS_TESTS_PMM_PCM=1 runs them)"
+}
+
 PCM_PKG="$BATS_TEST_DIRNAME/.."
 ANFS_LIB="${ANFS_LIB:-$PCM_PKG/../anfs/home/.local/lib/anfs}"
 

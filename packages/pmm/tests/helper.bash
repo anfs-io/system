@@ -2,6 +2,12 @@
 # pmm's libraries sourced directly, and stubs (tests/stubs) first on PATH so nothing boots a VM or
 # touches the network: qemu, qemu-img, ssh, bsdtar, socat, tart, virsh. Stubs log each call to
 # $PMM_CALLS.
+
+# Off until further notice (2026-10-19): pmm's suites are too slow to run on every change. The
+# person runs them by hand (ROADMAP.md, "Last"); ANFS_TESTS_PMM_PCM=1 turns them back on.
+setup_file() {
+  [[ "${ANFS_TESTS_PMM_PCM:-}" == 1 ]] || skip "pmm tests are off (ANFS_TESTS_PMM_PCM=1 runs them)"
+}
 #
 # There is one catalogue per process (lib/anfs/catalog.sh), so a suite is set up for machines
 # (setup_pmm) or for images (setup_images). What a machine suite needs of an image is a build:
