@@ -65,17 +65,17 @@ setup() {
   [ "$status" -eq 1 ]
 }
 
-@test "list: CONTAINER STATUS, sorted by name then priority, shadowed marked" {
+@test "list: CONTAINER STATUS VERSION, sorted by name then priority, shadowed marked" {
   # On a terminal (lib/anfs/table.sh): headers and aligned columns
   ANFS_TABLE=aligned run cmd_list
-  [ "${lines[0]}" = "CONTAINER   STATUS" ]
-  [ "${lines[1]}" = "local/mine  -" ]
-  [ "${lines[2]}" = "a/only-a    -" ]
-  [ "${lines[3]}" = "a/postgres  -" ]
-  [ "${lines[4]}" = "b/postgres  shadowed" ]
+  [ "${lines[0]}" = "CONTAINER   STATUS    VERSION" ]
+  [ "${lines[1]}" = "local/mine  -         -" ]
+  [ "${lines[2]}" = "a/only-a    -         -" ]
+  [ "${lines[3]}" = "a/postgres  -         -" ]
+  [ "${lines[4]}" = "b/postgres  shadowed  -" ]
   # Piped: the rows, tab-separated
   run cmd_list
-  [ "${lines[0]}" = "local/mine"$'\t'"-" ]
+  [ "${lines[0]}" = "local/mine"$'\t'"-"$'\t'"-" ]
   [ "${#lines[@]}" -eq 4 ]
 }
 
@@ -93,8 +93,8 @@ setup() {
     echo '[{"Id":"1","Names":["postgres_db_1"],"State":"running","Status":"Up","Labels":{"io.pcm.id":"b/postgres"}}]'
   }
   run cmd_list
-  [ "${lines[2]}" = "a/postgres"$'\t'"-" ]
-  [ "${lines[3]}" = "b/postgres"$'\t'"running, shadowed" ]
+  [ "${lines[2]}" = "a/postgres"$'\t'"-"$'\t'"-" ]
+  [ "${lines[3]}" = "b/postgres"$'\t'"running, shadowed"$'\t'"-" ]
 }
 
 @test "list takes no options: an unknown one is a usage error, not ignored" {

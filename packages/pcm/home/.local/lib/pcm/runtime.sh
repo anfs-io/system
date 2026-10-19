@@ -103,6 +103,7 @@ compose_flags() {
         printf '    networks:\n      - default\n      - %s\n' "$network"
       fi
       _override_mount_sets "$service" "$key"
+      _override_memory "$service"
       _override_snapshot_image "$service" "$key"
     done < <(yq eval '.services | keys | .[]' "$file")
     [[ -n "$network" ]] && printf 'networks:\n  default: {}\n  %s:\n    external: true\n' "$network"

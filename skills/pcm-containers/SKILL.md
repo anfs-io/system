@@ -43,6 +43,7 @@ both, several compose services), `dockge` (extra allowed mount).
 | File | Required | Purpose |
 |------|----------|---------|
 | `compose.yml` | yes | The compose project, plus the `x-pcm` block |
+| `container.yml` | yes (validate warns without it) | `version: 0.1.0`, and when known `description`, `upstream` (the image or base it is built from), `license`, `url`, `memory` (`512m`: what it needs, also its limit; don't set `mem_limit` in compose). No other keys |
 | `.env.schema` | if `compose.yml` uses any `${VAR}` | Declares every variable, with type and default |
 | `provision` | no, executable | Hook other definitions call when they depend on this one |
 | `deprovision` | with `provision`, if it creates anything | Undoes `provision` when a dependent is removed |

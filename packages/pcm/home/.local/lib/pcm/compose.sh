@@ -37,6 +37,8 @@ compose_command() {
       anfs_warn "not starting ${services[*]}: validation failed with $VALIDATE_ERRORS error(s)"
       return 1
     fi
+    # Room for what starts: memory: (container.yml), against the host or the podman machine
+    check_memory "${CLOSURE[@]}" || return 1
     # Nothing elevated starts unannounced: each privilege, with the reason it was declared
     local key reason
     for arg in "${CLOSURE[@]}"; do

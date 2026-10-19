@@ -365,6 +365,7 @@ validate_services() {
   VALIDATE_ERRORS=0
   for svc in "$@"; do
     check_env "$svc"
+    check_manifest "$svc"
     check_project_name "$svc"
     check_volumes "$svc"
     check_privileges "$svc"

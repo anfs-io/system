@@ -24,7 +24,8 @@ is_service() {
   canon "$1" >/dev/null
 }
 
-# `pcm list`: CONTAINER (source/name) STATUS, by name then priority. STATUS: running or stopped when that
+# `pcm list`: CONTAINER (source/name) STATUS VERSION, by name then priority. VERSION is
+# container.yml's (- without one); --json also has its description, upstream, license, url, memory. STATUS: running or stopped when that
 # definition's containers exist (from the io.pcm.id label), shadowed when a higher-priority
 # source defines the name. Blank STATUS if podman is unreachable; list never fails on it.
 # A tool that wants the names reads `pcm list --json` (lib/anfs/table.sh).
@@ -68,15 +69,17 @@ cmd_list() {
       *" $id=stopped "*) status=stopped ;;
     esac
     [[ "$winner" != "$id" ]] && status="${status:+$status, }shadowed"
-    # sort key: name, then priority index
-    rows+="$(svc_name "$id")|$(printf '%04d' "$i")|$(svc_src "$id")|$status"$'\n'
+    manifest_fields "$id"
+    # sort key: name, then priority index; the manifest's fields joined as the table joins a row
+    rows+="$(svc_name "$id")|$(printf '%04d' "$i")|$(svc_src "$id")|$status|$(IFS="$ANFS_US"; echo "${MANIFEST[*]}")"$'\n'
   done
 
   # The table is anfs's (lib/anfs/table.sh): aligned on a terminal, --json for a tool that reads it
-  local name _prio src
-  while IFS='|' read -r name _prio src status; do
-    [[ -z "$name" ]] || anfs_row "$src/$name" "$status"
-  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) | anfs_table "CONTAINER STATUS" "container status"
+  local name _prio src fields
+  while IFS='|' read -r name _prio src status fields; do
+    [[ -z "$name" ]] || printf '%s%s%s%s%s\n' "$src/$name" "$ANFS_US" "$status" "$ANFS_US" "$fields"
+  done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) |
+    anfs_table "CONTAINER STATUS VERSION" "container status version description upstream license url memory"
 }
 
 cmd_path() {

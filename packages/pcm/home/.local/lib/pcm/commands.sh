@@ -2,7 +2,7 @@
 # pcm library: the commands, declared (lib/anfs/cli.sh). Usage lines, help, the check of what was
 # typed and tab completion all come from here. Sourced by ~/.local/bin/pcm, and by the tests.
 
-cli_cmd list "Services: CONTAINER STATUS (running, stopped, shadowed)" --alias ls
+cli_cmd list "Services: CONTAINER STATUS (running, stopped, shadowed) VERSION" --alias ls
 cli_cmd show "Definition, dependencies, data, containers, ports and mounts
 (declared ones when nothing is created)" --arg "service"
 cli_cmd path "Print the path of a service definition" --arg "service"
@@ -30,6 +30,10 @@ cli_cmd reset "Recreate the service from a snapshot, or from its definition
 with fresh data; replaces its data" --opt "-y --yes: Do not ask" --arg "service" --arg "[snapshot]"
 cli_cmd validate "Check services against pcm conventions (all if none given);
 \`up\` runs it before starting anything" --arg "[service...]"
+cli_group machine "The podman machine containers run in (macOS)"
+cli_cmd "machine resize" "Stop, resize and start the podman machine; no size is what
+runs needs (container.yml memory:) plus headroom. Confirms when containers run" \
+  --opt "-y --yes: Do not ask" --arg "[size]"
 cli_cmd implode "Delete every container, network, volume and directory pcm
 created, whichever definition it came from" --opt "-y --yes: Do not ask"
 cli_standard

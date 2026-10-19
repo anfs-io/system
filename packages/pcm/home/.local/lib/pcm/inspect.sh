@@ -97,6 +97,13 @@ cmd_show() {
   [[ -d "$data" ]] && size=$(du -sh "$data" 2>/dev/null | cut -f1)
 
   printf '%s  %s\n' "$id" "$(tilde "$dir")"
+  local mk mi=0
+  manifest_fields "$id"
+  for mk in $PCM_MANIFEST_KEYS; do
+    [[ -n "${MANIFEST[$mi]}" ]] && printf '  %-12s %s\n' "$mk" "${MANIFEST[$mi]}"
+    [[ "$mk" == version && -z "${MANIFEST[$mi]}" ]] && printf '  %-12s %s\n' version "- (no container.yml)"
+    mi=$((mi + 1))
+  done
   local status="unknown (podman unreachable)"
   $reachable && status="${state:-not created}${from:+ from $from}"
   printf '  %-12s %s\n' status "$status"

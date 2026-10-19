@@ -111,6 +111,38 @@ resources:
 - Re-running `install` installs what is missing and updates the record; it never flips `before`
   from true to false.
 
+## pcm: containers
+
+A service is a directory, `containers/<name>/`, with a `compose.yml` (plain compose plus the
+`x-pcm` block) and, beside it, its manifest `container.yml`, as a package has `package.yml`:
+
+```yaml
+version: 0.1.0                              # bumped by the pre-commit hook (anfs-dev/dev)
+description: Postgres, for the services that need a database
+upstream: docker.io/library/postgres:17     # what it is built from (attribution)
+license: PostgreSQL
+url: https://www.postgresql.org
+memory: 512m                                # what it needs; also its limit
+```
+
+- Every key but `version` is optional; an unknown key is a `pcm validate` error. Nothing anfs
+  needs goes into `compose.yml`: it stays plain compose (`x-pcm` aside). A service without a
+  `container.yml` is still valid (version `-`), with a warning. Leave a field out rather than
+  guess it.
+- `pcm list` has `VERSION`; its `--json` adds `version`, `description`, `upstream`, `license`,
+  `url`, `memory`. `pcm show` prints the fields.
+- **`memory:` is the limit**: pcm's override sets it as every compose service's `mem_limit`,
+  whatever compose says, and validate errors when compose sets a different `mem_limit`.
+- **`pcm up` checks there is room**, adding up `memory:` (a service without one counts 0):
+  on Linux what starts against the host's available memory (`free`); on macOS what runs plus
+  what starts against the podman machine's memory. On macOS with too little and nothing
+  running, pcm resizes the machine (stop, `set --memory`, start) to the sum plus
+  `PCM_MACHINE_HEADROOM` (MiB, default 1024), and says so; with something running it refuses
+  (exit 1) with the numbers, the containers a resize would stop, and `pcm machine resize <size>`.
+  Nothing shrinks the machine. `pcm machine resize [size]` does it by hand: no size is what runs
+  needs plus headroom; it confirms when containers run (`-y`).
+- The code is `lib/pcm/manifest.sh`.
+
 ## pmm: machines
 
 pmm is the one tool for machines: it runs them, and `pmm image ...` builds what they run from

@@ -58,6 +58,23 @@ Only one service of a name runs at a time; `source/name` picks which definition.
 Any compose subcommand also works via the podman wrapper in pcm.zsh:
   podman compose --pcm logs -f postgres
 
+Manifest: a service's container.yml beside its compose.yml says what it is
+
+  version: 0.1.0
+  description: Postgres, shared by the services that need a database
+  upstream: docker.io/library/postgres:17   # what it is built from
+  license: PostgreSQL
+  url: https://www.postgresql.org
+  memory: 512m                              # what it needs; also its limit
+
+Every key but version is optional; an unknown one is a validate error. memory:
+is each of its containers' limit whatever compose says (a different mem_limit
+is an error), and `pcm up` checks there is room for it: on Linux in the host's
+available memory, on macOS in the podman machine beside what already runs. A
+machine with nothing running is resized to fit (plus PCM_MACHINE_HEADROOM MiB,
+default 1024); with something running pcm refuses, naming what a resize would
+stop: `pcm machine resize [size]` does it. Nothing shrinks the machine.
+
 Dependencies: a service's compose.yml may declare other pcm services it needs
 
   x-pcm:
