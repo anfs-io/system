@@ -3,7 +3,7 @@
 
 command -v anfs >/dev/null 2>&1 || return 0
 
-# anfs installs packages too (anfs install <source>), and a src update can bring new shell files,
+# anfs installs packages too (anfs install <stack>, anfs src install <source>), and a src update can bring new shell files,
 # so both reload the shell like ppm install does. _ppm_shell_reload comes from ppm's per-shell file.
 # `anfs <resource> ...` is the tool's line, through the tool's own shell function when it has one
 # (ppm's cd and reload, wsm's and pmm's cd); a tool that is not installed goes to anfs, which says
@@ -31,7 +31,8 @@ anfs() {
   fi
   command anfs "$@"
   local ret=$?
-  if [ $ret -eq 0 ] && { [ "${1:-}" = install ] || { [ "${1:-}" = src ] && [ "${2:-}" = update ]; }; }; then
+  if [ $ret -eq 0 ] && { [ "${1:-}" = install ] || [ "${1:-}" = remove ] || [ "${1:-}" = rm ] ||
+       { [ "${1:-}" = src ] && { [ "${2:-}" = update ] || [ "${2:-}" = install ]; }; }; }; then
     command -v _ppm_shell_reload >/dev/null 2>&1 && _ppm_shell_reload
   fi
   return $ret

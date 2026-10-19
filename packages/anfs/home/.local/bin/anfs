@@ -7,14 +7,17 @@
 #   machines/    pmm   machines, the images they run from and the networks they are on
 #   skills/      psm   agent skills
 #   spaces/      wsm   workspaces
-# and the tools each read their own directory of every source. anfs adds the commands that span
-# them all: install a whole source, and implode the whole toolkit.
+#   stacks/      anfs  stacks: manifests of the others, applied together (lib/anfs/stacks.sh)
+# and the tools each read their own directory of every source. anfs's own resource is the stack;
+# it adds the commands that span the tools: install a whole source, and implode the whole toolkit.
 #
 # Commands:
 #   src <add|remove|list|ssh|update>   the source lists (~/.config/anfs/{user,system}.list)
 #   iso <list|show|pull|add|...>       the ISO catalogue and store (lib/anfs/iso.sh; pmm and
 #                                      ventoy have the same group)
-#   install [-y] <source>...           every resource of each source, tool by tool
+#   list | show | install | remove | path   stacks (lib/anfs/stacks.sh): the manifest, applied
+#                                      tool by tool, and its record for remove
+#   src install [-y] <source>...       every resource of each source, tool by tool
 #   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
 #                                      your own repo, and the steps installed packages bring
 #                                      (lib/anfs/onboard.sh; the contract is lib/ppm/onboard.sh)
@@ -48,6 +51,10 @@ done
 source "$ANFS_LIB/sources.sh"
 anfs_gitsrc_env
 # shellcheck source=/dev/null
+source "$ANFS_LIB/resolve.sh"
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/stacks.sh" ]]; then source "$ANFS_LIB/stacks.sh"; fi
+# shellcheck source=/dev/null
 if [[ -f "$ANFS_LIB/iso.sh" ]]; then source "$ANFS_LIB/iso.sh"; fi
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below
@@ -66,10 +73,25 @@ cli_cmd "src update" "Clone missing sources and pull the others (local paths are
 never pulled)" --arg "[source...]"
 # The iso group is lib/anfs/iso.sh's, the same in every tool that uses ISOs
 ! declare -F anfs_iso_cli >/dev/null || anfs_iso_cli
-cli_cmd install "Install everything a source holds: its packages (ppm),
+cli_cmd "src install" "Install everything a source holds: its packages (ppm),
 containers (pcm), machines (pmm), skills (psm)
 and spaces (wsm), in that order. To pick single resources use the
 tool itself." --opt "-y --yes: Do not ask" --arg "source..."
+# Stacks, anfs's own resource (lib/anfs/stacks.sh)
+cli_cmd list "Every stack in every source: STACK STATUS VERSION (installed, partial, -)" --alias ls
+cli_cmd show "A stack's resources through the stacks it depends on, in install
+order: declared and actual status, and the stack that brought each in" --arg "stack"
+cli_cmd install "Install stacks: the stacks they depend on, then packages, skills,
+vaults, spaces, containers and machines, each kind by its tool,
+then the status: entries. Recorded, for remove." \
+  --opt "-y --yes: Do not ask" \
+  --opt "-t --target TARGET: Where: host (the default; the only one for now)" \
+  --opt "--build: Only what belongs in an image: packages and skills" --arg "stack..."
+cli_cmd remove "Undo stacks: what their install put here that was not here before
+and no other installed stack holds, in reverse order" --alias rm \
+  --opt "-y --yes: Do not ask" \
+  --opt "-t --target TARGET: Where: host (the default; the only one for now)" --arg "stack..."
+cli_cmd path "Print a stack's directory" --arg "stack"
 # A step's options are declared by the package that owns it (package.yml onboard.options), so
 # they are read only when the line is about onboard: one yq over the sources' package.yml files
 _onboard_opts=()
@@ -255,12 +277,27 @@ cmd_src_update() { gitsrc_update "$@"; }
 # What cli.sh asks for on a tab press (complete_<kind>)
 complete_source() { gitsrc_collect 2>/dev/null; printf '%s\n' "${GITSRC_NAMES[@]}"; }
 complete_tool()   { printf '%s\n' $ANFS_TOOLS; }
+complete_stack()  { anfs_sources stacks 2>/dev/null; anfs_list stacks; }
 
+# Stacks: the work is lib/anfs/stacks.sh's
+cmd_list()    { _need_lib stack_list stacks.sh; stack_list; }
+cmd_show()    { _need_lib stack_show stacks.sh; stack_show "$1"; }
+cmd_path()    { _need_lib stack_path stacks.sh; stack_path "$1"; }
 cmd_install() {
+  _need_lib stack_install stacks.sh
+  gitsrc_update_stale >/dev/null 2>&1 || true
+  stack_install "${CLI_OPT[yes]:-false}" "${CLI_OPT[build]:-false}" "${CLI_OPT[target]:-}" "$@"
+}
+cmd_remove() {
+  _need_lib stack_remove stacks.sh
+  stack_remove "${CLI_OPT[yes]:-false}" "${CLI_OPT[target]:-}" "$@"
+}
+
+cmd_src_install() {
   local yes=${CLI_OPT[yes]:-false} arg
   local -a srcs=()
   for arg in "$@"; do
-    [[ "$arg" != */* ]] || die "install takes whole sources ('${arg%%/*}'); for one resource use the tool: ${ANFS_TOOLS// /|} install $arg"
+    [[ "$arg" != */* ]] || die "src install takes whole sources ('${arg%%/*}'); for one resource use the tool: ${ANFS_TOOLS// /|} install $arg"
     srcs+=("$arg")
   done
 
