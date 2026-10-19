@@ -49,7 +49,7 @@ vaults: [lgat/dev]
 spaces:
   - lgat/: { status: installed }         # installed|cloned
 containers:
-  - core/anfs-ui: { status: running }    # running|stopped
+  - core/ui: { status: running }         # running|stopped
 machines: []                             # running|stopped
 ```
 
@@ -74,7 +74,7 @@ machines: []                             # running|stopped
 | `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
 
 **`system`** (`stacks/system/stack.yml`) is the toolkit: `core/anfs`, `ppm`, `pcm`, `psm`, `wsm`
-and `podman`, `node`, `varlock`. `install.sh` ends with `anfs install system -y` (then any extra
+and `podman`, `node`, `varlock`, and the dashboard container `core/ui` (no `status:`). `install.sh` ends with `anfs install system -y` (then any extra
 packages). pmm, qemu and pvm are not in it: `ppm install core/pmm`. `anfs implode`, in order:
 every other installed stack removed (last installed first, from the records' `installed_at`), each
 installed tool's implode but ppm's (wsm psm pmm pcm; a tool that is not installed is never
@@ -158,6 +158,9 @@ memory: 512m                                # what it needs; also its limit
   Nothing shrinks the machine. `pcm machine resize [size]` does it by hand: no size is what runs
   needs plus headroom; it confirms when containers run (`-y`).
 - The code is `lib/pcm/manifest.sh`.
+- Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
+  `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
+  port on `127.0.0.1` only.
 
 ## pmm: machines
 
@@ -541,7 +544,8 @@ This repo (`core/`) contains:
 - `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
   `packages/qemu` is pmm's, installed with it
 - `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
-  `core/wsm` and `podman`, `node`, `varlock`. Not pmm, qemu or pvm (`ppm install core/pmm`)
+  `core/wsm` and `podman`, `node`, `varlock`, and the container `core/ui`. Not pmm, qemu or pvm
+  (`ppm install core/pmm`)
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
 - dev/test tooling (`anfs work`, `anfs hooks` and the git hooks, `ppm container`, `ppm vm`, `ppm
@@ -551,8 +555,13 @@ This repo (`core/`) contains:
 - `isos/isos.yml` — the ISOs the base images install from: the catalogue entries their `image.yml`
   names by id, each with a pinned sha256 (`pmm iso pull`)
 - `machines/images/` — the base VM images (`debian-13`, `fedora-44`), each with its answer file,
-  steps, test and README; other sources build on them with `from:`. Core has no `containers/` and
-  no machine definitions: the test boxes are anfs-dev's
+  steps, test and README; other sources build on them with `from:`. Core has no machine
+  definitions: the test boxes are anfs-dev's
+- `containers/ui/` — anfs-ui, the toolkit's dashboard (Roda, Phlex, Puma), a pcm service in the
+  `system` stack. Its `Containerfile` has a `dev` target (Ruby and the gems; compose mounts the
+  directory read-only at `/app` and `views/` reload) and a `release` one (the source copied in).
+  Its own suite: `cd containers/ui && bundle exec rspec && bundle exec rubocop`. In a container it
+  reaches no tool until the toolkit API exists (docs `units/toolkit-api.md`); its panels say so
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
