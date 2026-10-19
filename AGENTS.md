@@ -170,7 +170,7 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
 - The code is `lib/pcm/manifest.sh`.
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
-  port on `127.0.0.1` only; `toolkit: write`.
+  port on `127.0.0.1` unless its `.env.schema`'s `ANFS_UI_BIND` says otherwise; `toolkit: write`.
 
 ## pmm: machines
 

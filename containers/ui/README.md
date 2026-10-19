@@ -11,6 +11,22 @@ pcm up ui               # http://localhost:9292 (bound to 127.0.0.1 only)
 pcm restart ui          # after an edit outside views/
 ```
 
+Where it listens is `.env.schema` (`varlock load --path .` checks it). Overrides go in `~/.config/pcm/env/ui.env`, then `pcm restart ui`:
+
+```sh
+# every interface: the LAN can reach it. There is no login, so name what you browse to
+ANFS_UI_BIND=0.0.0.0
+ANFS_UI_HOSTS=mymac.local,192.168.1.20
+# or one address only (the Mac's LAN IP, a tailscale IP): ANFS_UI_BIND=100.64.0.7
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ANFS_UI_BIND` | `127.0.0.1` | Host address the port is published on; on macOS podman's VM forwards it to the host |
+| `ANFS_UI_PORT` | `9292` | Host port (the container's is 9292) |
+| `ANFS_UI_HOSTS` | none | Names and IPs you browse to, when not localhost |
+| `ANFS_UI_REMOTE_ACTIONS` | `0` | `1` lets other machines run commands. No login, and the container holds the toolkit's write grant |
+
 Or on the host, for quick work on it with the tools reachable:
 
 ```sh
@@ -38,7 +54,7 @@ Gems are in the image (`/usr/local/bundle`) and puma writes only under `/tmp`, s
 | `ANFS_RPC_URL` | none | The toolkit API: `tcp://host:port` or `unix:///path`. Set, it replaces `ANFS_BIN` and `anfs.log` |
 | `ANFS_RPC_TOKEN` | none | Sent as the first line, `{"token":"..."}` (the macOS listener) |
 | `ANFS_BIN` | `~/.local/bin` | Where the tools are without `ANFS_RPC_URL`; when one is not there its panel says the tools are not reachable |
-| `ANFS_UI_HOSTS` | none | Extra host names to answer to, comma-separated |
+| `ANFS_UI_HOSTS` | none | Extra host names to answer to, comma-separated (required whenever it is reached by another name) |
 | `ANFS_UI_REMOTE_ACTIONS` | off | `1` lets other machines run commands, not only view. There is no login |
 
 ## Test

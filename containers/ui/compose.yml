@@ -1,6 +1,8 @@
 # anfs-ui — the toolkit's dashboard (Roda, Phlex, Puma).
 #
-# pcm service: `pcm up ui`, then http://localhost:9292. Built from the Containerfile's dev target:
+# pcm service: `pcm up ui`, then http://localhost:9292. Every variable, with its default, lives
+# in .env.schema: ANFS_UI_BIND and ANFS_UI_PORT say where it is published (127.0.0.1:9292),
+# ANFS_UI_HOSTS and ANFS_UI_REMOTE_ACTIONS who may use it. Built from the Containerfile's dev target:
 # Ruby and the gems only, with this directory mounted read-only at /app, so an edit on the host
 # shows on the next request (views/; restart for the rest: pcm restart ui). It reaches the tools
 # through the toolkit API: container.yml's toolkit: write has pcm add ANFS_RPC_URL (and on macOS
@@ -17,7 +19,9 @@ services:
       RACK_ENV: development
       HOST: 0.0.0.0
       PORT: "9292"
+      ANFS_UI_HOSTS: "${ANFS_UI_HOSTS}"
+      ANFS_UI_REMOTE_ACTIONS: "${ANFS_UI_REMOTE_ACTIONS}"
     ports:
-      - "127.0.0.1:9292:9292"
+      - "${ANFS_UI_BIND}:${ANFS_UI_PORT}:9292"
     volumes:
       - .:/app:ro
