@@ -17,7 +17,8 @@ A source is a git repo (or a local directory) that may hold any of:
 `anfs` owns the sources (`anfs src`), its own resource the stack (`stacks/`, see "Stacks") and
 the commands that span the tools: `anfs src install <source>` installs everything a source holds,
 tool by tool (ppm, pcm, pmm, psm, wsm), `anfs install <stack>` what a stack declares, and `anfs
-implode` runs every tool's `implode` in reverse, then deletes the sources. Picking single
+implode` is `anfs remove system` (the toolkit is the stack `core/system`) with every other stack
+and every tool's `implode` around it, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
 `psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
 
@@ -71,6 +72,18 @@ machines: []                             # running|stopped
 | `anfs remove <stack>... [-y] [-t host]` (`rm`) | the reverse, from the record: lists what it removes and what it keeps (and why), confirms |
 | `anfs path <stack>` | the stack's directory |
 | `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
+
+**`system`** (`stacks/system/stack.yml`) is the toolkit: `core/anfs`, `ppm`, `pcm`, `psm`, `wsm`
+and `podman`, `node`, `varlock`. `install.sh` ends with `anfs install system -y` (then any extra
+packages). pmm, qemu and pvm are not in it: `ppm install core/pmm`. `anfs implode`, in order:
+every other installed stack removed (last installed first, from the records' `installed_at`), each
+installed tool's implode but ppm's (wsm psm pmm pcm; a tool that is not installed is never
+called), `anfs remove system` with `core/ppm` and `core/anfs` kept (`STACK_REMOVE_KEEP`), then
+`ppm implode` (those two, packages installed outside a stack, ppm's dirs), then the sources and
+anfs's dirs. A machine installed before stacks has no record: then `ppm implode` is what removes
+the toolkit, as before. `anfs install system` once on such a machine writes the record (nothing is
+reinstalled: what is there is recorded as `before`, so `anfs remove system` would keep it; implode
+removes it anyway). Tests: `packages/anfs/tests/system.bats`.
 
 - Each tool runs once per kind with every resource of that kind still missing (`ppm install -y a
   b c`, `psm install`, `pcm install`, `pmm install`); wsm installs one level per run, so spaces are
@@ -516,13 +529,16 @@ Every source is cloned once under `~/.local/share/anfs/sources/`:
 This repo (`core/`) contains:
 - `packages/anfs/` — the toolkit's own package: the `anfs` command, the libraries every tool
   sources (`~/.local/lib/anfs`: paths, sources, resolve), the source list and the toolkit's
-  settings (`~/.config/anfs/{system.list,anfs.conf}`). It depends on every tool and what they run
-  on, so `ppm install core/anfs` is the whole toolkit. Its `tests/` hold the shared-lib bats
+  settings (`~/.config/anfs/{system.list,anfs.conf}`). It depends on what the `anfs` command runs
+  and nothing else (`ppm`); the whole toolkit is the stack `core/system` (`stacks/system/`). Its `tests/` hold the shared-lib bats
   suites (Testing; the round trips are anfs-dev's).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
 - `packages/{pcm,pmm,psm,wsm,pvm}` — the other tools, each its own package (deps, hooks, tests)
-- `packages/{podman,varlock,node,qemu}` — the software the tools run on, part of the base install
+- `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
+  `packages/qemu` is pmm's, installed with it
+- `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
+  `core/wsm` and `podman`, `node`, `varlock`. Not pmm, qemu or pvm (`ppm install core/pmm`)
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
 - dev/test tooling (`anfs work`, `anfs hooks` and the git hooks, `ppm container`, `ppm vm`, `ppm
@@ -539,7 +555,7 @@ This repo (`core/`) contains:
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
   package's rc file runs `brew shellenv`, so without one `brew` is "not found" in a new shell;
   `--no-shell` skips it, and a shell with no package gets a hint, never a failure), then
-  `ppm install core/anfs`)
+  `anfs install system -y`, then any extra packages)
 - Plans and design docs are not here: they are in [anfs-io/docs](https://github.com/anfs-io/docs)
 
 The tools don't declare `depends: [anfs]` although they source `lib/anfs`: anfs depends on them,

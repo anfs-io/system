@@ -10,8 +10,9 @@ The `anfs` command and everything the tools share:
 | `~/.config/anfs/anfs.conf` | the settings of every tool, each named for the tool that reads it |
 | `~/.config/sh/anfs.sh` | the shell wrapper that reloads the shell after `anfs install`, `remove` and `src install` |
 
-It depends on the rest of the toolkit — `ppm`, `pcm`, `psm`, `wsm` and the `podman`, `varlock`
-and `node` they run on — so `ppm install core/anfs` installs everything, and keeps it updated.
+It depends on `ppm` (what `anfs src install` and the stacks run) and nothing else. The rest of
+the toolkit — `pcm`, `psm`, `wsm` and the `podman`, `varlock` and `node` they run on — is the stack
+`core/system`: `anfs install system` installs it (install.sh does), `anfs implode` removes it.
 
 **Customizing it.** Your own repo's `anfs` package (`user/anfs`, which `anfs onboard` creates) is
 a layer of this one: its `user.list` holds your sources, and an `anfs.conf` there replaces the

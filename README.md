@@ -122,9 +122,10 @@ installs the irreducible prerequisites and then hands over to ppm itself:
   [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
   `~/.config/anfs/` (your source list, `anfs.local.conf`)
 - `anfs src update`, then the package for your login shell (`stack/bash` or `stack/zsh`: it is
-  what puts Homebrew on the PATH of a new shell; `--no-shell` skips it), then any packages you
-  named, then `ppm install core/anfs`: the rest of the
-  toolkit — `pcm`, `psm`, `wsm` — and the software they run on (podman, varlock, node). On macOS
+  what puts Homebrew on the PATH of a new shell; `--no-shell` skips it), then `anfs install
+  system`: the stack that is the rest of the toolkit — `pcm`, `psm`, `wsm` — and the software
+  they run on (podman, varlock, node), then any packages you named. pmm (VMs) is not in it:
+  `ppm install core/pmm`. On macOS
   the podman machine is created the first time `pcm up` needs it, not at install.
 
 It asks for your sudo password at most once, and only when something above is actually missing.
@@ -183,7 +184,7 @@ ppm install -f user/anfs
 ## Removing It All
 
 ```bash
-anfs implode            # every tool's implode, then the sources; asks first (-y to skip)
+anfs implode            # your other stacks, every tool's implode, the system stack, then the sources; asks first (-y to skip)
 anfs implode --all      # also stow, yq and mise (and bash on macOS) from Homebrew
 ```
 
