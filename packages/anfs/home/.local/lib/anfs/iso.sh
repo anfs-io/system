@@ -393,18 +393,18 @@ cmd_iso_list() {
       f="$ANFS_ISO_HOME/$fname"
       # An entry with no file name, or one that is not a name in the store, has no file
       if _anfs_iso_name_ok "$fname"; then
-        anfs_row "$id" "$name" "$arch" "$fname" "$(_anfs_iso_state "$f")" "$($size "$f")" "$catalog"
+        anfs_row "$id" "$(_anfs_iso_state "$f")" "$name" "$arch" "$fname" "$($size "$f")" "$catalog"
       else
-        anfs_row "$id" "$name" "$arch" "$fname" invalid "" "$catalog"
+        anfs_row "$id" invalid "$name" "$arch" "$fname" "" "$catalog"
       fi
     done < <(_anfs_iso_entries)
     if ${CLI_OPT[all]:-false} && ! $bad; then
       while IFS= read -r f; do
         [[ "$f" != *.sha256 ]] || continue
-        anfs_row "" "" "" "${f##*/}" unlisted "$($size "$f")" ""
+        anfs_row "" unlisted "" "" "${f##*/}" "$($size "$f")" ""
       done < <(_anfs_iso_strays)
     fi
-  } | anfs_table "ID NAME ARCH FILE STATE SIZE" "id name architecture file state size catalog"
+  } | anfs_table "ISO STATUS NAME ARCH FILE SIZE" "iso status name architecture file size catalog"
   [[ -n "$(anfs_iso_catalogs)" ]] || anfs_json_on ||
     anfs_warn "no ISO catalogue: isos/isos.yml in a source, or $(anfs_display "$ANFS_ISO_LOCAL_CATALOG") ($CLI_TOOL iso add)"
   ! $bad

@@ -60,6 +60,15 @@ remote() {
   [ "$(cat "$GITSRC_USER_LIST")" = "$(printf 'file:///x/two.git  second\nfile:///x/one.git  one')" ]
 }
 
+@test "add: local is reserved, named or taken from the URL (64)" {
+  run gitsrc_add file:///x/one.git local
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"'local' is reserved"* ]]
+  run gitsrc_add file:///x/local.git
+  [ "$status" -eq 64 ]
+  [ ! -s "$GITSRC_USER_LIST" ]
+}
+
 @test "remove: by alias or URL; the system list is never edited" {
   printf 'file:///x/one.git  one\nfile:///x/two.git  two\n' > "$GITSRC_USER_LIST"
   printf 'file:///s/sys.git  sys\n' > "$GITSRC_SYSTEM_LIST"
@@ -84,9 +93,9 @@ remote() {
 
   echo change >> "$T/repos/b/README"
   run gitsrc_list
-  [ "${lines[0]}" = "a"$'\t'"$a"$'\t'"user"$'\t'"clean"$'\t'"-" ]
-  [ "${lines[1]}" = "b"$'\t'"$b"$'\t'"user"$'\t'"dirty"$'\t'"-" ]
-  [ "${lines[2]}" = "c"$'\t'"file:///nowhere/c.git"$'\t'"system"$'\t'"missing"$'\t'"-" ]
+  [ "${lines[0]}" = "a"$'\t'"clean"$'\t'"$a"$'\t'"user"$'\t'"-" ]
+  [ "${lines[1]}" = "b"$'\t'"dirty"$'\t'"$b"$'\t'"user"$'\t'"-" ]
+  [ "${lines[2]}" = "c"$'\t'"missing"$'\t'"file:///nowhere/c.git"$'\t'"system"$'\t'"-" ]
 
   run gitsrc_update b
   [ "$status" -eq 1 ]
@@ -180,7 +189,7 @@ remote() {
   [[ "${lines[1]}" == "b"$'\t'*$'\t'"-" ]]
   # A list in JSON is a list
   ANFS_JSON=true run gitsrc_list
-  run yq -p json -r '.[] | .alias + ":" + (.provides | join("+")) + ":" + (.provides | length | tostring)' <<< "$output"
+  run yq -p json -r '.[] | .source + ":" + (.provides | join("+")) + ":" + (.provides | length | tostring)' <<< "$output"
   [ "${lines[0]}" = "a:packages+spaces:2" ]
   [ "${lines[1]}" = "b::0" ]
   # One directory per tool: images and networks are below machines/, so a source with either

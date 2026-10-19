@@ -447,3 +447,16 @@ SH
   # pcm is not installed: anfs is asked, and says so
   [ "${lines[3]}" = "anfs: container ls" ]
 }
+
+@test "every list starts with its resource's kind, or is one of the lists that are not; none says STATE" {
+  local root="$BATS_TEST_DIRNAME/../.." line head bad=""
+  local kinds=" PACKAGE CONTAINER MACHINE IMAGE NETWORK SKILL SPACE REPOSITORY SOURCE ISO "
+  # Lists that are not of a source's resources take only STATUS (CLAUDE.md "Lists and --json")
+  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|NAME ID STATUS PATH|ID TYPE TITLE SPACE PATH VAULT|PATH FINDING|"
+  while IFS= read -r line; do
+    head="${line#*anfs_table \"}" head="${head%%\"*}"
+    [[ " $head " != *" STATE "* ]] || bad+="$line"$'\n'
+    [[ "$kinds" == *" ${head%% *} "* || "$others" == *"|$head|"* ]] || bad+="$line"$'\n'
+  done < <(grep -rh 'anfs_table "' "$root"/*/home | grep -v '^[[:space:]]*#')
+  [ -z "$bad" ] || { printf '%s' "$bad"; false; }
+}

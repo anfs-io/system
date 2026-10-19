@@ -440,7 +440,7 @@ cmd_onboard() {
     [[ "$state" != todo ]] || rc=1
     rows+="$(anfs_row "$name" "$pkg" "$state" "$(_ob_get _detail)")"$'\n'
   done
-  printf '%s' "$rows" | anfs_table "STEP PACKAGE STATE DETAIL" "step package state detail"
+  printf '%s' "$rows" | anfs_table "STEP PACKAGE STATUS DETAIL" "step package status detail"
 
   if ! $check && ! anfs_json_on; then
     anfs_info ""

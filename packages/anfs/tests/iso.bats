@@ -213,13 +213,13 @@ EOF
   run iso list
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 3 ]
-  [[ "${lines[0]}" == "debian"$'\t'"-"$'\t'"-"$'\t'"mine.iso"$'\t'"present"$'\t'5* ]]
-  [[ "${lines[1]}" == "pve"$'\t'"-"$'\t'"-"$'\t'"proxmox.iso"$'\t'"unverified"$'\t'4* ]]
-  [ "${lines[2]}" = "old"$'\t'"-"$'\t'"-"$'\t'"old.iso"$'\t'"missing"$'\t'"-" ]
+  [[ "${lines[0]}" == "debian"$'\t'"present"$'\t'"-"$'\t'"-"$'\t'"mine.iso"$'\t'5* ]]
+  [[ "${lines[1]}" == "pve"$'\t'"unverified"$'\t'"-"$'\t'"-"$'\t'"proxmox.iso"$'\t'4* ]]
+  [ "${lines[2]}" = "old"$'\t'"missing"$'\t'"-"$'\t'"-"$'\t'"old.iso"$'\t'"-" ]
 
   rm "$HOME/.config/anfs/isos.yml"
   run iso ls
-  [[ "${lines[0]}" == "debian"$'\t'"Debian 13"$'\t'"amd64"$'\t'"debian.iso"$'\t'"missing"$'\t'"-" ]]
+  [[ "${lines[0]}" == "debian"$'\t'"missing"$'\t'"Debian 13"$'\t'"amd64"$'\t'"debian.iso"$'\t'"-" ]]
 }
 
 @test "iso list --all shows a file no entry names; --json has the keys" {
@@ -228,14 +228,14 @@ EOF
   echo stray > "$STORE/stray.iso"; echo sum > "$STORE/stray.iso.sha256"
   run iso list --all
   [ "${#lines[@]}" -eq 4 ]
-  [[ "${lines[3]}" == "-"$'\t'"-"$'\t'"-"$'\t'"stray.iso"$'\t'"unlisted"$'\t'6* ]]
+  [[ "${lines[3]}" == "-"$'\t'"unlisted"$'\t'"-"$'\t'"-"$'\t'"stray.iso"$'\t'6* ]]
 
   # sizes are bytes in JSON
   ANFS_TABLE="" ANFS_JSON=true run iso list --all
-  [[ "$output" == *'"file":"stray.iso","state":"unlisted","size":"6","catalog":null}]' ]]
+  [[ "$output" == *'"status":"unlisted","name":null,"architecture":null,"file":"stray.iso","size":"6","catalog":null}]' ]]
   ANFS_TABLE="" ANFS_JSON=true run iso list
-  [[ "$output" == '[{"id":"debian","name":"Debian 13","architecture":"amd64","file":"debian.iso","state":"missing","size":null,"catalog":"'"$HOME"'/.local/share/anfs/sources/hi/isos/isos.yml"},'* ]]
-  [[ "$output" == *'{"id":"old",'*'/sources/lo/isos/isos.yml"}]' ]]
+  [[ "$output" == '[{"iso":"debian","status":"missing","name":"Debian 13","architecture":"amd64","file":"debian.iso","size":null,"catalog":"'"$HOME"'/.local/share/anfs/sources/hi/isos/isos.yml"},'* ]]
+  [[ "$output" == *'{"iso":"old",'*'/sources/lo/isos/isos.yml"}]' ]]
 }
 
 @test "iso add: a URL is recorded and not fetched; an id that exists is refused with 73" {
@@ -280,7 +280,7 @@ EOF
   [ -z "$(anfs_iso_get some url)" ]
   [ -f "$T/some-1.2.iso" ]
   run iso list
-  [[ "$output" == "some"$'\t'*$'\t'"some-1.2.iso"$'\t'"present"$'\t'* ]]
+  [[ "$output" == "some"$'\t'"present"$'\t'*$'\t'"some-1.2.iso"$'\t'* ]]
   # what a machine's media: [some] asks for
   run anfs_iso_fetch_id some
   [ "$output" = "$STORE/some-1.2.iso" ]
@@ -458,8 +458,8 @@ EOF
   [ "$status" -eq 1 ]
   [ ! -e "$HOME/.cache/anfs/x.iso" ]
   run iso list
-  [[ "${lines[0]}" == "evil"$'\t'*$'\t'"invalid"$'\t'"-" ]]
-  [[ "${lines[2]}" == "nofile"$'\t'*$'\t'"-"$'\t'"invalid"$'\t'"-" ]]
+  [[ "${lines[0]}" == "evil"$'\t'"invalid"$'\t'*$'\t'"-" ]]
+  [[ "${lines[2]}" == "nofile"$'\t'"invalid"$'\t'*$'\t'"-"$'\t'"-" ]]
 }
 
 @test "iso remove asks before a file with no url goes: it cannot be pulled again" {

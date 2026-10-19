@@ -14,6 +14,9 @@
 #
 #   anfs_row    <field>...                 one row, to stdout
 #   anfs_table  "<HEADERS>" "<json keys>"  rows on stdin; both lists space-separated, one per field
+#   anfs_sorted                            rows with a sort key as their first field: sorted by it
+#                                          (stable), the key dropped. A list by name whose first
+#                                          column is source/name keeps a name's rows together
 #   anfs_result <key> <value>...           with --json, one object (what a command did); else nothing
 #   anfs_json_on                           true when --json was given (cli.sh sets ANFS_JSON)
 #
@@ -143,6 +146,10 @@ anfs_table() {
     done
     printf '%s\n' "$line"
   done
+}
+
+anfs_sorted() {
+  LC_ALL=C sort -s -t"$ANFS_US" -k1,1 | cut -d"$ANFS_US" -f2-
 }
 
 anfs_result() {

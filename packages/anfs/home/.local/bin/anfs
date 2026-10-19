@@ -217,7 +217,7 @@ cmd_callbacks() {
     return 0
   fi
   _need_lib anfs_table table.sh
-  printf '%s\n' "${out//$'\t'/$ANFS_US}" | anfs_table "TOOL LISTENER STATE HANDLER" "tool listener state handler"
+  printf '%s\n' "${out//$'\t'/$ANFS_US}" | anfs_table "TOOL LISTENER STATUS HANDLER" "tool listener status handler"
 }
 
 cmd_log() {

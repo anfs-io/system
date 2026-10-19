@@ -152,13 +152,13 @@ gitsrc_provides() {
   echo "${out# }"
 }
 
-# One row per entry of a list file: alias, url, which list, status, what it provides
+# One row per entry of a list file: alias, status, url, which list, what it provides
 gitsrc_list_file() {
   local file="$1" list="$2" line
   [[ -n "$file" && -f "$file" ]] || return 0
   while IFS= read -r line || [[ -n "$line" ]]; do
     gitsrc_parse_line "$line" || continue
-    anfs_row "$GITSRC_LINE_NAME" "$GITSRC_LINE_URL" "$list" "$(gitsrc_status "$GITSRC_LINE_NAME")" \
+    anfs_row "$GITSRC_LINE_NAME" "$(gitsrc_status "$GITSRC_LINE_NAME")" "$GITSRC_LINE_URL" "$list" \
       "$(gitsrc_provides "$GITSRC_LINE_NAME")"
   done < "$file"
 }
@@ -176,7 +176,7 @@ gitsrc_list() {
   {
     gitsrc_list_file "$user_file" user
     gitsrc_list_file "$GITSRC_SYSTEM_LIST" system
-  } | anfs_table "ALIAS URL LIST STATUS PROVIDES" "alias url list status provides[]"
+  } | anfs_table "SOURCE STATUS URL LIST PROVIDES" "source status url list provides[]"
 }
 
 # --- src add / remove --------------------------------------------------------------------------
@@ -198,6 +198,11 @@ gitsrc_add() {
 
   local alias="${2:-$(basename "$url" .git)}"
   local entry="$url  $alias"
+  # local is every tool's own config directory, the implicit source (pcm, pmm, psm)
+  if [[ "$alias" == local ]]; then
+    echo "Error: 'local' is reserved (each tool's own config directory): give the source another alias" >&2
+    exit 64
+  fi
 
   # Already listed (match the first column)
   if awk '{print $1}' "$user_file" 2>/dev/null | grep -qxF "$url"; then
