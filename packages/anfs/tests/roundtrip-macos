@@ -17,8 +17,13 @@
 # only require that the failure is reported and that implode leaves nothing behind.
 #
 # The VM is recreated from the image's build for every run, with a frozen copy of the source repos
-# from $ROUNDTRIP_SRC_ROOT (default ~/anfs-dev) mounted read-only at /src/<alias>, and only those
+# from $ROUNDTRIP_SRC_ROOT (a job's directory under `anfs work run`, by default the directory this
+# core checkout is in; of core and stack, the installed source where it has none) mounted read-only at /src/<alias>, and only those
 # listed as the box's sources.
+#
+# tart allows two macOS guests running at once, on the whole host, and the live install may be
+# running one: a run takes the host-wide lock $ANFS_STATE_HOME/work/tart.lock first, and a run
+# that finds it held says who holds it and stops (exit 75).
 set -euo pipefail
 
 all=false
@@ -31,16 +36,31 @@ IMG=anfs-test-macos
 IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config/ruby|\.config/ruby/default-gems)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/(Homebrew|mise|aube|sigstore-rust)|\.homebrew|\.npm|\.rustup|\.cargo|\.local/share/mise|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
 $all && IGNORE_RE='^\./(\.zsh_history|\.bash_history|\.zsh_sessions|\.CFUserTextEncoding|\.Trash|Library|\.config|\.local|\.local/share)$|^\./(Library|\.zsh_sessions|\.Trash|\.cache/Homebrew|\.homebrew|spaces)(/|$)'
 
-src_root="${ROUNDTRIP_SRC_ROOT:-$HOME/anfs-dev}"
+# The host-wide tart lock: a directory (mkdir is atomic), holding who took it. A holder that is
+# no longer running has left it behind, and it is taken over.
+lock="${ANFS_STATE_HOME:-${XDG_STATE_HOME:-$HOME/.local/state}/anfs}/work/tart.lock"
+mkdir -p "${lock%/*}"
+if ! mkdir "$lock" 2>/dev/null; then
+  holder=$(cat "$lock/holder" 2>/dev/null || true)
+  if [[ -n "$holder" ]] && kill -0 "${holder%% *}" 2>/dev/null; then
+    echo "roundtrip-macos: tart is locked by pid $holder ($lock)" >&2
+    exit 75
+  fi
+  rm -rf "$lock"
+  mkdir "$lock"
+fi
+echo "$$ job=${ANFS_WORK_JOB:-none} since $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$lock/holder"
+
 copy=$(mktemp -d "${TMPDIR:-/tmp}/anfs-roundtrip-macos.XXXXXX")
-trap 'rm -rf "$copy"' EXIT
+trap 'rm -rf "$copy" "$lock"' EXIT
 shares=() aliases=""
-for dir in "$src_root"/*/; do
-  [[ -e "$dir/.git" ]] || continue
-  cp -R "${dir%/}" "$copy/"
-  shares+=(--share "$copy/$(basename "$dir"):$(basename "$dir"):ro")
-  aliases+=" $(basename "$dir")"
-done
+# shellcheck source=/dev/null
+source "$(dirname "${BASH_SOURCE[0]}")/roundtrip-sources"
+while IFS=$'\t' read -r alias dir; do
+  cp -R "$dir" "$copy/$alias"
+  shares+=(--share "$copy/$alias:$alias:ro")
+  aliases+=" $alias"
+done < <(roundtrip_sources)
 
 echo "== fresh $IMG, sources:$aliases"
 pmm down "$IMG" >/dev/null 2>&1 || true

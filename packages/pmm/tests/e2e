@@ -31,10 +31,17 @@ export PMM_CONFIG_HOME="$root/pmm/config" PMM_DATA_HOME="$root/pmm/data" PMM_STA
 export PMM_CACHE_HOME="$root/pmm/cache"
 export PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines"
 export PMM_IMAGES_HOME="$PMM_MACHINES_HOME/images"
-export PMM_SSH_PORT_BASE=2342
-# not the default: a pmm really running machines on this host has their sockets there, and the
-# implode below deletes the directory
-export PMM_SOCK_DIR=$(mktemp -d /tmp/pmm-e2e.XXXXXX)
+# A run's own ports and sockets: from the environment when it sets them (`anfs work run` gives
+# each job its own), else 2342 and a fresh /tmp/pmm-e2e.*. Never the socket default: a pmm really
+# running machines on this host has their sockets there, and the implode below deletes the
+# directory. So under a job too the run takes a fresh directory inside the job's.
+export PMM_SSH_PORT_BASE="${PMM_SSH_PORT_BASE:-2342}"
+if [[ -n "${PMM_SOCK_DIR:-}" ]]; then
+  mkdir -p "$PMM_SOCK_DIR"
+  export PMM_SOCK_DIR=$(mktemp -d "${PMM_SOCK_DIR%/}/e2e.XXXXXX")
+else
+  export PMM_SOCK_DIR=$(mktemp -d /tmp/pmm-e2e.XXXXXX)
+fi
 # tart's store is not this run's to touch: implode deletes every pmm- VM in it
 export TART_HOME="$root/no-tart"
 case "${1:-debian}" in
@@ -104,7 +111,7 @@ step "run --no-start: a, with a read-only share" pmm run "$img" --name a --no-st
 step "no definition was written"      bash -c "[ ! -e '$PMM_MACHINES_HOME/a' ] && [ \"\$('$PMM' list --json | yq -p json -r '.[] | select(.name == \"a\") | .source')\" = null ]"
 step "the build is held by a"         bash -c "'$PMM' image list --json $img | yq -p json -e '.[0].held | contains([\"a\"])'"
 step "up a"                           pmm up a
-step "exec runs a command"            bash -c "'$PMM' exec a -- 'cat /mnt/sh/f; echo kept > ~/kept' | grep -qx shared"
+step "exec runs a command"            bash -c "'$PMM' exec a -- 'cat /mnt/sh/f; echo kept > kept' | grep -qx shared"
 step "the share is read-only"         bash -c "! '$PMM' exec a -- touch /mnt/sh/x"
 step "the profile's one cpu"          bash -c "'$PMM' shell a -- nproc | grep -qx 1"
 step "run: a second machine, started" pmm run "$img" --name b

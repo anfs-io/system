@@ -83,7 +83,7 @@ local_ssh() {
   grep -qx 'ANFS_IMAGE_FILES=/tmp/pmm-files' "$e"
   grep -qx 'ANFS_IMAGE_GUEST_TRANSPORT=ssh' "$e"
   grep -qx 'ANFS_IMAGE_GUEST_HOST=127.0.0.1' "$e"
-  grep -qx 'ANFS_IMAGE_GUEST_PORT=42200' "$e"
+  grep -qx "ANFS_IMAGE_GUEST_PORT=$PMM_SSH_PORT_BASE" "$e"
   grep -qx 'ANFS_IMAGE_GUEST_USER=pmm' "$e"
   grep -qx "ANFS_IMAGE_GUEST_KEY=$PMM_DATA_HOME/keys/d/id_ed25519" "$e"
   grep -qx 'ANFS_IMAGE_SSH_PUBKEY=ssh-ed25519 AAAAstub pmm' "$e"

@@ -17,9 +17,11 @@
 #
 # The box starts from a `bootstrap` snapshot: Homebrew, stow, yq and mise already brewed (the
 # software install.sh owns and implode keeps), passwordless sudo for `owner`, and nothing of
-# anfs's. It is built on first use. The source repos are copied from $ROUNDTRIP_SRC_ROOT (default
-# ~/anfs-dev, one directory per alias) and mounted read-only, so a run tests one consistent
-# snapshot of the working tree while editing goes on.
+# anfs's. It is built on first use. The source repos are copied from $ROUNDTRIP_SRC_ROOT (one directory
+# per alias: `anfs work run <job>` sets it to the job's directory; by default the directory this
+# core checkout is in) and
+# mounted read-only, so a run tests one consistent snapshot of the working tree while editing goes
+# on. Of core and stack, a root without one gets the installed source (roundtrip_sources).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -47,11 +49,13 @@ installs=("$@")
 # implode keeps it, so that a later `anfs implode --all` still knows what install.sh added.
 IGNORE_RE='^\./(\.cache|\.local|\.local/share|\.local/state|\.config|\.ssh|\.ssh/known_hosts|\.bash_history|\.config/ruby|\.config/ruby/default-gems)$|^\./(\.cache/(Homebrew|mise|aube|sigstore-rust)|\.homebrew|\.npm|\.rustup|\.cargo|\.local/share/(mise|containers)|\.cache/containers|\.local/state/mise|\.local/state/anfs|\.config/mise|spaces)(/|$)'
 
-podman_x() { podman exec -u root "anfs-test-$distro" "$@"; }
+# The box's name: the harness's, which carries the job's number under `anfs work run`
+box_name="anfs-test-$distro${ANFS_WORK_NUMBER:+-$ANFS_WORK_NUMBER}"
+podman_x() { podman exec -u root "$box_name" "$@"; }
 
 build_bootstrap() {
   echo "== building $distro-bootstrap snapshot (once)"
-  podman rm -f "anfs-test-$distro" >/dev/null 2>&1 || true
+  podman rm -f "$box_name" >/dev/null 2>&1 || true
   $H start "$distro" --src anfs=../../.. >/dev/null
   podman_x bash -c 'echo "owner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/owner && chmod 440 /etc/sudoers.d/owner'
   case "$distro" in
@@ -73,18 +77,18 @@ $all && IGNORE_RE='^\./(\.bash_history|\.sudo_as_admin_successful|\.config|\.loc
 $all && $scratch && IGNORE_RE='^\./(\.bash_history|\.sudo_as_admin_successful|\.config|\.local|\.local/share)$|^\./spaces(/|$)'
 
 
-src_root="${ROUNDTRIP_SRC_ROOT:-$HOME/anfs-dev}"
 copy=$(mktemp -d "${TMPDIR:-/tmp}/anfs-roundtrip.XXXXXX")
 trap 'rm -rf "$copy"' EXIT
 srcs=()
-for dir in "$src_root"/*/; do
-  [[ -e "$dir/.git" ]] || continue
-  cp -R "${dir%/}" "$copy/"
-  srcs+=(--src "$(basename "$dir")=$copy/$(basename "$dir")")
-done
+# shellcheck source=/dev/null
+source ./roundtrip-sources
+while IFS=$'\t' read -r alias dir; do
+  cp -R "$dir" "$copy/$alias"
+  srcs+=(--src "$alias=$copy/$alias")
+done < <(roundtrip_sources)
 # The fixture org is a source of its own
 srcs+=(--src "acme=$copy/core/packages/anfs/tests/fixtures/acme")
-podman rm -f "anfs-test-$distro" >/dev/null 2>&1 || true
+podman rm -f "$box_name" >/dev/null 2>&1 || true
 if $scratch; then
   $H start "$distro" --nested "${srcs[@]}"
   podman_x bash -c 'echo "owner ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/owner && chmod 440 /etc/sudoers.d/owner'

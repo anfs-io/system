@@ -1,0 +1,28 @@
+# The source trees a round trip tests (sourced by roundtrip and roundtrip-macos).
+#
+# roundtrip_sources prints <alias><TAB><dir>, one per source: every checkout in $ROUNDTRIP_SRC_ROOT
+# that holds a source's directories, then, of core and stack, the installed source
+# (~/.local/share/anfs/sources/<alias>) where the root has none. The root is a job's directory
+# under `anfs work run`; by default the directory holding the core checkout these scripts are in,
+# which in a job (~/work/<job>/core) is the job's too. A job's docs/ holds no tool's directory, so
+# it is not a source. Nothing here is written: the callers copy what is listed.
+
+roundtrip_sources() {
+  local root="${ROUNDTRIP_SRC_ROOT:-}" installed dir alias tld
+  [[ -n "$root" ]] || root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)
+  installed="${XDG_DATA_HOME:-$HOME/.local/share}/anfs/sources"
+  for dir in "$root"/*/; do
+    dir="${dir%/}"
+    [[ -e "$dir/.git" ]] || continue
+    for tld in packages containers machines skills spaces; do
+      if [[ -d "$dir/$tld" ]]; then
+        printf '%s\t%s\n' "${dir##*/}" "$(cd -P "$dir" && pwd)"
+        break
+      fi
+    done
+  done
+  for alias in core stack; do
+    [[ ! -e "$root/$alias/.git" && -d "$installed/$alias" ]] || continue
+    printf '%s\t%s\n' "$alias" "$(cd -P "$installed/$alias" && pwd)"
+  done
+}

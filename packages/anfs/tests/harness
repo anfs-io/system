@@ -54,7 +54,8 @@ check_user() {
   case "${1:-}" in owner|other) ;; *) die "unknown user '${1:-}' (owner, other)" ;; esac
 }
 
-name_of() { echo "anfs-test-$1"; }
+# Under `anfs work run` the job's number is in the name, so two jobs' boxes never collide
+name_of() { echo "anfs-test-$1${ANFS_WORK_NUMBER:+-$ANFS_WORK_NUMBER}"; }
 
 check_running() {
   [[ "$(podman inspect -f '{{.State.Running}}' "$(name_of "$1")" 2>/dev/null)" == "true" ]] \

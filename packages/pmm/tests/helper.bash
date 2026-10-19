@@ -19,8 +19,17 @@ _setup_home() {
   mkdir -p "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources" "$HOME/.local/lib"
   export PMM_HOST_OS=darwin PMM_HOST_ARCH=arm64
   # never the default: a pmm really running machines on this host has their sockets there, and
-  # implode deletes the directory. Short, for macOS's limit on a socket's path.
-  export PMM_SOCK_DIR="/tmp/pmm-bats-$(id -u)"
+  # implode deletes the directory. Short, for macOS's limit on a socket's path. Under `anfs work
+  # run` the job has a directory of its own, and the suites use one inside it.
+  if [[ -n "${PMM_SOCK_DIR:-}" ]]; then
+    export PMM_SOCK_DIR="${PMM_SOCK_DIR%/}/bats"
+  else
+    export PMM_SOCK_DIR="/tmp/pmm-bats-$(id -u)"
+  fi
+  # The ports: from the run's PMM_SSH_PORT_BASE when it has one (a job's own range), else 42300.
+  # A machine suite's start there, an image suite's 50 above (setup_images): never below, which
+  # under a job would be the range of the job before it or the live default, 2222.
+  PORT_BASE="${PMM_SSH_PORT_BASE:-42300}"
   export PMM_CALLS="$T/calls"
   : > "$PMM_CALLS"
   export TART_STUB="$T/tart"
@@ -39,7 +48,7 @@ _setup_home() {
   anfs_gitsrc_env
   PMM_MACHINES_HOME="$PMM_CONFIG_HOME/machines" PMM_LOCAL_SOURCE=local
   export PMM_LIB_DIR="$lib"
-  export PMM_SSH_PORT_BASE=42300
+  export PMM_SSH_PORT_BASE="$PORT_BASE"
   PMM_SSH_TIMEOUT=5 PMM_INSTALL=up PMM_MACOS_LIMIT=2
   PMM_IMAGES_HOME="$PMM_MACHINES_HOME/images" PMM_IMAGE_INSTALL_TIMEOUT=60 PMM_IMAGE_SSH_TIMEOUT=5
   # Networks: no backend, as on macOS, until a suite asks for libvirt (setup_net)
@@ -71,7 +80,7 @@ setup_pmm() {
 # stubs. Call load_images again after adding a source.
 setup_images() {
   _setup_home
-  export PMM_SSH_PORT_BASE=42200
+  export PMM_SSH_PORT_BASE=$((PORT_BASE + 50))
   load_images
 }
 

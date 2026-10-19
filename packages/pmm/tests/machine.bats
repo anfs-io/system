@@ -155,15 +155,15 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"a is up: pmm shell a"* ]]
   [[ "$output" == *"b is up: pmm shell b"*"admin@127.0.0.1"* ]]
-  grep -q -- "-smp 1 -m 1024 .*file=$PMM_DATA_HOME/machines/a/disk.qcow2.*hostfwd=tcp:127.0.0.1:42300-:22,hostfwd=tcp:127.0.0.1:8080-:80" "$PMM_CALLS"
-  grep -q -- "-smp 4 -m 4096 .*file=$PMM_DATA_HOME/machines/b/disk.qcow2.*hostfwd=tcp:127.0.0.1:42301-:22" "$PMM_CALLS"
+  grep -q -- "-smp 1 -m 1024 .*file=$PMM_DATA_HOME/machines/a/disk.qcow2.*hostfwd=tcp:127.0.0.1:$PMM_SSH_PORT_BASE-:22,hostfwd=tcp:127.0.0.1:8080-:80" "$PMM_CALLS"
+  grep -q -- "-smp 4 -m 4096 .*file=$PMM_DATA_HOME/machines/b/disk.qcow2.*hostfwd=tcp:127.0.0.1:$((PMM_SSH_PORT_BASE + 1))-:22" "$PMM_CALLS"
   [ "$(held deb)" = "a b" ]
   ANFS_JSON=true run cmd_ps
-  [ "$(yq -p json -r '.[] | .name + " " + .ssh' <<< "$output" | paste -sd, -)" = "a 127.0.0.1:42300,b 127.0.0.1:42301" ]
+  [ "$(yq -p json -r '.[] | .name + " " + .ssh' <<< "$output" | paste -sd, -)" = "a 127.0.0.1:$PMM_SSH_PORT_BASE,b 127.0.0.1:$((PMM_SSH_PORT_BASE + 1))" ]
   ANFS_JSON=true run cmd_list
-  [ "$(yq -p json -r '.[] | select(.name == "a") | .state + " " + .address' <<< "$output")" = "running 127.0.0.1:42300" ]
+  [ "$(yq -p json -r '.[] | select(.name == "a") | .state + " " + .address' <<< "$output")" = "running 127.0.0.1:$PMM_SSH_PORT_BASE" ]
   run cli_call up a
-  [[ "$output" == *"a is running (127.0.0.1:42300"* ]]
+  [[ "$output" == *"a is running (127.0.0.1:$PMM_SSH_PORT_BASE"* ]]
   run cli_call down a b
   [[ "$output" == *"Stopping a"*"Stopping b"* ]]
   [ "$(mach_state a)" = stopped ]

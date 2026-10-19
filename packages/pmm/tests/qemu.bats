@@ -50,10 +50,10 @@ argv() { qemu_argv "$@"; echo "${QEMU_ARGV[*]}"; }
 
 @test "free_port skips ports recorded for builds, for running machines, and ports in use" {
   mkdir -p "$PMM_STATE_HOME/build/x" "$PMM_STATE_HOME/run/m"
-  echo 42200 > "$PMM_STATE_HOME/build/x/port"
-  [ "$(free_port)" = 42201 ]
-  echo 42201 > "$PMM_STATE_HOME/run/m/port"
-  [ "$(free_port)" = 42202 ]
+  echo "$PMM_SSH_PORT_BASE" > "$PMM_STATE_HOME/build/x/port"
+  [ "$(free_port)" = $((PMM_SSH_PORT_BASE + 1)) ]
+  echo $((PMM_SSH_PORT_BASE + 1)) > "$PMM_STATE_HOME/run/m/port"
+  [ "$(free_port)" = $((PMM_SSH_PORT_BASE + 2)) ]
 }
 
 @test "tcg for a guest of the host's arch is said once, with what is missing; a foreign arch is not" {

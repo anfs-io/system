@@ -271,19 +271,19 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [[ "$line" == *"-netdev bridge,id=net1,br=pmm-lab -device virtio-net-pci,netdev=net1,mac=$m0 -netdev bridge,id=net2,br=br0 -device virtio-net-pci,netdev=net2,mac=$m1"* ]]
   # all bridged: the address is the LAN's, so the forwarded port stays, with a MAC of its own
   line=$(grep "machines/edge/disk.qcow2" "$PMM_CALLS" | grep qemu-system)
-  [[ "$line" == *"hostfwd=tcp:127.0.0.1:42300-:22 -device virtio-net-pci,netdev=net0,mac=$(state_get edge .mac) -netdev bridge,id=net1,br=br0"* ]]
+  [[ "$line" == *"hostfwd=tcp:127.0.0.1:$PMM_SSH_PORT_BASE-:22 -device virtio-net-pci,netdev=net0,mac=$(state_get edge .mac) -netdev bridge,id=net1,br=br0"* ]]
   line=$(grep "machines/plain/disk.qcow2" "$PMM_CALLS" | grep qemu-system)
   [[ "$line" == *"netdev=net0,mac=$(state_get plain .mac) -display none"* ]]
   [ "$(state_get plain .mac)" != "$(state_get edge .mac)" ]
   ANFS_JSON=true run cmd_list
   [ "$(yq -p json -r '.[] | select(.name == "web1") | .address' <<< "$output")" = 10.20.0.11 ]
-  [ "$(yq -p json -r '.[] | select(.name == "edge") | .address' <<< "$output")" = 127.0.0.1:42300 ]
+  [ "$(yq -p json -r '.[] | select(.name == "edge") | .address' <<< "$output")" = "127.0.0.1:$PMM_SSH_PORT_BASE" ]
   run cmd_show web1
   [[ "$output" == *"interface   lab 10.20.0.11 $m0"* ]]
   [[ "$output" == *"interface   lan (from the LAN) $m1"* ]]
   grep -A2 -x "Host web1" "$PMM_SSH_CONFIG" | grep -qx "  HostName 10.20.0.11"
   grep -A2 -x "Host web1" "$PMM_SSH_CONFIG" | grep -qx "  Port 22"
-  grep -A2 -x "Host edge" "$PMM_SSH_CONFIG" | grep -qx "  Port 42300"
+  grep -A2 -x "Host edge" "$PMM_SSH_CONFIG" | grep -qx "  Port $PMM_SSH_PORT_BASE"
   cli_call down web1 >/dev/null
   ! grep -qx "Host web1" "$PMM_SSH_CONFIG"
   grep -qx "Host plain" "$PMM_SSH_CONFIG"
