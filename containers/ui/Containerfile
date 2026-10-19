@@ -1,0 +1,19 @@
+# anfs-ui. Two targets:
+#   dev      Ruby and the gems, no app source: compose.yml mounts the service directory at /app
+#   release  dev plus the source copied in: what a published image will be
+# Gems live in the image (/usr/local/bundle), so /app can be read-only; puma writes only to /tmp.
+
+FROM docker.io/library/ruby:4.0.7-slim AS dev
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+ENV BUNDLE_FROZEN=true HOST=0.0.0.0 PORT=9292 TMPDIR=/tmp
+COPY Gemfile Gemfile.lock ./
+RUN bundle install
+EXPOSE 9292
+CMD ["bundle", "exec", "puma", "--pidfile", "/tmp/puma.pid"]
+
+FROM dev AS release
+ENV RACK_ENV=production
+COPY . /app

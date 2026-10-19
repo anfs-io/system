@@ -84,6 +84,7 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
   run "$ANFS" show core/system
   [ "$status" -eq 0 ]
   for p in anfs ppm pcm psm wsm podman node varlock; do [[ "$output" == *"core/$p"* ]]; done
+  [[ "$output" == *core/ui* ]]
   [[ "$output" != *pmm* && "$output" != *qemu* && "$output" != *pvm* ]]
 }
 
@@ -133,6 +134,7 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
   [ -n "$web" ] && [ -n "$app" ] && [ -n "$sys" ] && [ -n "$ppm" ]
   (( web < app && app < wsm && wsm < pcm && pcm < sys && sys < ppm ))
   grep -q "pcm remove -y core/db" "$LOG"
+  grep -q "pcm remove -y core/ui" "$LOG"
   # remove system keeps ppm and anfs for ppm implode
   run grep "ppm remove -y core/" "$LOG"
   [[ "$output" == *core/pcm* && "$output" == *core/podman* ]]

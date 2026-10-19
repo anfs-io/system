@@ -60,6 +60,24 @@ RSpec.describe App do
     expect(last_response.status).to eq(404)
   end
 
+  context "with no tools, as in a container before the toolkit API" do
+    let(:store) do
+      Anfs::Store.new.tap do |store|
+        poller = Anfs::Poller.new(store:, hub: Anfs::Hub.new, cli: Anfs::CLI.new(bin_dir: Dir.mktmpdir), log: nil)
+        Anfs::KINDS.each_value { poller.refresh(it) }
+      end
+    end
+
+    it "serves every page, saying the tools are not reachable" do
+      ["/", *Anfs::KINDS.keys.map { "/#{it}" }].each do |path|
+        get path
+
+        expect(last_response).to be_ok, "#{path}: #{last_response.status}"
+        expect(last_response.body).to include(Anfs::CLI::UNAVAILABLE)
+      end
+    end
+  end
+
   it "refuses a request addressed to another host" do
     header "Host", "evil.example"
     get "/"

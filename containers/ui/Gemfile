@@ -6,6 +6,10 @@ gem "phlex", "~> 2.0"
 gem "puma"
 gem "roda", "~> 3.0"
 
+group :development do
+  gem "rack-unreloader"
+end
+
 group :development, :test do
   gem "rack-test"
   gem "rspec", "~> 3.0"

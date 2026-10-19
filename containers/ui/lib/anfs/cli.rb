@@ -16,6 +16,10 @@ module Anfs
     # that log, so our own calls must stay out of it.
     ENV_OVERRIDES = { "ANFS_LOG" => "off" }.freeze
 
+    # In a container the tools are not there: they run on the host, and the toolkit API that will
+    # reach them from here (anfs rpc) does not exist yet.
+    UNAVAILABLE = "the tools are not reachable from here (no toolkit API yet)"
+
     class Timeout < StandardError; end
 
     def initialize(bin_dir: ENV.fetch("ANFS_BIN", File.expand_path("~/.local/bin")), timeout: 30)
@@ -24,11 +28,11 @@ module Anfs
     end
 
     def run(tool, *)
-      out, err, status = capture(File.join(@bin_dir, tool), *, "--json")
-      return failure(err.strip, status.exitstatus) unless status.success?
+      path = File.join(@bin_dir, tool)
+      return failure("#{tool}: #{UNAVAILABLE}", nil) unless File.executable?(path)
 
-      rows = JSON.parse(out)
-      rows.is_a?(Array) ? Result.new(rows:, error: nil, exit_code: 0) : failure("#{tool}: expected a JSON list", 0)
+      out, err, status = capture(path, *, "--json")
+      status.success? ? parse(tool, out) : failure(err.strip, status.exitstatus)
     rescue JSON::ParserError
       failure("#{tool}: output was not JSON", 0)
     rescue Timeout
@@ -38,6 +42,11 @@ module Anfs
     end
 
     private
+
+    def parse(tool, out)
+      rows = JSON.parse(out)
+      rows.is_a?(Array) ? Result.new(rows:, error: nil, exit_code: 0) : failure("#{tool}: expected a JSON list", 0)
+    end
 
     def failure(message, exit_code)
       Result.new(rows: nil, error: message.empty? ? "exit #{exit_code}" : message, exit_code:)

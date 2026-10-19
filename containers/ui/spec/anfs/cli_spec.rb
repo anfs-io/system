@@ -42,8 +42,9 @@ RSpec.describe Anfs::CLI do
     expect(cli.run("pim", "list").error).to eq("pim: expected a JSON list")
   end
 
-  it "reports a tool that is not installed" do
-    expect(cli.run("nope", "list").error).to match(/No such file/)
+  it "reports a tool that is not there, as in a container, without running anything" do
+    expect(cli.run("nope", "list")).to have_attributes(ok?: false, exit_code: nil,
+                                                       error: "nope: #{described_class::UNAVAILABLE}")
   end
 
   it "gives up on a tool that hangs" do

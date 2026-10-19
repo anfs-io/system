@@ -1,0 +1,23 @@
+# anfs-ui — the toolkit's dashboard (Roda, Phlex, Puma).
+#
+# pcm service: `pcm up ui`, then http://localhost:9292. Built from the Containerfile's dev target:
+# Ruby and the gems only, with this directory mounted read-only at /app, so an edit on the host
+# shows on the next request (views/; restart for the rest: pcm restart ui). The tools are not
+# reachable from the container until the toolkit API exists (docs units/toolkit-api.md): the pages
+# say so instead of listing anything.
+
+services:
+  ui:
+    build:
+      context: .
+      target: dev
+    image: localhost/anfs-ui:dev
+    restart: unless-stopped
+    environment:
+      RACK_ENV: development
+      HOST: 0.0.0.0
+      PORT: "9292"
+    ports:
+      - "127.0.0.1:9292:9292"
+    volumes:
+      - .:/app:ro
