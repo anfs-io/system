@@ -217,15 +217,15 @@ remote() {
 }
 
 
-@test "provides: core's own tree has no containers/ (the test boxes are anfs-dev's), only machine images" {
+@test "provides: core's containers/ is ui only (the test boxes are anfs-dev's), machines/ only images" {
   local core
   core=$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)
   echo "$core  core" > "$GITSRC_USER_LIST"
   GITSRC_DIRS="packages containers machines skills spaces"
   GITSRC_LINK_LOCAL=true
   gitsrc_collect
-  [[ " $(gitsrc_provides core) " != *" containers "* ]]
+  [[ " $(gitsrc_provides core) " == *" containers "* ]]
   [[ " $(gitsrc_provides core) " == *" machines "* ]]
-  [ ! -e "$core/containers" ]
+  [ "$(ls "$core/containers")" = ui ]
   [ -z "$(find "$core/machines" -mindepth 1 -maxdepth 1 ! -name images ! -name profiles.yml)" ]
 }
