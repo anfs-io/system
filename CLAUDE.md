@@ -403,7 +403,7 @@ This repo (`core/`) contains:
   sources (`~/.local/lib/anfs`: paths, sources, resolve), the source list and the toolkit's
   settings (`~/.config/anfs/{system.list,anfs.conf}`). It depends on every tool and what they run
   on, so `ppm install core/anfs` is the whole toolkit. Its `tests/` hold the shared-lib bats
-  suites and the end-to-end round trip (Testing).
+  suites (Testing; the round trips are anfs-dev's).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
 - `packages/{pcm,pmm,psm,wsm,pvm}` — the other tools, each its own package (deps, hooks, tests)
@@ -411,14 +411,14 @@ This repo (`core/`) contains:
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
 - dev/test tooling (`anfs work`, `anfs hooks` and the git hooks, `ppm container`, `ppm vm`, `ppm
-  user`, `ppm move`) is the `dev` package of the anfs-dev source (`anfs-io/dev-anfs`), not here
+  user`, `ppm move`), the round trips and the test boxes are the anfs-dev source's
+  (`anfs-io/dev-anfs`), not here
 - `skills/` — the tools' own skills (`pcm-containers`, `pmm-images`), synced by psm like any source's
-- `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
 - `isos/isos.yml` — the ISOs the base images install from: the catalogue entries their `image.yml`
   names by id, each with a pinned sha256 (`pmm iso pull`)
-- `machines/` — the macOS test box (`anfs-test-macos`) as a pmm machine, and in `machines/images/`
-  the base VM images (`debian-13`, `fedora-44`), each with its answer file, steps, test and README;
-  other sources build on them with `from:`
+- `machines/images/` — the base VM images (`debian-13`, `fedora-44`), each with its answer file,
+  steps, test and README; other sources build on them with `from:`. Core has no `containers/` and
+  no machine definitions: the test boxes are anfs-dev's
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
@@ -471,7 +471,7 @@ depends:
   - node
 ```
 
-- `version` — semver; the patch level is auto-bumped by ppm's git hook (see Git Hooks)
+- `version` — semver; the patch level is auto-bumped by ppm's git hook (anfs-dev's CLAUDE.md, "Git Hooks")
 - `author` — package author
 - `depends` — list of package names (resolved across repos in source order)
 - No `depends` key if package has no dependencies
@@ -1021,93 +1021,6 @@ wsm space). Follow the Chorus methodology:
 3. Implement and test
 4. Write `log.md` on completion
 
-### Git Hooks
-
-`core/dev` ships a `pre-commit` hook that bumps a package's patch version when a commit touches
-it, and creates `package.yml` for a package that has none. It then refuses the commit if any
-directory under `packages/` would be left without a `package.yml` (a `package.yml` deleted on its
-own) or with one that is not a YAML map with `categories`, if present, a list (checked when `yq`
-is installed). The files live in the package at
-`packages/dev/home/.config/git/ppm-hooks/` and are stowed to `~/.config/git/ppm-hooks/`. (The
-`dev` package is in the anfs-dev source now.)
-
-`anfs hooks` (the package's `anfs-hooks`) wires them up, because **git does not carry hooks
-through a clone** — so this is an install step, not repo content:
-
-```
-anfs hooks status [--all] [repo...]
-anfs hooks install [--all] [repo...]
-anfs hooks uninstall [--all] [repo...]
-```
-
-With no repo names it acts on the `system.list` repos; `--all` adds your `user.list` ones.
-The package's `post_install` runs `anfs hooks install`, and its `post_remove` runs
-`anfs hooks uninstall --all`. Re-run `anfs hooks install` after `anfs src add`, since `post_install`
-can't know about a repo added later. `anfs work new` wires the hooks into a job's worktrees itself.
-
-How it is wired, and why:
-
-- Each repo gets **`core.hooksPath` set locally**, pointed at the stowed directory. Pointing at
-  the stowed path (not into the package) means editing a hook takes effect in every repo at once,
-  and a higher-priority layer can override a single hook file through stow.
-- **Never set `core.hooksPath` globally.** A global value applies to every repo on the machine
-  *and* suppresses each repo's own `.git/hooks`, which would silently disable husky/lefthook/
-  overcommit in unrelated projects. `init.templateDir` is no good either: it copies at
-  `git init`/`clone` only, isn't retroactive, and the copies go stale.
-- `core.hooksPath` replaces a repo's `.git/hooks` wholesale, so `anfs hooks install` warns when
-  the repo already has real hooks there, and leaves a `core.hooksPath` it didn't set alone.
-  `uninstall` only unsets the value it wrote.
-- A `core.hooksPath` pointing at a missing directory is harmless — git finds no hooks and commits
-  normally — so a leftover setting can never block a commit.
-
-The bump rule is **once per unpushed series**: the hook compares the working version against the
-version at the push base (`@{upstream}`, else `origin/HEAD`/`main`/`master`) and only bumps when
-they match. So a run of commits before one push bumps once, `git commit --amend` doesn't bump
-again, and a version you set by hand is respected. A repo with nothing pushed yet has had zero
-pushes, so it gets zero bumps: a new package settles at `0.1.0` and stays until its first push.
-A version that isn't `N.N.N` is left alone rather than mangled.
-
-`lib/package-meta.sh` next to the hook is deliberately standalone — it uses `sed` rather than
-`yq` so a hook never depends on ppm's environment, and it stays out of `~/.local/lib/ppm/`
-because its `meta_*` names would share a namespace with `packages.sh`'s.
-
-### Moving a Package Between Repos
-
-`core/dev` ships `ppm move`, which relocates a package from one source repo to another. The files
-live in the package at `packages/dev/home/.local/lib/ppm/move.sh`, stowed to
-`~/.local/lib/ppm/move.sh` — a function named `move` there becomes `ppm move`, like `ppm user`
-(the old seam; a new command is an `anfs-<name>`, see "The Command Line").
-
-```
-ppm move <repo/package> <target-repo>      # e.g. ppm move stack/rails user
-  -f, --force   move despite uncommitted changes or a broken dependency
-```
-
-It unstows the package, moves the directory, stows it again from its new home, moves the install
-tracker (`installed/<repo>/<pkg>.yml`, keeping its version, files and `installed_deps`), repoints
-any `claims.yml` entry that names the package as claimant or owner, and commits both repos. The
-source spec must be fully qualified: a bare name matches a layer in every repo.
-
-- **Install hooks are not re-run.** The package's content is unchanged, only its path, so
-  `pre_remove`/`post_install` would tear down services and rewrite generated config for nothing.
-- **Restowing is not a plain `stow_package`.** `stow -D` only removed the links that point into
-  *this* package dir, so re-stowing the whole directory would collide with the files a
-  higher-priority layer owns. The tracker lists what this layer actually had, so `move` stows with
-  the *complement* as the ignore list — which also leaves `ppm file protect`ed files alone. stow
-  aborts the whole operation on the first conflict, so a failed stow rolls the move back; if the
-  same conflict then fails the restore, it says to run `ppm install -f <pkg>`.
-- **It refuses a move that would break a dependent**, unless `-f`. `_resolve_one` passes the
-  depending layer's repo index as `min_index`, so a dependency only ever resolves to the same or a
-  lower-priority repo — moving a package *up* in priority orphans anything below it that depends
-  on it. `depends:` names a package, not a repo, so no dependent needs editing otherwise; there is
-  deliberately no rename.
-- **It refuses a repo with uncommitted changes**, unless `-f`. The commits are pathspec-limited to
-  `packages/<pkg>`, so even under `-f` unrelated changes stay out of them, and the index is
-  re-added afterwards because a partial commit leaves the pre-hook content staged for whatever the
-  `pre-commit` hook rewrote (the version bump).
-- **An existing package of that name in the target is refused outright**, `-f` included: `-f` must
-  never overwrite package sources.
-
 ### Lib Structure
 
 ppm is the `core/ppm` package: the `ppm` script and its libraries live under
@@ -1195,7 +1108,7 @@ source "$HOME/.local/lib/anfs/bash.sh"
   package first, which unlinks `lib/anfs`, and ppm cannot run without it to put it back.
 
 **Every tool's command line is `cli.sh`'s**: see "The Command Line" above. An extension declares
-its commands where it defines them: `core/dev`'s `container.sh` calls `cli_group container` and
+its commands where it defines them: `anfs-dev/dev`'s `container.sh` calls `cli_group container` and
 `cli_cmd "container up" ...` next to `cmd_container_up`.
 
 Library sourcing in `ppm`: every `*.sh` in `$PPM_LIB_DIR` (`~/.local/lib/ppm/`) is
@@ -1228,25 +1141,8 @@ bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu a
                              # and virsh are stubbed, and PMM_SOCK_DIR is the suite's own
 ```
 
-End to end, on a fresh Linux box:
-
-```
-packages/anfs/tests/roundtrip [debian|fedora] [source...]
-    # install.sh, ppm install stack/pi, anfs install acme (or the named sources), checks,
-    # anfs implode, then $HOME diffed against its pre-install state
-```
-
-On macOS (Apple silicon), in a tart VM from `ppm vm build macos`'s vanilla base:
-
-```
-packages/anfs/tests/roundtrip-macos [--all]
-    # the same sequence on a Mac with no Homebrew or CLT: install.sh installs both. Checks the CLT,
-    # /opt/homebrew, a cask (acme/acme-mac), the bash floor under /bin/bash, and with --all the
-    # login-shell guard (stack/bash makes Homebrew's bash the login shell; implode --all refuses)
-```
-
-pcm cannot run containers in the macOS VM: a macOS guest gets no nested virtualization, so the
-podman machine cannot start (the check is that pcm reports it and implode leaves nothing).
+The end-to-end round trips (Linux in a podman box, macOS in a tart VM), their harness, the `acme`
+fixture and the test boxes are in the anfs-dev source (`packages/dev/tests/`, `containers/`, `machines/`; its CLAUDE.md).
 
 pmm, for real (qemu, hvf/kvm; a few minutes for Debian on Apple silicon):
 
@@ -1278,7 +1174,7 @@ packages/pmm/tests`); the tests use the variables when they are set:
 
 - The ISO store is shared and read-only to tests: the bats helpers use a temp one, only an e2e
   reads the real store.
-- tart allows two macOS guests in all: `roundtrip-macos` takes `$ANFS_STATE_HOME/work/tart.lock`
+- tart allows two macOS guests in all: anfs-dev's `roundtrip-macos` takes `$ANFS_STATE_HOME/work/tart.lock`
   (exit 75 while another run holds it, naming the pid and the job).
 - **No test may name `/tmp/pmm-<uid>`, point a `*_HOME` at a real home, write under the real `~`,
   or kill by pattern** (`pkill`, `killall`). `packages/anfs/tests/isolation.bats` greps every
@@ -1286,52 +1182,6 @@ packages/pmm/tests`); the tests use the variables when they are set:
   whose `~` is a box's, are not covered. What no grep sees, a suite that never sets
   `PMM_SOCK_DIR`, pmm refuses itself: under bats (`BATS_TEST_TMPDIR` set) the live directory, set
   or defaulted, is exit 69 before any command (`sock_dir_path`, `lib/pmm/core.sh`).
-
-- `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
-  `containers/anfs-test-<distro>/Containerfile`) with podman alone, so changing anfs — pcm
-  included — can never break the thing that tests it. `--nested` runs the box privileged with
-  `/dev/fuse`, which is what rootless podman inside it needs (pcm's containers really start in
-  the round trip).
-- `--all` holds `$HOME` to the stricter standard of `anfs implode --all`, and `--scratch` starts
-  from a bare image so install.sh installs Homebrew itself (and `--all` must remove it).
-- `packages/anfs/tests/fixtures/acme` is a stand-in org source with every resource kind: a package depending on
-  another source's, a container, a skill, and spaces that depend on each other.
-- The round trip starts from a `bootstrap` snapshot (Homebrew, stow, yq, mise; passwordless sudo),
-  built on first use, and tests a copy of the checkouts in `ROUNDTRIP_SRC_ROOT`: a job's directory
-  under `anfs work run`, by default the directory the running core checkout is in. Of core and
-  stack, one the root does not hold is the installed source (`roundtrip-sources`).
-- Anything the diff reports is a tool writing outside its own directories, or an implode missing
-  it. What implode keeps on purpose (Homebrew and its caches, mise's tools, podman's storage,
-  GitHub's host keys, space contents) is listed in the script's `IGNORE_RE`.
-
-`core/dev` provides the throwaway machines to validate them on. `ppm container` (Debian, Fedora; the
-boxes are pcm services, `containers/anfs-test-<distro>`) and
-`ppm vm` (macOS on Apple silicon; the boxes are pmm machines, `machines/anfs-test-<target>`, from
-the image of the same name on the tart backend) share one contract: two test users, `owner` (sudo with
-a password) and `other` (none), and the host's source repos mounted **read-only at `/src/<alias>`**,
-so a box tests the working tree rather than the pushed repos. `ppm user` makes a throwaway user on
-the host instead, which is the cheapest way to exercise the non-owner Homebrew path.
-
-Both harnesses link the mounted sources into `~/.local/share/anfs/sources` and list them in
-`~/.config/anfs/user.list` *before* `install.sh` runs, which would otherwise clone anfs from GitHub
-and test the pushed repo instead of the mount.
-
-`ppm vm` differs from `ppm container` in four places, each forced by the platform rather than by
-taste (the first two live in the image, `machines/images/anfs-test-macos/provision/10-provision.sh`; the
-second two in the tart backend: pmm's `tart.sh`, and its machine and snapshot code over it):
-
-- **`/src` comes from `/etc/synthetic.conf`**, realized at boot. tart mounts shares under
-  `/Volumes/My Shared Files/<name>`, and `collect_repos` splits source lines on whitespace, so a
-  path with spaces is unusable; `/` is read-only, so the link cannot be made directly.
-- **A snapshot recreates the box rather than restarting it.** `tart clone` of a stopped VM captures
-  its state correctly, but the restarted original has been observed to come back without those
-  writes. The tart backend (`_tart_shutdown`) also shuts the guest down from inside and waits, because `tart stop` can
-  return while writes are still buffered and the clone then catches an older APFS checkpoint.
-- **Provisioning raises sudo's `timestamp_timeout`.** `_system_sudo` primes the cache then uses
-  `sudo -n`, but macOS defaults to 5 minutes with per-tty tickets and there is no tty over ssh, so
-  a cold run outlives it. The password stays — the prompt is part of what is being tested.
-- **ssh re-parses the remote command line** where `podman exec` passes argv straight through, so
-  multi-word values travel as env vars, not positional arguments.
 
 pmm runs under `set -euo pipefail`, so every best-effort `tart` call needs an explicit guard
 (`tart delete` on a missing VM exits 2 and would otherwise kill the command mid-run). The same

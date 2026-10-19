@@ -1,5 +1,0 @@
-# The macOS test box (ppm vm, roundtrip-macos): a machine from the anfs-test-macos image with the
-# host's sources at /src/<alias>, read-only, so a box tests the working tree.
-description: macOS test box for anfs installs
-image: anfs-test-macos
-shares: ["${ANFS_SOURCES_HOME}/*:ro"]          # each source, as /src/<alias> in the guest

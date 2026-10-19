@@ -30,7 +30,8 @@ has it; `source/name` picks one (`pmm image list` shows the shadowed ones):
 
 1. `local`: `~/.config/pmm/machines/images/<name>/` (`$PMM_IMAGES_HOME`), not in git
 2. every anfs source with a `machines/images/` directory, in anfs's order: `user.list` entries,
-   then `system.list` (`core` ships `debian-13`, `fedora-44`, `anfs-dev`, `anfs-test-macos`)
+   then `system.list` (`core` ships `debian-13` and `fedora-44`; the anfs-dev source adds `anfs-dev` and
+   `anfs-test-macos`)
 
 A source is a clone under `~/.local/share/anfs/sources/<alias>/`. pmm reads definitions straight
 from it: `pmm image cd <image>` lands in the repo, and edits are committed there (pmm never
@@ -84,7 +85,7 @@ timeouts: {install: 3600, ssh: 600}
   own settings win over both.
 - A child ignores `distro`, `arch`, `iso` and `base` (its root's apply), and `validate` warns.
 - `backend: tart` with `base: <oci image>` is a macOS image (Apple silicon); see
-  `anfs-test-macos`.
+  anfs-dev's `anfs-test-macos`.
 
 ### ISOs
 
@@ -131,7 +132,7 @@ that runs it. pmm ships two:
   `ANFS_IMAGE_BACKEND`, `ANFS_IMAGE_DISTRO`, `ANFS_IMAGE_USER`, `ANFS_IMAGE_SSH_PUBKEY` and
   `ANFS_IMAGE_FILES`: where `files/` was copied in the guest, empty when the image has none.
 - **`.anfs`**: installs the anfs toolkit as the image's user. A YAML file, not a script (see
-  `anfs-dev`):
+  anfs-dev's `anfs-dev` image):
 
   ```yaml
   # provision/50-toolkit.anfs
@@ -245,7 +246,7 @@ Give a **higher-priority** source an image of the **same name** whose `from:` is
 `debian-13` now means yours, and `from: debian-13` in it is the next layer down (core's), so
 your image is core's plus your steps. `pmm run debian-13` and every image of yours that is
 `from: debian-13` get it at their next build. An image in a lower-priority source does not: its
-`from:` never resolves upward, so `core/anfs-dev` stays on core's. `pmm image list` shows core's
+`from:` never resolves upward, so an image in a source below yours stays on core's. `pmm image list` shows core's
 as `shadowed`; both are built (core's build is recorded beside yours), and
 `pmm image show debian-13` lists the steps of each.
 

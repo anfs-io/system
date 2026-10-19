@@ -1,4 +1,0 @@
-# A machine from acme's own image (which is built on anfs's debian-13)
-image: hello
-cpus: 2
-memory: 2G

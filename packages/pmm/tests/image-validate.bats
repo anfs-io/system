@@ -88,16 +88,13 @@ scripts: {defaults: false}')"
 
 @test "the shipped images validate: every file a build reads is in the image, every ISO in core's catalogue" {
   core_source
-  v core/debian-13 core/fedora-44 core/anfs-dev core/anfs-test-macos
+  # (anfs-dev and anfs-test-macos are the anfs-dev source's images, validated there)
+  v core/debian-13 core/fedora-44
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"4 image(s): 0 error(s), 0 warning(s)"* ]]
-  [ "$(img_answer_file core/anfs-dev)" = "$(img_dir core/debian-13)/preseed.cfg" ]
+  [[ "$output" == *"2 image(s): 0 error(s), 0 warning(s)"* ]]
   [ "$(img_steps core/fedora-44)" = "$(img_dir core/fedora-44)/provision/10-base.sh" ]
-  # anfs-dev's toolkit is a step for the anfs provisioner, not a key
-  [ "$(img_steps core/anfs-dev)" = "$(img_dir core/anfs-dev)/provision/50-toolkit.anfs" ]
   ! grep -rn '^anfs:' "$BATS_TEST_DIRNAME/../../../machines/images"
-  [ "$(img_test_script core/anfs-dev)" = "$(img_dir core/debian-13)/test.sh" ]
   # the ids are core's own entries, each pinned
   for i in debian-13 fedora-44; do for a in arm64 amd64; do
     [ "$(img_iso_id "core/$i" "$a")" = "$i-$a" ]

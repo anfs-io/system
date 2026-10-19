@@ -1,4 +1,0 @@
-version: 0.1.0
-author: acme
-# fnox is in stack: a dependency resolves to the same or a lower-priority source
-depends: [fnox]

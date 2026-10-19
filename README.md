@@ -201,10 +201,10 @@ also works on its own.
 | `psm` | Personal Skills Manager |
 | [`wsm`](packages/wsm/README.md) | work space manager |
 | `podman`, `varlock`, `node` | what pcm and psm run on |
-| [`dev`](packages/dev/README.md) | tooling for working on anfs: disposable test machines and the git hooks that version packages |
 
-The repo's `skills/` holds the tools' own skills (`pcm-containers`, `pmm-images`); `packages/anfs/tests/` the
-end-to-end round trip (see CLAUDE.md, Testing).
+The repo's `skills/` holds the tools' own skills (`pcm-containers`, `pmm-images`). The tooling for
+working on anfs (`anfs work`, the git hooks, the test boxes and the end-to-end round trips) is the
+`dev` package of the [anfs-dev](https://github.com/anfs-io/dev-anfs) source.
 
 ## Sources
 

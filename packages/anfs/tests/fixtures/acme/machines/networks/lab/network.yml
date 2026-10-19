@@ -1,3 +1,0 @@
-# A network for the fixture source: validated by the round trips, installed nowhere
-kind: isolated
-subnet: 10.99.0.0/24
