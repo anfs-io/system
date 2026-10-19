@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Every bats suite in this repo (packages/<tool>/tests/*.bats), one bats process per file, several
+# at once. What a person runs before a merge and an agent runs once at the end of a plan; while
+# working, run only the suites you touch (bats packages/<tool>/tests </dev/null).
+# Usage: packages/anfs/tests/all [-j N] [tool...]   (default: every tool; N: the CPUs less two)
+# Prints one line per file as it finishes, then the failing tests' output; exits 1 if any failed.
+# Nothing here boots a VM or a box: the e2e scripts and the round trips are not bats files.
+set -euo pipefail
+# the bash floor, from this tree (mapfile and the rest need 5)
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../home/.local/lib/anfs/bash.sh"
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+repo="$(cd "$here/../../.." && pwd)"
+bats="${BATS:-$(command -v bats || echo /opt/homebrew/bin/bats)}"
+jobs=$(( $(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4) - 2 ))
+(( jobs > 0 )) || jobs=1
+if [[ "${1:-}" == "-j" ]]; then jobs="$2"; shift 2; fi
+
+files=()
+if (( $# )); then
+  for t in "$@"; do
+    [[ -d "$repo/packages/$t/tests" ]] || { echo "all: no suite packages/$t/tests" >&2; exit 64; }
+    files+=("$repo/packages/$t/tests/"*.bats)
+  done
+else
+  files=("$repo/packages/"*/tests/*.bats)
+fi
+
+# the slow files first (pmm's build and machine files take a minute or two), so the run is not
+# one long file left at the end: largest first is near enough
+mapfile -t files < <(for f in "${files[@]}"; do printf '%s %s\n' "$(wc -c < "$f" | tr -d ' ')" "$f"; done |
+  sort -rn | cut -d' ' -f2-)
+
+out=$(mktemp -d "${TMPDIR:-/tmp}/anfs-tests.XXXXXX")
+trap 'rm -rf "$out"' EXIT
+t0=$(date +%s)
+
+# One file: its TAP to <out>/<n>.tap, then a summary line on stdout
+run_one() {
+  local f="$1" n="$2" s=$(date +%s) rel="${1#"$repo"/}"
+  "$bats" --tap "$f" </dev/null >"$out/$n.tap" 2>&1 || true
+  local pass fail
+  pass=$(grep -c '^ok ' "$out/$n.tap" || true)
+  fail=$(grep -c '^not ok ' "$out/$n.tap" || true)
+  # a file that died before its plan line counts as failed
+  grep -q '^1\.\.' "$out/$n.tap" || fail=$(( fail + 1 ))
+  printf '%-4s %4d ok %3d failed %4ds  %s\n' "$([[ $fail == 0 ]] && echo ok || echo FAIL)" \
+    "$pass" "$fail" $(( $(date +%s) - s )) "$rel" | tee "$out/$n.sum"
+}
+
+i=0
+for f in "${files[@]}"; do
+  while (( $(jobs -rp | wc -l) >= jobs )); do sleep 0.2; done
+  run_one "$f" "$i" &
+  i=$(( i + 1 ))
+done
+wait
+
+pass=0 fail=0
+for s in "$out"/*.sum; do
+  read -r _ p _ f _ < "$s"
+  pass=$(( pass + p )); fail=$(( fail + f ))
+done
+if (( fail )); then
+  echo
+  for n in $(seq 0 $(( i - 1 ))); do
+    grep -q '^FAIL' "$out/$n.sum" || continue
+    echo "== ${files[$n]#"$repo"/}"
+    # each failing test and the diagnostics bats prints under it
+    awk '/^not ok /{p=1} /^ok /{p=0} p' "$out/$n.tap"
+    grep -q '^1\.\.' "$out/$n.tap" || tail -n 20 "$out/$n.tap"
+  done
+fi
+echo
+echo "$pass passed, $fail failed, ${#files[@]} files, $jobs at a time, $(( $(date +%s) - t0 ))s"
+(( fail == 0 ))
