@@ -82,11 +82,12 @@ SH
 # The line number of the first log line matching <pattern>
 at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
 
-@test "the system manifest validates: the toolkit and nothing else" {
+@test "the system manifest validates: the toolkit, its dashboard and nothing else" {
   run "$ANFS" show core/system
   [ "$status" -eq 0 ]
   for p in anfs ppm pcm psm wsm podman node varlock; do [[ "$output" == *"core/$p"* ]]; done
-  [[ "$output" != *core/ui* ]]   # not until the toolkit API
+  [[ "$output" == *core/ui* ]]
+  [ "$(yq -r '.containers[0]["core/ui"].status' "$REPO/stacks/system/stack.yml")" = running ]
   [[ "$output" != *pmm* && "$output" != *qemu* && "$output" != *pvm* ]]
 }
 
@@ -116,6 +117,8 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
 @test "implode: the other stacks first (last installed first), then the tools, system, ppm" {
   run "$ANFS" install -y system </dev/null
   [ "$status" -eq 0 ]
+  grep -qx "pcm install core/ui" "$LOG"   # the dashboard, then its status: running
+  grep -qx "pcm up core/ui" "$LOG"
   "$ANFS" install -y lgat/app </dev/null
   "$ANFS" install -y lgat/web </dev/null
   yq -i '.installed_at = "2026-01-01T00:00:00Z"' "$RECORDS/core/system.yml"

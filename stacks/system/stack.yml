@@ -3,5 +3,7 @@ description: The anfs toolkit itself, what install.sh installs and anfs implode 
 # The tools and the software they run on: pcm brings podman and varlock, psm node.
 # Not pmm, pmm-network, qemu or pvm: those are `ppm install core/pmm` (or a stack that names them).
 packages: [core/anfs, core/ppm, core/pcm, core/psm, core/wsm, core/podman, core/node, core/varlock]
-# Not the dashboard (containers/ui) yet: pcm install starts a service, and ui cannot reach the tools
-# until the toolkit API exists. It joins with `status: running` then; until then `pcm up ui`.
+# The dashboard, started on install: it reaches the tools through the toolkit API (its container.yml
+# says toolkit: write; core/anfs's post_install loads the listener).
+containers:
+  - core/ui: { status: running }

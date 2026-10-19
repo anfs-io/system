@@ -74,8 +74,8 @@ machines: []                             # running|stopped
 | `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
 
 **`system`** (`stacks/system/stack.yml`) is the toolkit: `core/anfs`, `ppm`, `pcm`, `psm`, `wsm`
-and `podman`, `node`, `varlock`. The dashboard `core/ui` is not in it yet (it starts on
-install and cannot reach the tools before the toolkit API): `pcm up ui`. `install.sh` ends with `anfs install system -y` (then any extra
+and `podman`, `node`, `varlock`, and the dashboard `core/ui` (`status: running`: started on
+install; it reaches the tools through the toolkit API). `install.sh` ends with `anfs install system -y` (then any extra
 packages). pmm, qemu and pvm are not in it: `ppm install core/pmm`. `anfs implode`, in order:
 every other installed stack removed (last installed first, from the records' `installed_at`), each
 installed tool's implode but ppm's (wsm psm pmm pcm; a tool that is not installed is never
@@ -616,7 +616,7 @@ This repo (`core/`) contains:
 - `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
   `packages/qemu` is pmm's, installed with it
 - `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
-  `core/wsm` and `podman`, `node`, `varlock` (not yet `core/ui`). Not pmm, qemu or pvm
+  `core/wsm` and `podman`, `node`, `varlock`, and `core/ui` running. Not pmm, qemu or pvm
   (`ppm install core/pmm`)
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
@@ -633,7 +633,9 @@ This repo (`core/`) contains:
   `system` stack. Its `Containerfile` has a `dev` target (Ruby and the gems; compose mounts the
   directory read-only at `/app` and `views/` reload) and a `release` one (the source copied in).
   Its own suite: `cd containers/ui && bundle exec rspec && bundle exec rubocop`. In a container it
-  reaches no tool until the toolkit API exists (docs `units/toolkit-api.md`); its panels say so
+  reaches the tools through the toolkit API (`lib/anfs/rpc.rb`, `ANFS_RPC_URL`/`ANFS_RPC_TOKEN`:
+  lists, commands streamed with `yes`, `watch` for events); without `ANFS_RPC_URL` it runs them
+  from `ANFS_BIN` and follows `anfs.log` (on the host)
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
