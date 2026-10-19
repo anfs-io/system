@@ -18,7 +18,8 @@ whole stack — the toolchain, the database, the skills, the workspaces — as a
 ```bash
 anfs src add git@github.com:lgat/lgat-anfs.git lgat
 anfs src update lgat
-anfs install lgat          # its packages, containers, skills and spaces, in that order
+anfs src install lgat      # its packages, containers, skills and spaces, in that order
+anfs install lgat/rails    # a stack: the resources its stacks/rails/stack.yml declares
 ```
 
 Each tool still picks single resources on its own: `ppm install lgat/rails`,

@@ -10,7 +10,7 @@ Put it at `skills/<name>/SKILL.md` at the top of any anfs source repo, next to i
 `packages/`, `containers/` and `spaces/`. psm syncs every source holding `skills/`
 as a repo named by the source's alias — no config file, no entry anywhere. The anfs
 repo ships the tools' own skills that way (`skills/pcm-containers`), and so can an
-org's repo (`anfs install lgat` syncs `lgat/skills/*`). `~/.config/psm/*.yml` stays
+org's repo (`anfs src install lgat` syncs `lgat/skills/*`). `~/.config/psm/*.yml` stays
 for third-party skill repos that are not anfs sources.
 
 The skills dir is handed to the CLI resolved through links (`cd -P`): a local-path

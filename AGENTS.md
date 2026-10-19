@@ -12,9 +12,11 @@ A source is a git repo (or a local directory) that may hold any of:
 | `machines/` | `pmm` | machines (`machines/<name>/machine.yml`), the VM images they run from (`machines/images/<name>/image.yml`) and the networks they are on (`machines/networks/<name>/network.yml`); see pmm |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
 | `spaces/` | `wsm` | workspaces of spaces (`spaces/<ws>/<space>/space.yml`; see wsm) |
+| `stacks/` | `anfs` | stacks: manifests of the others, applied together (`stacks/<name>/stack.yml`; see "Stacks") |
 
-`anfs` owns the sources (`anfs src`) and the commands that span the tools: `anfs install
-<source>` installs everything a source holds, tool by tool (ppm, pcm, pmm, psm, wsm), and `anfs
+`anfs` owns the sources (`anfs src`), its own resource the stack (`stacks/`, see "Stacks") and
+the commands that span the tools: `anfs src install <source>` installs everything a source holds,
+tool by tool (ppm, pcm, pmm, psm, wsm), `anfs install <stack>` what a stack declares, and `anfs
 implode` runs every tool's `implode` in reverse, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
 `psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
@@ -28,6 +30,86 @@ source with any of the three.
 What the tools share lives in `lib/anfs/` and nothing else does: paths (`paths.sh`), the
 source lists and clones (`sources.sh`), and finding resources plus ordering them by dependency
 (`resolve.sh`). What `install` *does* stays in each tool.
+
+## Stacks (lib/anfs/stacks.sh)
+
+A stack is a manifest of resources to install together: `stacks/<name>/stack.yml` in a source,
+resolved like any resource (`source/name`, or a bare name through the priority order). It names
+no target. Use one for anything non-trivial: an install that is repeated, or that spans more than
+one resource.
+
+```yaml
+version: 0.2.0
+description: LGAT's rails app and what it runs on
+stacks: [lgat/base]                      # installed first
+packages: [stack/ruby, stack/rails]
+skills: [lgat/rails-conventions]
+vaults: [lgat/dev]
+spaces:
+  - lgat/: { status: installed }         # installed|cloned
+containers:
+  - core/anfs-ui: { status: running }    # running|stopped
+machines: []                             # running|stopped
+```
+
+- **Keys**: `version`, `description`, `stacks` and the resource directories (`packages skills
+  vaults spaces containers machines`). Anything else is 64, naming it (`show` and `install`).
+- **An entry** is a string (`source/name`, what the tool's list prints, or a bare name) or a
+  one-key map whose value may hold `status:` and nothing else. `status:` is checked against the
+  kind: `running|stopped` for containers and machines, `installed|cloned` for spaces; other kinds
+  take none (64). Absent means the tool's default after install.
+- **`stacks:`** resolve recursively with ppm's layering rule (a stack depends on its own source or
+  a lower-priority one); a cycle is 1, naming the chain. The order is depth-first, each stack
+  once, dependencies first; then the kinds in anfs's order, not the manifest's: packages, skills,
+  vaults, spaces, containers, machines. Remove is the reverse.
+
+| Command | What |
+| --- | --- |
+| `anfs list` (`ls`) | `STACK STATUS VERSION`: every stack in every source (and installed ones whose definition is gone); STATUS `installed`, `partial`, `-` |
+| `anfs show <stack>` | `KIND RESOURCE DECLARED ACTUAL FROM`, the stacks it depends on first, after a `<stack> <version>: <description>` line (not in `--json`) |
+| `anfs install <stack>... [-y] [-t host] [--build]` | prints the plan, confirms, installs kind by kind, then applies `status:` (`pcm up\|stop`, `pmm up\|stop`, `wsm repo install` for `cloned`) |
+| `anfs remove <stack>... [-y] [-t host]` (`rm`) | the reverse, from the record: lists what it removes and what it keeps (and why), confirms |
+| `anfs path <stack>` | the stack's directory |
+| `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
+
+- Each tool runs once per kind with every resource of that kind still missing (`ppm install -y a
+  b c`, `psm install`, `pcm install`, `pmm install`); wsm installs one level per run, so spaces are
+  one `wsm install <level>` each. A resource already there is not reinstalled.
+- A tool not installed for a kind the stack has is 69 (`ppm install core/<tool>`), checked with
+  the plan, before anything runs.
+- **vaults** are declared and shown, but pvm installs nothing from sources yet: install says so
+  and records none.
+- `--build` installs only packages and skills (what belongs in an image), no `status:`, never a
+  vault; the record says `build: true`.
+- `-t/--target` takes only `host` for now; anything else is 64 (container: and machine: are plan
+  `stacks/04-boxes`).
+- `anfs install <source>` with a source's name is 64: "did you mean anfs src install <source>".
+- What is there is asked of each tool with `--json` ("Lists and --json"): `ppm list --installed`
+  (`installed` not null), `psm list` (`ok`, `partial`), `wsm list` (`dir` not null), `pcm list`
+  (`status` not null nor `shadowed`), `pmm list` (`running`, `stopped`). A bare name matches any
+  source's.
+
+**The record**, `$ANFS_STATE_HOME/stacks/<source>/<name>.yml`, one per stack installed, the stacks
+it depends on included (installing `b` that depends on `a` records both). It is written as the
+install goes, kind by kind, so a failed install leaves a record of what it did:
+
+```yaml
+stack: lgat/rails
+version: "0.2.0"
+installed_at: 2026-10-19T12:00:00Z
+build: false
+resources:
+  - { kind: packages, resource: "stack/ruby", from: "lgat/rails", before: false }
+  - { kind: packages, resource: "stack/git", from: "core/system", before: true }
+```
+
+- `before: true` when the resource was there before this install and no other stack's record
+  holds it (what another stack installed is anfs's, protected by that record instead).
+- **The remove rule**: `anfs remove <stack>` removes a resource only if `before: false` and no
+  other record holds it. A resource removed by hand since is skipped. The record is deleted at the
+  end; when a tool fails it is kept, to remove again.
+- Re-running `install` installs what is missing and updates the record; it never flips `before`
+  from true to false.
 
 ## pmm: machines
 
@@ -84,7 +166,7 @@ machines/networks/<name>/      a network (network.yml)
   that loads the images' catalogue. `__complete` loads neither.
 - **Apple allows two macOS guests running at once.** `pmm up` counts tart's running macOS guests,
   whoever started them, and refuses a third before it clones or boots anything.
-- `pmm install` (what `anfs install` runs) makes and starts defined machines; `pmm install
+- `pmm install` (what `anfs src install` and a stack's `machines:` run) makes and starts defined machines; `pmm install
   source/` builds the source's images, installs its networks, then its machines.
   `PMM_INSTALL=create` builds and makes but starts nothing, and `PMM_INSTALL=validate` only
   validates, which is what the round trips use (no KVM in a podman box).
@@ -703,6 +785,8 @@ The keys, which are the interface:
 | `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
 | `wsm list` | `space` (the level: a source's ends in `/`), `status` (`stale`, `not in the source`), `level` (`source`, `workspace`, `space`), `dir` |
 | `wsm repo list` | `repository` (`<level>/<path>`), `status` (`clean`, `dirty`, `missing`, `not a repo`, `not installed`, `no path`), `url` |
+| `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
+| `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
 | `anfs src list` | `source` (the alias), `status`, `url`, `list` (`user`, `system`), `provides` (a list) |
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
@@ -779,7 +863,7 @@ and all):
 - `anfs machine image build debian-13` is `pmm image build debian-13`; `anfs help machine` is
   `pmm help`; `anfs __complete machine ...` is `pmm __complete ...`. They are listed under "Tools"
   in `anfs help`.
-- The tool is `~/.local/bin/<tool>`, as `anfs install` runs it. One that is not there is
+- The tool is `~/.local/bin/<tool>`, as `anfs install` and `anfs src install` run it. One that is not there is
   `pmm is not installed (ppm install core/pmm)`, exit 69.
 - `sh/anfs.sh`'s `anfs` function sends each of the six through the tool's own shell function when
   it has one, so `anfs package cd` and the reload after an install work as `ppm`'s do, and `anfs
@@ -816,7 +900,8 @@ they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machi
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
 says what would happen.
 
-A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`), never in a group
+A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`; anfs's is the
+stack, `anfs list`), never in a group
 of its own name; a group is for another kind of thing the tool manages (`psm repo`, `psm agents`,
 `wsm repo`, `pmm image`, `pmm network`). The same kind takes the same group name in every tool:
 `repo` is where a tool's repositories are listed and installed.
