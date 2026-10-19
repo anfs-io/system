@@ -64,7 +64,7 @@ case "$cmd" in
     sep="" ; printf '['
     while read -r n; do
       case "$t" in
-        ppm) printf '%s{"package":"%s","installed":"0.1.0"}' "$sep" "$n" ;;
+        ppm) printf '%s{"package":"%s","status":"installed","version":"0.1.0"}' "$sep" "$n" ;;
         pcm) printf '%s{"container":"%s","status":"running"}' "$sep" "$n" ;;
         *)   printf '%s{"skill":"%s","status":"ok"}' "$sep" "$n" ;;
       esac
