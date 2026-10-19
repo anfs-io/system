@@ -102,6 +102,7 @@ compose_flags() {
       elif [[ -n "$network" ]]; then
         printf '    networks:\n      - default\n      - %s\n' "$network"
       fi
+      _override_toolkit_env "$service"
       _override_mount_sets "$service" "$key"
       _override_memory "$service"
       _override_snapshot_image "$service" "$key"
@@ -121,6 +122,7 @@ _override_mount_sets() {
       anfs-sources) lines+="$(mount_set_anfs_sources "$target" "$ro")"$'\n' ;;
     esac
   done < <(mount_sets "$svc")
+  lines+="$(_override_toolkit_volume "$svc")"$'\n'
   [[ -n "${lines//$'\n'/}" ]] || return 0
   printf '    volumes:\n%s' "$lines"
 }
@@ -136,6 +138,56 @@ mount_set_anfs_sources() {
     dir=$(cd -P "$(gitsrc_dir "$name")" 2>/dev/null && pwd) || continue
     printf '      - "%s:%s/%s%s"\n' "$dir" "$target" "$name" "$suffix"
   done
+}
+
+# --- toolkit: the toolkit's API (anfs rpc), for a service whose container.yml asks ------------
+# macOS: the listener is TCP on the host's loopback, which a container reaches at
+# host.containers.internal; the grant's token is in the environment compose runs with
+# (compose_run), and the override says only ${ANFS_RPC_TOKEN}: never the token on disk.
+# Linux: the grant's unix socket (rpc.sock, rpc-write.sock) mounted at /run/anfs/rpc.sock.
+
+# read, write, or empty
+toolkit_grant() { manifest_get "$1" toolkit; }
+
+_toolkit_macos() { [[ "${PCM_TOOLKIT_OS:-$OSTYPE}" == darwin* || "${PCM_TOOLKIT_OS:-}" == macos ]]; }
+
+# The listener's port, as core/anfs wrote it
+toolkit_port() {
+  local f="$ANFS_STATE_HOME/rpc/port"
+  if [[ -s "$f" ]]; then cat "$f"; else echo "${ANFS_RPC_PORT:-47100}"; fi
+}
+
+# The host's socket for grant $1
+toolkit_socket() {
+  local name=rpc.sock
+  [[ "$1" == write ]] && name=rpc-write.sock
+  echo "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/anfs/$name"
+}
+
+# Service $1's grant's token (macOS), or fails with a warning when core/anfs made none
+toolkit_token() {
+  local g f
+  g=$(toolkit_grant "$1")
+  [[ -n "$g" ]] && _toolkit_macos || return 1
+  f="$ANFS_STATE_HOME/rpc/token.$g"
+  [[ -s "$f" ]] || { anfs_warn "$1 asks for toolkit: $g, but there is no $(tilde "$f") (ppm install core/anfs)"; return 1; }
+  cat "$f"
+}
+
+_override_toolkit_env() {
+  [[ -n "$(toolkit_grant "$1")" ]] || return 0
+  if _toolkit_macos; then
+    printf '    environment:\n      ANFS_RPC_URL: "tcp://host.containers.internal:%s"\n      ANFS_RPC_TOKEN: "${ANFS_RPC_TOKEN:-}"\n' "$(toolkit_port)"
+  else
+    printf '    environment:\n      ANFS_RPC_URL: "unix:///run/anfs/rpc.sock"\n'
+  fi
+}
+
+_override_toolkit_volume() {
+  local g
+  g=$(toolkit_grant "$1")
+  [[ -n "$g" ]] && ! _toolkit_macos || return 0
+  printf '      - "%s:/run/anfs/rpc.sock"\n' "$(toolkit_socket "$g")"
 }
 
 # The image a snapshot saved for compose service $2, while service $1 runs from a snapshot
@@ -210,9 +262,14 @@ service_run() {
 
 # Run compose for service $1, as project <name>
 compose_run() {
-  local service="$1"
+  local service="$1" token
   shift
-  service_run "$service" -- "${RUNNER[@]}" -p "$(svc_name "$service")" "$@"
+  # The toolkit's token, in compose's environment only (the override says ${ANFS_RPC_TOKEN})
+  if token=$(toolkit_token "$service"); then
+    ANFS_RPC_TOKEN="$token" service_run "$service" -- "${RUNNER[@]}" -p "$(svc_name "$service")" "$@"
+  else
+    service_run "$service" -- "${RUNNER[@]}" -p "$(svc_name "$service")" "$@"
+  fi
 }
 
 # Wait until every container in a service's project that has a healthcheck is healthy

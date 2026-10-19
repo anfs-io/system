@@ -79,7 +79,7 @@ cmd_list() {
   while IFS='|' read -r name _prio src status fields; do
     [[ -z "$name" ]] || printf '%s%s%s%s%s\n' "$src/$name" "$ANFS_US" "$status" "$ANFS_US" "$fields"
   done < <(printf '%s' "$rows" | sort -t'|' -k1,1 -k2,2) |
-    anfs_table "CONTAINER STATUS VERSION" "container status version description upstream license url memory"
+    anfs_table "CONTAINER STATUS VERSION" "container status version description upstream license url memory toolkit"
 }
 
 cmd_path() {

@@ -9,12 +9,15 @@
 #   license: MIT
 #   url: https://github.com/anfs-io/anfs-ui
 #   memory: 512m                            what it needs; also its limit
+#   toolkit: write                          the toolkit's API (anfs rpc), read or write: pcm hands
+#                                           the service the address and its grant's token (macOS)
+#                                           or the grant's socket (Linux); absent, nothing
 #
 # Every key is optional beside version; an unknown one is a validate error. compose.yml stays
 # plain compose: nothing here moves into it. A service without a container.yml is still valid
 # (version -), with a warning.
 
-PCM_MANIFEST_KEYS="version description upstream license url memory"
+PCM_MANIFEST_KEYS="version description upstream license url memory toolkit"
 
 # MiB the podman machine gets on top of what its containers need: its own OS
 : "${PCM_MACHINE_HEADROOM:=1024}"
@@ -34,10 +37,10 @@ manifest_get() {
 manifest_fields() {
   local file
   file=$(manifest_file "$1")
-  MANIFEST=("" "" "" "" "" "")
+  MANIFEST=("" "" "" "" "" "" "")
   [[ -f "$file" ]] || return 0
-  mapfile -t MANIFEST < <(yq eval '[.version, .description, .upstream, .license, .url, .memory] | .[] | (. // "") | tostring' "$file" 2>/dev/null)
-  [[ ${#MANIFEST[@]} -eq 6 ]] || MANIFEST=("" "" "" "" "" "")
+  mapfile -t MANIFEST < <(yq eval '[.version, .description, .upstream, .license, .url, .memory, .toolkit] | .[] | (. // "") | tostring' "$file" 2>/dev/null)
+  [[ ${#MANIFEST[@]} -eq 7 ]] || MANIFEST=("" "" "" "" "" "" "")
 }
 
 # A memory size (512m, 2g, 1.5g, 1024k; a plain number is bytes, as in compose) in MiB, rounded
@@ -71,10 +74,10 @@ mib_human() {
 # validate: container.yml is a map of known keys with a version; memory parses and is what any
 # compose mem_limit says
 check_manifest() {
-  local svc="$1" file k version memory want key limit
+  local svc="$1" file k version memory want key limit toolkit
   file=$(manifest_file "$svc")
   if [[ ! -f "$file" ]]; then
-    v_warn "$svc" "no container.yml (version, description, upstream, license, url, memory)"
+    v_warn "$svc" "no container.yml (version, description, upstream, license, url, memory, toolkit)"
     return 0
   fi
   if [[ "$(yq eval 'tag' "$file" 2>/dev/null)" != "!!map" ]]; then
@@ -87,6 +90,9 @@ check_manifest() {
   done < <(yq eval 'keys | .[]' "$file")
   version=$(manifest_get "$svc" version)
   [[ -n "$version" ]] || v_error "$svc" "container.yml: version: is required"
+  toolkit=$(manifest_get "$svc" toolkit)
+  [[ -z "$toolkit" || "$toolkit" == read || "$toolkit" == write ]] ||
+    v_error "$svc" "container.yml: toolkit '$toolkit' is read or write"
 
   memory=$(manifest_get "$svc" memory)
   [[ -n "$memory" ]] || return 0
