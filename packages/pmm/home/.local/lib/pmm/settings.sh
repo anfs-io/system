@@ -8,7 +8,7 @@
 # same keys, and its id is `-/<name>`, the source that is no source. Everything below reads either
 # through mach_q, so nothing else knows which it is.
 
-PMM_KEYS="image media profile cpus memory disk shares ports interfaces user arch description"
+PMM_KEYS="version image media profile cpus memory disk shares ports interfaces user arch description"
 PMM_RUN_SOURCE=-
 
 # True for the id of a machine that was run from an image

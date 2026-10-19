@@ -1,5 +1,6 @@
 # Debian 13 (trixie) from the netinst ISO. Everything the build reads is in this directory:
 # preseed.cfg (rendered with vars: below), provision/, test.sh. `pmm image show debian-13` lists it.
+version: 0.1.0
 description: Debian 13 base image
 distro: debian
 arch: [arm64, amd64]

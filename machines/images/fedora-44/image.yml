@@ -1,5 +1,6 @@
 # Fedora 44 Server from the netinst ISO. Everything the build reads is in this directory:
 # kickstart.ks (rendered with vars: below), provision/, test.sh. `pmm image show fedora-44` lists it.
+version: 0.1.0
 description: Fedora 44 base image
 distro: fedora
 arch: [arm64, amd64]
