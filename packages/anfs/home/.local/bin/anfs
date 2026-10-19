@@ -125,6 +125,10 @@ cli_cmd callbacks "Who listens to which tool's events (ppm and wsm emit
 install and remove): tool, listener, ok or stale, handler" --arg "[tool]"
 cli_cmd log "Print the log every tool writes; of one tool when named" \
   --opt "-f --follow: Keep printing as it grows" --arg "[tool]"
+cli_cmd rpc "The toolkit's API: a JSON request per line on stdin, a JSON
+answer per line on stdout (run, stream, yes, watch, version). Only
+the toolkit's tools, never a shell; a write needs --grant write" \
+  --opt "--grant GRANT: read (the default) or write"
 cli_standard
 
 # The tools, by what each manages: the whole line goes to the tool (_anfs_forward)
@@ -586,6 +590,238 @@ _login_shell() {
 }
 
 _tilde() { anfs_display "$1"; }
+
+# --- the toolkit API: anfs rpc --------------------------------------------------------------------
+#
+# A filter: JSON lines in, JSON lines out, until EOF (plan 02 puts it behind a socket). A request:
+#   {"run":["ppm","list"]}                 {"exit":0,"data":<--json output>} or {"exit":0,"out":"..."}
+#   {"run":[...],"stream":true}            {"out":"<line>"} per line of stdout+stderr, then {"exit":N}
+#   {"run":[...],"yes":true}               the same with -y (before a --, else at the end)
+#   {"watch":true}                         {"event":"start"|"end",...} per tool run, from anfs.log,
+#                                          until stdin closes (other requests still answered)
+#   {"version":true}                       {"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}
+# A failed run is {"exit":N,"error":"<last stderr line>"}; 77 adds "needs":"terminal" and the
+# command. Anything else is {"error":"..."} and the next line is read.
+#
+# run[0] is anfs, one of ANFS_TOOLS or pvm, from $ANFS_BIN_DIR, never PATH; the rest is an argv,
+# never a shell. Refused: anfs rpc, any implode. Read (allowed under --grant read): a tool's
+# list|ls, show, status, path, validate, --version, version (in a group too: pmm image list;
+# through anfs: anfs package list). A read gets --json and ANFS_LOG=off; every run has stdin
+# /dev/null, ANFS_RPC=1 (no terminal: confirm and sudo exit 77) and ANFS_RPC_TIMEOUT seconds
+# (60; a stream has none).
+
+RPC_GROUPS=" agents file image iso link machine network repo snapshot src "
+RPC_READ=" list ls show status path validate --version version "
+
+# A JSON string, into REPLY
+_rpc_str() {
+  local LC_ALL=C s="$1" out="" c i
+  s=${s//\\/\\\\} s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n} s=${s//$'\r'/\\r} s=${s//$'\t'/\\t}
+  if [[ "$s" == *[$'\x01'-$'\x1f']* ]]; then
+    for (( i = 0; i < ${#s}; i++ )); do
+      c=${s:i:1}
+      [[ "$c" != [$'\x01'-$'\x1f'] ]] || printf -v c '\\u%04x' "'$c"
+      out+=$c
+    done
+    s=$out
+  fi
+  REPLY="\"$s\""
+}
+
+# A JSON array of strings, into REPLY
+_rpc_arr() {
+  local a out=""
+  for a in "$@"; do _rpc_str "$a"; out+=",$REPLY"; done
+  REPLY="[${out#,}]"
+}
+
+_rpc_error() { _rpc_str "$1"; printf '{"error":%s}\n' "$REPLY"; }
+
+# The command word of a tool's argv (options, anfs's tool names and a group skipped), in RPC_VERB
+_rpc_verb() {
+  local tool="$1" w w2 group=false
+  shift
+  RPC_VERB=""
+  for w in "$@"; do
+    [[ "$w" != --version ]] || { RPC_VERB=$w; return 0; }
+    [[ "$w" != -* ]] || continue
+    w2="${CLI_ALIAS_TO[$w]:-$w}"
+    if [[ "$tool" == anfs && -n "${ANFS_TOOL_OF[$w2]:-}" ]]; then
+      tool="${ANFS_TOOL_OF[$w2]}"
+      continue
+    fi
+    if ! $group && [[ "$RPC_GROUPS" == *" $w "* ]]; then group=true; continue; fi
+    RPC_VERB=$w
+    return 0
+  done
+}
+
+# Run RPC_ARGV and answer. Usage: _rpc_run <stream> <yes>
+_rpc_run() {
+  local stream="$1" yes="$2" tool="${RPC_ARGV[0]:-}" bin read=false rc=0 i
+  local -a args=("${RPC_ARGV[@]:1}")
+  [[ "$tool" =~ ^[a-z]+$ && " anfs $ANFS_TOOLS pvm " == *" $tool "* ]] ||
+    { _rpc_error "not a toolkit tool: $tool (anfs ${ANFS_TOOLS} pvm)"; return 0; }
+  bin="$ANFS_BIN_DIR/$tool"
+  [[ -x "$bin" && ! -d "$bin" ]] || { _rpc_error "$tool is not installed"; return 0; }
+  _rpc_verb "$tool" ${args[@]+"${args[@]}"}
+  [[ "$RPC_VERB" != implode ]] || { _rpc_error "refused: implode"; return 0; }
+  [[ "$tool $RPC_VERB" != "anfs rpc" ]] || { _rpc_error "refused: anfs rpc"; return 0; }
+  [[ -z "$RPC_VERB" || "$RPC_READ" != *" $RPC_VERB "* ]] || read=true
+  [[ -n "$RPC_VERB" ]] || read=true   # the tool's help
+  if ! $read && [[ "$RPC_GRANT" != write ]]; then
+    _rpc_error "refused: a write request (${RPC_VERB}) under --grant read"
+    return 0
+  fi
+  if $yes; then
+    for (( i = 0; i < ${#args[@]}; i++ )); do [[ "${args[i]}" != -- ]] || break; done
+    args=(${args[@]+"${args[@]:0:i}"} -y ${args[@]+"${args[@]:i}"})
+  fi
+  if $read && ! $stream; then args=(--json ${args[@]+"${args[@]}"}); fi
+  _rpc_arr "$tool" ${args[@]+"${args[@]}"}
+  local cmd="$REPLY" dir="$RPC_TMP/run"
+  rm -rf "$dir"; mkdir -p "$dir"
+
+  if $stream; then
+    set +e
+    ( ! $read || export ANFS_LOG=off; exec "$bin" ${args[@]+"${args[@]}"} </dev/null 2>&1 ) |
+      while IFS= read -r line || [[ -n "$line" ]]; do _rpc_str "$line"; printf '{"out":%s}\n' "$REPLY"; done
+    rc=${PIPESTATUS[0]}
+    set -e
+  else
+    ( ! $read || export ANFS_LOG=off; exec "$bin" ${args[@]+"${args[@]}"} </dev/null >"$dir/out" 2>"$dir/err" ) &
+    local pid=$! wpid
+    mkfifo "$dir/tick"
+    # the timeout: a read on a fifo nobody writes, then the run and its children
+    ( exec {fd}<>"$dir/tick"
+      read -r -t "$RPC_TIMEOUT" -u "$fd" _ ||
+        { : > "$dir/timeout"; pkill -TERM -P "$pid"; kill -TERM "$pid"; } ) 2>/dev/null &
+    wpid=$!
+    wait "$pid" || rc=$?
+    kill "$wpid" 2>/dev/null || true
+    wait "$wpid" 2>/dev/null || true
+  fi
+
+  if [[ -f "$dir/timeout" ]]; then
+    printf '{"exit":124,"error":"timed out after %ss","command":%s}\n' "$RPC_TIMEOUT" "$cmd"
+    return 0
+  fi
+  if $stream; then
+    if [[ $rc == 77 ]]; then printf '{"exit":77,"needs":"terminal","command":%s}\n' "$cmd"
+    else printf '{"exit":%d}\n' "$rc"; fi
+    return 0
+  fi
+  local last=""
+  [[ ! -s "$dir/err" ]] || last=$(grep -v '^[[:space:]]*$' "$dir/err" | tail -n 1) || true
+  _rpc_str "$last"
+  if [[ $rc == 77 ]]; then
+    printf '{"exit":77,"needs":"terminal","command":%s,"error":%s}\n' "$cmd" "$REPLY"
+  elif [[ $rc != 0 ]]; then
+    printf '{"exit":%d,"error":%s}\n' "$rc" "$REPLY"
+  else
+    local data first
+    first=$(tr -d ' \t\n\r' < "$dir/out" | head -c 1)
+    if $read && [[ "$first" == [\[\{] ]] && data=$(yq -p json -o json -I0 . "$dir/out" 2>/dev/null); then
+      printf '{"exit":0,"data":%s}\n' "$data"
+    else
+      local out
+      out=$(cat "$dir/out"; echo x); out=${out%x}; out=${out%$'\n'}
+      _rpc_str "$out"
+      printf '{"exit":0,"out":%s}\n' "$REPLY"
+    fi
+  fi
+}
+
+# One anfs.log line as an event: <time> <tool>[<pid>] start: <id> <args> | end: <id> <exit>
+_rpc_events() {
+  local line re='^([^ ]+) ([^[ ]+)\[([0-9]+)\] (start|end): ([0-9]+-[0-9]+) ?(.*)$'
+  local time tool pid kind id rest
+  while IFS= read -r line; do
+    [[ "$line" =~ $re ]] || continue
+    time=${BASH_REMATCH[1]} pid=${BASH_REMATCH[3]} kind=${BASH_REMATCH[4]}
+    id=${BASH_REMATCH[5]} rest=${BASH_REMATCH[6]}
+    _rpc_str "${BASH_REMATCH[2]}"; tool=$REPLY
+    if [[ "$kind" == start ]]; then
+      _rpc_str "$rest"
+      printf '{"event":"start","id":"%s","tool":%s,"pid":%s,"time":"%s","args":%s}\n' \
+        "$id" "$tool" "$pid" "$time" "$REPLY"
+    elif [[ "$rest" =~ ^[0-9]+$ ]]; then
+      printf '{"event":"end","id":"%s","tool":%s,"pid":%s,"time":"%s","exit":%s}\n' \
+        "$id" "$tool" "$pid" "$time" "$rest"
+    fi
+  done
+}
+
+# Follow anfs.log from where it is now; stopped at EOF
+_rpc_watch() {
+  [[ -z "$RPC_WATCH" ]] || { _rpc_error "already watching"; return 0; }
+  declare -F anfs_log_file >/dev/null && anfs_log_file || { _rpc_error "logging is off (ANFS_LOG=off)"; return 0; }
+  mkdir -p "${ANFS_LOG_FILE%/*}"
+  [[ -f "$ANFS_LOG_FILE" ]] || : > "$ANFS_LOG_FILE"
+  local size
+  size=$(wc -c < "$ANFS_LOG_FILE" | tr -d ' ')
+  tail -c +$(( size + 1 )) -F "$ANFS_LOG_FILE" 2>/dev/null > >(_rpc_events) &
+  RPC_WATCH=$!
+}
+
+_rpc_version() {
+  local t v out=""
+  [[ -n "$CLI_VERSION" ]] || cli_package_version
+  for t in $ANFS_TOOLS pvm; do
+    [[ -x "$ANFS_BIN_DIR/$t" ]] || continue
+    v=$(ANFS_LOG=off "$ANFS_BIN_DIR/$t" --version </dev/null 2>/dev/null) || continue
+    _rpc_str "${v##* }"
+    out+=",\"$t\":$REPLY"
+  done
+  _rpc_str "${CLI_VERSION:-unknown}"
+  printf '{"anfs":%s,"tools":{%s}}\n' "$REPLY" "${out#,}"
+}
+
+# One request line
+_rpc_request() {
+  local f="$RPC_TMP/req" n i
+  local -a h
+  if ! printf '%s' "$1" | yq -p json -0 'tag, ((.run | tag) // ""), (.stream // false), (.yes // false), (.watch // false), (.version // false), (.run[]? | (tag, .))' > "$f" 2>/dev/null; then
+    _rpc_error "not a JSON request"; return 0
+  fi
+  mapfile -d '' -t h < "$f"
+  [[ "${h[0]:-}" == '!!map' ]] || { _rpc_error "a request is a JSON object"; return 0; }
+  if [[ "${h[1]}" == '!!seq' ]]; then
+    n=$(( (${#h[@]} - 6) / 2 ))
+    (( n > 0 )) || { _rpc_error "run is a non-empty array of strings"; return 0; }
+    RPC_ARGV=()
+    for (( i = 0; i < n; i++ )); do
+      [[ "${h[6 + i]}" == '!!str' ]] || { _rpc_error "run is a non-empty array of strings"; return 0; }
+      RPC_ARGV+=("${h[6 + n + i]}")
+    done
+    _rpc_run "$([[ ${h[2]} == true ]] && echo true || echo false)" "$([[ ${h[3]} == true ]] && echo true || echo false)"
+  elif [[ -n "${h[1]}" && "${h[1]}" != '!!null' ]]; then
+    _rpc_error "run is a non-empty array of strings"
+  elif [[ "${h[4]}" == true ]]; then _rpc_watch
+  elif [[ "${h[5]}" == true ]]; then _rpc_version
+  else _rpc_error "unknown request (run, watch or version)"
+  fi
+}
+
+cmd_rpc() {
+  RPC_GRANT="${CLI_OPT[grant]:-read}" RPC_WATCH="" RPC_TIMEOUT="${ANFS_RPC_TIMEOUT:-60}"
+  [[ "$RPC_GRANT" == read || "$RPC_GRANT" == write ]] || cli_usage_err "--grant is read or write"
+  [[ "$RPC_TIMEOUT" =~ ^[0-9]+$ ]] || cli_usage_err "ANFS_RPC_TIMEOUT is seconds"
+  command -v yq >/dev/null 2>&1 || { echo "anfs: yq is required" >&2; exit 69; }
+  export ANFS_RPC=1
+  RPC_TMP=$(mktemp -d "${TMPDIR:-/tmp}/anfs-rpc.XXXXXX")
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -n "${line//[[:space:]]/}" ]] || continue
+    _rpc_request "$line"
+  done
+  if [[ -n "$RPC_WATCH" ]]; then
+    kill "$RPC_WATCH" 2>/dev/null || true
+    wait "$RPC_WATCH" 2>/dev/null || true
+  fi
+  rm -rf "$RPC_TMP"
+}
 
 _anfs_forward "$@"
 cli_dispatch "$@"
