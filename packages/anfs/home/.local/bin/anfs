@@ -21,6 +21,13 @@
 #   implode [-y] [--all]               every tool's implode, then anfs itself; --all also what
 #                                      install.sh added (Homebrew when it installed it)
 #
+# Tools: each tool by what it manages (`anfs machine ...` is `pmm ...`, exec'd), its name an alias:
+#   package (ppm)  container (pcm)  machine (pmm)  skill (psm)  space (wsm)  vault (pvm)
+#
+# From packages: `anfs <name>`, when anfs declares no such command, execs ~/.local/bin/anfs-<name>
+# with the rest of the line (anfs-dev/dev's anfs work and anfs hooks). Nothing of a package is
+# sourced into anfs, and a declared command always wins.
+#
 # Cherry-picking within a source is each tool's business: ppm install lgat/rails,
 # pcm install lgat/postgres, wsm install lgat/main/tech.
 set -euo pipefail
@@ -96,6 +103,82 @@ install and remove): tool, listener, ok or stale, handler" --arg "[tool]"
 cli_cmd log "Print the log every tool writes; of one tool when named" \
   --opt "-f --follow: Keep printing as it grows" --arg "[tool]"
 cli_standard
+
+# The tools, by what each manages: the whole line goes to the tool (_anfs_forward)
+declare -A ANFS_TOOL_OF=()
+cli_section Tools
+_anfs_tool() {
+  ANFS_TOOL_OF[$1]="$2"
+  cli_cmd "$1" "$3 ($2 <command>)" --alias "$2"
+}
+_anfs_tool package   ppm "Packages: software and dotfiles"
+_anfs_tool container pcm "Containers: podman compose services"
+_anfs_tool machine   pmm "Machines, their images and networks"
+_anfs_tool skill     psm "Agent skills"
+_anfs_tool space     wsm "Workspaces of spaces"
+_anfs_tool vault     pvm "Secrets"
+
+# Commands from packages: an executable anfs-<name> in ~/.local/bin, for a name anfs does not
+# declare. Read from the file names alone, so help and completion start no process.
+declare -A ANFS_FROM_PACKAGE=()
+cli_section "From packages"
+for _bin in "$ANFS_BIN_DIR"/anfs-*; do
+  [[ -x "$_bin" && ! -d "$_bin" ]] || continue
+  _name="${_bin##*/anfs-}"
+  [[ "$_name" =~ ^[a-z][a-z0-9-]*$ ]] || continue
+  [[ -z "${CLI_KIND[$_name]:-}" && -z "${CLI_ALIAS_TO[$_name]:-}" ]] || continue
+  ANFS_FROM_PACKAGE[$_name]="$_bin"
+  cli_cmd "$_name" "$(anfs_display "$_bin")"
+done
+unset _bin _name
+
+# The executable a tool's or a package's command runs, into REPLY. Returns 1 for a name that is
+# anfs's own, or no command at all. A tool that is not installed is 69, unless <quiet>.
+_anfs_target() {
+  local name="${CLI_ALIAS_TO[$1]:-$1}" tool
+  if [[ -n "${ANFS_TOOL_OF[$name]:-}" ]]; then
+    tool="${ANFS_TOOL_OF[$name]}"
+    REPLY="$ANFS_BIN_DIR/$tool"
+    [[ -x "$REPLY" ]] && return 0
+    [[ -z "${2:-}" ]] || return 1
+    ! declare -F anfs_fail >/dev/null || anfs_fail 69 "$tool is not installed (ppm install core/$tool)"
+    echo "anfs: $tool is not installed (ppm install core/$tool)" >&2
+    exit 69
+  fi
+  [[ -n "${ANFS_FROM_PACKAGE[$name]:-}" ]] || return 1
+  REPLY="${ANFS_FROM_PACKAGE[$name]}"
+}
+
+# A line that is a tool's or a package's command is that executable's, all of it: exec'd with the
+# rest, so its exit status and output are the command's. So are `help <name>` and completion after
+# the name. anfs's -d, --trace and --json go along. Returns when the line is anfs's own.
+_anfs_forward() {
+  local -a pre=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in -d|--debug|--trace) pre+=("$1") ;; *) break ;; esac
+    shift
+  done
+  case "${1:-}" in
+    __complete)
+      shift
+      while [[ $# -gt 0 ]]; do
+        case "$1" in -d|--debug|--trace|--json) shift ;; *) break ;; esac
+      done
+      # the name itself is still being typed: anfs completes it
+      [[ $# -ge 2 ]] && _anfs_target "$1" quiet || return 0
+      exec "$REPLY" __complete "${@:2}"
+      ;;
+  esac
+  cli_globals "$@"
+  set -- ${CLI_ARGS[@]+"${CLI_ARGS[@]}"}
+  [[ "${ANFS_JSON:-}" != true ]] || pre+=(--json)
+  if [[ "${1:-}" == help && $# -ge 2 ]]; then
+    _anfs_target "$2" || return 0
+    exec "$REPLY" ${pre[@]+"${pre[@]}"} help "${@:3}"
+  fi
+  [[ $# -ge 1 ]] && _anfs_target "$1" || return 0
+  exec "$REPLY" ${pre[@]+"${pre[@]}"} "${@:2}"
+}
 
 cli_help_epilogue() {
   cat <<'EOF'
@@ -409,4 +492,5 @@ _login_shell() {
 
 _tilde() { anfs_display "$1"; }
 
+_anfs_forward "$@"
 cli_dispatch "$@"

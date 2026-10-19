@@ -76,14 +76,21 @@ need_old_bash() {
 }
 
 @test "every entry point sources the floor before anything else of lib/anfs" {
-  local f first
-  for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm}/home/.local/bin/* \
+  local f first n=0
+  # core's own: the tools, anything a package of core runs as anfs <name> (anfs-*), pcm's edge
+  # providers, pmm's provisioners. The dev package's (the hook, anfs-work, anfs-hooks) are checked
+  # the same way in the anfs-dev source's tests.
+  for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm,pvm}/home/.local/bin/* \
+           "$REPO"/packages/*/home/.local/bin/anfs-* \
            "$REPO"/packages/pcm/home/.local/lib/pcm/edges/{local,cloudflare-tunnel} \
-           "$REPO"/packages/pmm/home/.local/lib/pmm/provisioners/* \
-           "$REPO"/packages/dev/home/.config/git/ppm-hooks/pre-commit; do
+           "$REPO"/packages/pmm/home/.local/lib/pmm/provisioners/*; do
+    [[ -e "$f" ]] || continue
+    n=$((n + 1))
     first=$(grep -n 'lib/anfs/\|\$ANFS_LIB/' "$f" | grep 'source ' | head -1)
     [[ "$first" == *bash.sh* ]] || { echo "$f: first lib/anfs source is: $first"; return 1; }
   done
+  # the seven tools at least
+  (( n >= 7 ))
 }
 
 @test "the bootstrap set parses under the older bash" {

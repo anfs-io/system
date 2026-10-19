@@ -19,6 +19,8 @@
 # DECLARING
 #   cli_cmd <name> "<summary>" [--alias <name>]... [--opt "<spec>"]... [--arg "<spec>"]... [--passthrough]
 #   cli_group <name> "<summary>"       a command that only holds sub-commands
+#   cli_section "<title>"              the top-level commands declared after it are listed under
+#                                      <title> in help, after the others (anfs: Tools)
 #
 #   <name> may be two words; its function is cmd_<name> with the space (and any dash) as _.
 #   --opt "-y --yes: Do not ask"       a flag: short form, long form, what help says. Either
@@ -80,6 +82,9 @@ CLI_POS=()
 CLI_EX_USAGE="${CLI_EX_USAGE:-64}"
 # The command cli_dispatch is running, for cli_usage_err
 CLI_COMMAND=""
+# Top-level name -> the help section it is listed under (cli_section); the sections in order
+declare -gA CLI_SECTION=()
+CLI_SECTIONS=() _CLI_CUR_SECTION=""
 _CLI_US=$'\x1f'
 
 # --- Declaring ----------------------------------------------------------------------------
@@ -114,11 +119,18 @@ cli_cmd() {
     esac
   done
   CLI_NAMES+=("$name") CLI_SUMMARIES+=("$summary")
+  [[ -z "$_CLI_CUR_SECTION" || -n "$parent" ]] || CLI_SECTION[$name]="$_CLI_CUR_SECTION"
 }
 
 cli_group() {
   CLI_KIND[$1]=group
   CLI_NAMES+=("$1") CLI_SUMMARIES+=("${2:-}")
+  [[ -z "$_CLI_CUR_SECTION" ]] || CLI_SECTION[$1]="$_CLI_CUR_SECTION"
+}
+
+cli_section() {
+  _CLI_CUR_SECTION="$1"
+  CLI_SECTIONS+=("$1")
 }
 
 # completion and help: the same two lines in every tool, declared last
@@ -524,16 +536,17 @@ _cli_help_usage() {
   esac
 }
 
-# The commands under <prefix> ("" for the top level): usage lines in one column, then summaries
+# The commands under <prefix> ("" for the top level): usage lines in one column, then summaries.
+# At the top level, those of <section> only ("": the ones in none).
 cli_help_commands() {
-  local prefix="${1:+$1 }" i name width=0
+  local prefix="${1:+$1 }" section="${2:-}" i name width=0
   local -a usages=() summaries=()
   for i in "${!CLI_NAMES[@]}"; do
     name="${CLI_NAMES[$i]}"
     if [[ -n "$prefix" ]]; then
       [[ "$name" == "$prefix"* ]] || continue
     else
-      [[ "$name" != *" "* ]] || continue
+      [[ "$name" != *" "* && "${CLI_SECTION[$name]:-}" == "$section" ]] || continue
     fi
     _cli_help_usage "$name" "$prefix"
     usages+=("$REPLY") summaries+=("${CLI_SUMMARIES[$i]}")
@@ -550,6 +563,11 @@ cli_help() {
   echo ""
   echo "Commands:"
   cli_help_commands
+  local s out
+  for s in ${CLI_SECTIONS[@]+"${CLI_SECTIONS[@]}"}; do
+    out=$(cli_help_commands "" "$s")
+    [[ -z "$out" ]] || printf '\n%s:\n%s\n' "$s" "$out"
+  done
   echo ""
   echo "Options, before the command:"
   echo "  -d, --debug    Show debug output (always written to the log: anfs log)"

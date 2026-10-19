@@ -314,3 +314,119 @@ complete() { "$TOOL" __complete "$@"; }
   run "$TOOL" completion fish
   [ "$status" -eq 64 ]
 }
+
+# --- anfs: the tools as anfs <resource>, and commands from packages (anfs-<name>) ----------------
+
+# The real anfs in a temp HOME whose ~/.local/bin holds stubs: each prints its name and its
+# arguments, notes that it ran, and exits with $STUB_STATUS
+anfs_home() {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
+  export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
+  unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_STATE_HOME ANFS_CACHE_HOME ANFS_DEBUG ANFS_TRACE
+  mkdir -p "$HOME/.local/bin" "$HOME/.local/lib" "$HOME/.config/anfs"
+  ln -s "$LIB" "$HOME/.local/lib/anfs"
+  ANFS="$BATS_TEST_DIRNAME/../home/.local/bin/anfs"
+  RAN="$BATS_TEST_TMPDIR/ran"
+}
+stub() {
+  cat > "$HOME/.local/bin/$1" <<SH
+#!/usr/bin/env bash
+echo "\${0##*/}: \$*"
+echo "\${0##*/}" >> "$RAN"
+exit \${STUB_STATUS:-0}
+SH
+  chmod +x "$HOME/.local/bin/$1"
+}
+
+@test "anfs <name> runs anfs-<name> with the rest of the line, and its exit status is anfs's" {
+  anfs_home
+  stub anfs-x
+  STUB_STATUS=3 run "$ANFS" x a --b "c d"
+  [ "$status" -eq 3 ]
+  [ "$output" = "anfs-x: a --b c d" ]
+  # -d, --trace and --json given to anfs go along
+  run "$ANFS" -d x --json a
+  [ "$output" = "anfs-x: -d --json a" ]
+  run "$ANFS" x --help
+  [ "$output" = "anfs-x: --help" ]
+  run "$ANFS" help x sub
+  [ "$output" = "anfs-x: help sub" ]
+}
+
+@test "a declared command wins over anfs-<its name>, an alias too; an unknown name is still 64" {
+  anfs_home
+  stub anfs-callbacks
+  stub anfs-ppm
+  stub ppm
+  run "$ANFS" callbacks
+  [ "$status" -eq 0 ]
+  [ "$output" = "no callbacks registered" ]
+  run "$ANFS" ppm --version
+  [ "$output" = "ppm: --version" ]
+  run "$ANFS" help
+  [[ "$output" != *"anfs-callbacks"* && "$output" != *"anfs-ppm"* ]]
+  run "$ANFS" bogus
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"anfs: unknown command 'bogus'"* ]]
+}
+
+@test "the tools: anfs package and anfs ppm are ppm, line, status and all" {
+  anfs_home
+  stub ppm
+  stub pmm
+  run "$ANFS" package --version
+  [ "$output" = "ppm: --version" ]
+  run "$ANFS" ppm --version
+  [ "$output" = "ppm: --version" ]
+  STUB_STATUS=5 run "$ANFS" machine image build debian-13 --json
+  [ "$status" -eq 5 ]
+  [ "$output" = "pmm: --json image build debian-13" ]
+  run "$ANFS" help machine
+  [ "$output" = "pmm: help" ]
+}
+
+@test "a tool that is not installed: 69, and how to install it" {
+  anfs_home
+  run "$ANFS" machine list
+  [ "$status" -eq 69 ]
+  [[ "$output" == *"pmm is not installed (ppm install core/pmm)"* ]]
+  run "$ANFS" vault
+  [ "$status" -eq 69 ]
+  [[ "$output" == *"pvm is not installed"* ]]
+}
+
+@test "help lists the tools under Tools and the packages' commands under From packages" {
+  anfs_home
+  stub anfs-x
+  run "$ANFS" help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'\nTools:\n'*"package, ppm"*"machine, pmm"*"vault, pvm"* ]]
+  [[ "$output" == *$'\nFrom packages:\n  x '* ]]
+  [[ "$output" != *$'Commands:\n'*"  package, ppm"*$'\nTools:'* ]]
+  # without a package command there is no such section
+  rm "$HOME/.local/bin/anfs-x"
+  run "$ANFS" help
+  [[ "$output" != *"From packages"* ]]
+}
+
+@test "completion: the names start no process; after the name the executable is asked" {
+  anfs_home
+  stub anfs-x
+  stub ppm
+  run "$ANFS" __complete ""
+  [[ "$output" == *"x"$'\t'* && "$output" == *"machine"$'\t'*"(alias: pmm)"* ]]
+  run "$ANFS" __complete pa
+  [[ "$output" == *"package"$'\t'* ]]
+  [ ! -e "$RAN" ]
+  run "$ANFS" __complete x ""
+  [ "$output" = "anfs-x: __complete " ]
+  run "$ANFS" __complete package ins
+  [ "$output" = "ppm: __complete ins" ]
+  run "$ANFS" __complete -d ppm install ""
+  [ "$output" = "ppm: __complete install " ]
+  # a tool that is not installed completes nothing
+  run "$ANFS" __complete machine ""
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
