@@ -13,9 +13,9 @@ require_relative "fake_api"
 # Rows shaped like the tools' real output.
 ROWS = {
   "sources" => [
-    { "alias" => "stack", "url" => "git@example.com:anfs/stack", "list" => "system", "status" => "dirty",
+    { "source" => "stack", "url" => "git@example.com:anfs/stack", "list" => "system", "status" => "dirty",
       "provides" => %w[packages containers] },
-    { "alias" => "user", "url" => "git@example.com:me/anfs", "list" => "user", "status" => "clean",
+    { "source" => "user", "url" => "git@example.com:me/anfs", "list" => "user", "status" => "clean",
       "provides" => %w[spaces] }
   ],
   "packages" => [
@@ -23,16 +23,17 @@ ROWS = {
     { "package" => "stack/node", "status" => nil, "version" => "0.1.0" }
   ],
   "containers" => [
-    { "name" => "postgres", "source" => "stack", "status" => "running" },
-    { "name" => "redis", "source" => "stack", "status" => nil }
+    { "container" => "stack/postgres", "status" => "running", "version" => "0.1.0", "description" => "PostgreSQL" },
+    { "container" => "stack/redis", "status" => nil, "version" => "0.1.0", "description" => "Redis" }
   ],
   "machines" => [
-    { "name" => "debian-13", "source" => "local", "image" => "anfs/debian-13", "state" => "running",
-      "address" => "127.0.0.1:2222" }
+    { "machine" => "local/debian-13", "status" => "running", "image" => "anfs/debian-13",
+      "address" => "127.0.0.1:2222" },
+    { "machine" => "web1", "status" => "stopped", "image" => "core/debian-13", "address" => nil }
   ],
   "spaces" => [
-    { "id" => "user/dev/gems", "dir" => "#{Dir.home}/spaces/user/dev/gems", "level" => "space", "note" => nil },
-    { "id" => "user/dev/old", "dir" => nil, "level" => "space", "note" => nil }
+    { "space" => "user/dev/gems", "status" => nil, "level" => "space", "dir" => "#{Dir.home}/spaces/user/dev/gems" },
+    { "space" => "user/dev/old", "status" => nil, "level" => "space", "dir" => nil }
   ]
 }.freeze
 

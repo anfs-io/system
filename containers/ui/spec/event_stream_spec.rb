@@ -51,7 +51,7 @@ RSpec.describe EventStream do
   end
 
   it "sends the panel again when its kind changes, and a keepalive otherwise" do
-    store.put("containers", Anfs::Result.new(rows: [{ "name" => "minio", "source" => "stack" }], error: nil,
+    store.put("containers", Anfs::Result.new(rows: [{ "container" => "stack/minio", "status" => nil }], error: nil,
                                              exit_code: 0))
     socket = run("containers", limit: 3, publish: %w[containers])
 

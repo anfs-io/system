@@ -106,24 +106,30 @@ RSpec.describe App do
       expect(last_response.body).to include('data-turbo-confirm="Remove stack/ruby?"')
 
       get "/containers"
-      expect(last_response.body).to match(/value="down">.{0,80}value="postgres"/)
-      expect(last_response.body).to match(/value="up">.{0,80}value="redis"/)
+      expect(last_response.body).to match(%r{value="down">.{0,80}value="stack/postgres"})
+      expect(last_response.body).to match(%r{value="up">.{0,80}value="stack/redis"})
+
+      get "/machines"
+      expect(last_response.body).to match(%r{value="down">.{0,80}value="local/debian-13"})
+      expect(last_response.body).to match(/value="up">.{0,80}value="web1"/)
     end
 
-    it "offers install or remove on spaces, build on unbuilt images, sync on skills not ok" do
+    it "offers install or remove on spaces, build on unbuilt or stale images, sync on skills not ok" do
       ok = ->(rows) { Anfs::Result.new(rows:, error: nil, exit_code: 0) }
-      store.put("images", ok[[{ "name" => "debian-13", "source" => "anfs", "status" => "built arm64" },
-                              { "name" => "fedora-44", "source" => "anfs", "status" => nil },
-                              { "name" => "old", "source" => "user", "status" => "shadowed" }]])
-      store.put("skills", ok[[{ "status" => "partial", "config" => "pony", "skill" => "ponytail" },
-                              { "status" => "ok", "config" => "stack", "skill" => "hello" }]])
+      store.put("images", ok[[{ "image" => "core/debian-13", "status" => "built", "arch" => "arm64" },
+                              { "image" => "core/fedora-44", "status" => "unbuilt", "arch" => nil },
+                              { "image" => "core/alpine", "status" => "stale", "arch" => "arm64" },
+                              { "image" => "user/debian-13", "status" => "shadowed", "arch" => nil },
+                              { "image" => "gone", "status" => "unbuilt", "arch" => nil }]])
+      store.put("skills", ok[[{ "skill" => "pony/ponytail", "status" => "partial", "config" => "pony" },
+                              { "skill" => "stack/hello", "status" => "ok", "config" => "stack" }]])
 
       get "/spaces"
       expect(last_response.body).to match(%r{value="remove">.{0,80}value="user/dev/gems"})
       expect(last_response.body).to match(%r{value="install">.{0,80}value="user/dev/old"})
 
       get "/images"
-      expect(last_response.body.scan(/name="subject" value="([^"]+)"/)).to eq([["fedora-44"]])
+      expect(last_response.body.scan(/name="subject" value="([^"]+)"/)).to eq([["core/fedora-44"], ["core/alpine"]])
 
       get "/skills"
       expect(last_response.body.scan(/value="sync">.{0,60}value="([^"]+)"/)).to eq([["pony"]])
@@ -159,7 +165,8 @@ RSpec.describe App do
 
     it "refuses anything a row does not offer" do
       [%w[packages remove stack/node], %w[packages install stack/nope], %w[packages install -f],
-       %w[containers up postgres], %w[sources update stack]].each do |kind, verb, subject|
+       %w[containers up stack/postgres], %w[containers up postgres],
+       %w[sources update stack]].each do |kind, verb, subject|
         act kind, verb, subject
         expect(last_response.status).to eq(422)
       end

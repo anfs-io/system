@@ -47,10 +47,9 @@ module Views
 
     # Kinds whose rows belong to a source, as columns; sources as rows.
     def matrix
-      kinds = Anfs::KINDS.values_at("packages", "containers", "images", "machines", "spaces", "repos", "skills",
-                                    "links")
+      kinds = Anfs::KINDS.values.select { it.sourced == true }
       by_source = kinds.to_h { |kind| [kind.key, @store.rows(kind.key).group_by(&kind.source)] }
-      sources = @store.rows("sources").to_h { [it["alias"], it] }
+      sources = @store.rows("sources").to_h { [it["source"], it] }
       aliases = sources.keys | by_source.values.flat_map(&:keys).compact.sort
 
       div(class: "scroll") do

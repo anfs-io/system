@@ -1,82 +1,88 @@
 # frozen_string_literal: true
 
 module Anfs
-  # One kind of asset: the list command that reports it, how often to ask,
-  # and how to read a row. `status` and `source` are the two things every
-  # tool spells differently; `columns` is header => JSON key, and doubles as
-  # the whitelist of what is ever rendered.
+  # One kind of asset: the list command that reports it, how often to ask, and how to read a
+  # row (core AGENTS.md "Lists and --json"). Every list's first key is the resource, `source/name`
+  # (`id`), and `status` is the second; `unset` names a null status (a string, or from the row). `columns` is header =>
+  # JSON key, and doubles as the whitelist of what is ever rendered.
   #
-  # `action` says what can be done to a row, as [verb, subject] or nil: the
-  # one command that moves it out of the state it is in.
-  Kind = Data.define(:key, :label, :tool, :args, :every, :status, :source, :columns, :action, :action_flags) do
-    def initialize(action: nil, action_flags: [], **) = super
+  # A row's source is what comes before the / of its resource; a plain name (a machine run from
+  # an image) has none, nor do the lists that are not of a source's resources (`sourced: false`).
+  # A source's own row is its source (`sourced: :self`).
+  #
+  # `action` says what can be done to a row, as [verb, subject] or nil: the one command that
+  # moves it out of the state it is in. The subject is the qualified resource.
+  Kind = Data.define(:key, :label, :tool, :args, :every, :id, :columns, :unset, :sourced, :action, :action_flags) do
+    def initialize(unset: nil, sourced: true, action: nil, action_flags: [], **) = super
 
     def command = [tool, *args, "--json"].join(" ")
 
-    def action_command(verb, subject) = [tool, verb, *action_flags, subject]
-  end
+    # In the list's group, if any: `pmm image list` builds with `pmm image build`.
+    def action_command(verb, subject) = [tool, *args[...-1], verb, *action_flags, subject]
 
-  # Up or down by name, for a row whose state says which. Nothing for a
-  # definition shadowed by another source: the name would reach the other one.
-  toggle = lambda do |state_key|
-    lambda do |row|
-      state = row[state_key].to_s
-      [state.start_with?("running") ? "down" : "up", row["name"]] unless state.include?("shadowed")
+    def status = ->(row) { row["status"] || (unset.respond_to?(:call) ? unset[row] : unset) }
+
+    def source
+      lambda do |row|
+        value = row[id].to_s
+        next value if sourced == :self
+
+        value.split("/", 2).first if sourced && value.include?("/")
+      end
     end
   end
 
-  first_segment = ->(key) { ->(row) { row[key].to_s.split("/").first } }
+  # Up or down by resource, for a row whose status says which. Nothing for a definition shadowed
+  # by another source: it is listed and nothing else.
+  toggle = lambda do |id|
+    lambda do |row|
+      status = row["status"].to_s
+      [status.start_with?("running") ? "down" : "up", row[id]] unless status.include?("shadowed")
+    end
+  end
 
   KINDS = [
-    Kind.new(key: "sources", label: "Sources", tool: "anfs", args: %w[src list], every: 30,
-             status: ->(row) { row["status"] },
-             source: ->(row) { row["alias"] },
-             columns: { "Alias" => "alias", "List" => "list", "Provides" => "provides", "URL" => "url" }),
-    Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], every: 60,
-             # status is installed, outdated (the source has a newer version) or null.
-             status: ->(row) { row["status"] || "available" },
-             source: first_segment["package"],
+    Kind.new(key: "sources", label: "Sources", tool: "anfs", args: %w[src list], every: 30, id: "source",
+             sourced: :self,
+             columns: { "Source" => "source", "List" => "list", "Provides" => "provides", "URL" => "url" }),
+    Kind.new(key: "stacks", label: "Stacks", tool: "anfs", args: %w[list], every: 60, id: "stack",
+             unset: "not installed",
+             columns: { "Stack" => "stack", "Version" => "version" }),
+    # installed, outdated (the source's version is newer) or null.
+    Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], every: 60, id: "package",
+             unset: "available",
              columns: { "Package" => "package", "Version" => "version" },
              action: ->(row) { [row["status"] ? "remove" : "install", row["package"]] },
              action_flags: %w[-y]),
-    Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], every: 5,
-             status: ->(row) { row["status"] || "not created" },
-             source: ->(row) { row["source"] },
-             columns: { "Service" => "name", "Source" => "source" },
-             action: toggle["status"]),
-    Kind.new(key: "images", label: "Images", tool: "pim", args: %w[list], every: 30,
-             status: ->(row) { row["status"].to_s.start_with?("built") ? "built" : row["status"] || "not built" },
-             source: ->(row) { row["source"] },
-             columns: { "Image" => "name", "Source" => "source", "Builds" => "status" },
-             action: ->(row) { ["build", row["name"]] if row["status"].nil? }),
-    Kind.new(key: "machines", label: "Machines", tool: "pmm", args: %w[list], every: 5,
-             status: ->(row) { row["state"] },
-             source: ->(row) { row["source"] },
-             columns: { "Machine" => "name", "Source" => "source", "Image" => "image", "Address" => "address" },
-             action: toggle["state"]),
-    Kind.new(key: "spaces", label: "Spaces", tool: "wsm", args: %w[list], every: 30,
-             status: ->(row) { row["note"] || (row["dir"] ? "installed" : "not installed") },
-             source: first_segment["id"],
-             columns: { "Id" => "id", "Level" => "level", "Directory" => "dir" },
-             action: ->(row) { [row["dir"] ? "remove" : "install", row["id"]] }),
-    Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[list -r], every: 60,
-             status: ->(row) { row["state"] },
-             source: first_segment["path"],
-             columns: { "Path" => "path", "URL" => "url" }),
-    Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[skills list], every: 300,
-             status: ->(row) { row["status"] == "*" ? "wildcard" : row["status"] },
-             source: ->(row) { row["config"] },
+    Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], every: 5, id: "container",
+             unset: "not created",
+             columns: { "Container" => "container", "Version" => "version", "Description" => "description" },
+             action: toggle["container"]),
+    Kind.new(key: "images", label: "Images", tool: "pmm", args: %w[image list], every: 30, id: "image",
+             columns: { "Image" => "image", "Arch" => "arch", "Backend" => "backend", "Built" => "built" },
+             # A plain name's definition is gone: nothing to build it from.
+             action: lambda { |row|
+               ["build", row["image"]] if %w[unbuilt stale].include?(row["status"]) && row["image"].include?("/")
+             }),
+    Kind.new(key: "machines", label: "Machines", tool: "pmm", args: %w[list], every: 5, id: "machine",
+             columns: { "Machine" => "machine", "Image" => "image", "Address" => "address" },
+             action: toggle["machine"]),
+    # status is stale or not in the source; null is fine, and installed when it has a dir.
+    Kind.new(key: "spaces", label: "Spaces", tool: "wsm", args: %w[list], every: 30, id: "space",
+             unset: ->(row) { row["dir"] ? "installed" : "not installed" },
+             columns: { "Space" => "space", "Level" => "level", "Directory" => "dir" },
+             action: ->(row) { [row["dir"] ? "remove" : "install", row["space"]] }),
+    Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[repo list], every: 60, id: "repository",
+             columns: { "Repository" => "repository", "URL" => "url" }),
+    Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], every: 300, id: "skill",
              columns: { "Skill" => "skill", "Config" => "config", "Repo" => "repo" },
              # psm syncs a whole config, so every row of one shares the subject and the job.
              action: ->(row) { ["sync", row["config"]] unless row["status"] == "ok" }),
-    Kind.new(key: "vaults", label: "Vaults", tool: "pvm", args: %w[list], every: 60,
-             status: ->(row) { row["state"] },
-             source: ->(_row) {},
+    Kind.new(key: "vaults", label: "Vaults", tool: "pvm", args: %w[list], every: 60, id: "name", sourced: false,
              columns: { "Vault" => "name", "Id" => "id", "Path" => "path" }),
-    Kind.new(key: "links", label: "Vault links", tool: "pvm", args: %w[link list], every: 60,
-             status: ->(row) { row["state"] },
-             source: first_segment["target"],
-             columns: { "Target" => "target", "As" => "as", "From" => "source", "Vault" => "vault" })
+    Kind.new(key: "links", label: "Vault links", tool: "pvm", args: %w[link list], every: 60, id: "source",
+             sourced: false,
+             columns: { "Source" => "source", "Target" => "target", "As" => "as", "Vault" => "vault" })
   ].to_h { [it.key, it] }.freeze
 
   TONES = {
