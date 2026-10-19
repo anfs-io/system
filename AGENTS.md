@@ -137,6 +137,7 @@ upstream: docker.io/library/postgres:17     # what it is built from (attribution
 license: PostgreSQL
 url: https://www.postgresql.org
 memory: 512m                                # what it needs; also its limit
+toolkit: write                              # the toolkit API (anfs rpc): read or write; absent, none
 ```
 
 - Every key but `version` is optional; an unknown key is a `pcm validate` error. Nothing anfs
@@ -144,7 +145,7 @@ memory: 512m                                # what it needs; also its limit
   `container.yml` is still valid (version `-`), with a warning. Leave a field out rather than
   guess it.
 - `pcm list` has `VERSION`; its `--json` adds `version`, `description`, `upstream`, `license`,
-  `url`, `memory`. `pcm show` prints, all derived: the fields, each compose service's image (or
+  `url`, `memory`, `toolkit`. `pcm show` prints, all derived: the fields, each compose service's image (or
   `built from <context>/Containerfile`), ports, data (`$PCM_VOLUMES_HOME/<name>/` and its bind
   mounts), the `.env.schema` names (`@sensitive` ones as `secrets`, never values), deps,
   ingress and privileges; so a container README keeps only what it can't derive.
@@ -158,10 +159,18 @@ memory: 512m                                # what it needs; also its limit
   (exit 1) with the numbers, the containers a resize would stop, and `pcm machine resize <size>`.
   Nothing shrinks the machine. `pcm machine resize [size]` does it by hand: no size is what runs
   needs plus headroom; it confirms when containers run (`-y`).
+- **`toolkit: read|write`** gives the service the toolkit API (`anfs rpc`, below) with that grant;
+  absent, nothing. On macOS the override sets `ANFS_RPC_URL=tcp://host.containers.internal:<port>`
+  (the port core/anfs wrote, `$ANFS_STATE_HOME/rpc/port`) and `ANFS_RPC_TOKEN: "${ANFS_RPC_TOKEN:-}"`:
+  the grant's token is only in the environment compose runs with (`compose_run`), never in a file
+  pcm writes. On Linux the grant's socket (`$XDG_RUNTIME_DIR/anfs/rpc.sock` or `rpc-write.sock`)
+  is mounted at `/run/anfs/rpc.sock` and `ANFS_RPC_URL=unix:///run/anfs/rpc.sock`. `pcm show` says
+  `toolkit write`, never the token; validate errors on any other value. The code is
+  `lib/pcm/runtime.sh` (`toolkit_*`).
 - The code is `lib/pcm/manifest.sh`.
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
-  port on `127.0.0.1` only.
+  port on `127.0.0.1` only; `toolkit: write`.
 
 ## pmm: machines
 
@@ -526,8 +535,8 @@ help` documents the commands.
 
 `anfs rpc [--grant read|write]` is the toolkit as an API, for a program (anfs-ui) rather than a
 person: a JSON request per line on stdin, a JSON answer per line on stdout, until EOF. bash and
-yq only. Plan 02 puts it behind a socket; the grant comes from the caller's `container.yml`
-(`toolkit: read|write`).
+yq only. A socket-activated listener puts it in reach of containers (below); the grant comes from
+the caller's `container.yml` (`toolkit: read|write`, pcm above).
 
 | Request | Answer |
 | --- | --- |
@@ -551,6 +560,38 @@ yq only. Plan 02 puts it behind a socket; the grant comes from the caller's `con
   `ANFS_RPC` there is never a terminal), answers
   `{"exit":77,"needs":"terminal","command":[...],"error":"..."}`, for a UI to say "run this in a
   terminal".
+
+### The listener (lib/anfs/listener.sh)
+
+Nothing runs between connections: each connection starts one `anfs rpc` with the connection as
+its stdin and stdout. core/anfs's `post_install` writes and loads it, `post_remove` unloads and
+deletes it, and `anfs implode` does that first, before anything else, and deletes the tokens.
+The unit files are written (absolute paths and the install's `PATH`, which launchd cannot
+expand), not stowed.
+
+| | macOS | Linux |
+| --- | --- | --- |
+| Unit | `~/Library/LaunchAgents/io.anfs.rpc.plist`: `Sockets`, `inetdCompatibility` `Wait` false | `~/.config/systemd/user/anfs-rpc{,-write}.socket` (`Accept=yes`) and `anfs-rpc{,-write}@.service` |
+| Listens on | TCP `127.0.0.1:$ANFS_RPC_PORT` (47100), one port | `$XDG_RUNTIME_DIR/anfs/rpc.sock` (read), `rpc-write.sock` (write), mode 0600 |
+| Runs | `anfs rpc --token` | `anfs rpc --grant read` / `--grant write` |
+| Who may call | whoever has a token | the user (file permissions) |
+
+- **The token (macOS)**: loopback is open to every local process, a container included (it sees
+  `127.0.0.1`). `$ANFS_STATE_HOME/rpc/token.read` and `token.write`, 64 hex, 0600 in a 0700 dir,
+  made once (a reinstall keeps them; `ppm remove core/anfs` keeps them too, implode deletes
+  them). Under `--token` the first line must be `{"token":"..."}` (that key only); the token that
+  matches is the grant, whatever `--grant` says; anything else answers
+  `{"error":"unauthorized: ..."}` and closes (exit 1). Without `--token` (a unix socket, a pipe)
+  a first token line is read and ignored, so a client sends it either way.
+- `$ANFS_STATE_HOME/rpc/port` is the port the agent was written with (pcm reads it); the agent's
+  stderr goes to `$ANFS_STATE_HOME/rpc/rpc.err`.
+- Loading never fails an install: no GUI session (`launchctl bootstrap gui/<uid>`) or no systemd
+  user manager is a warning; launchd loads the agent at the next login, and on Linux
+  `systemctl --user enable --now anfs-rpc.socket anfs-rpc-write.socket` does it by hand. Unloading is done only when
+  this `$HOME`'s unit file exists (the launchd label is per user, not per `$HOME`).
+- Try it: `printf '{"token":"%s"}\n{"run":["ppm","list"]}\n' "$(cat ~/.local/state/anfs/rpc/token.read)" | nc 127.0.0.1 47100`
+  (Linux: `... | nc -U $XDG_RUNTIME_DIR/anfs/rpc.sock`). Tests stub `launchctl` and `systemctl`
+  (`ANFS_RPC_OS` picks the platform): never the real ones.
 
 ## Repository Layout
 
