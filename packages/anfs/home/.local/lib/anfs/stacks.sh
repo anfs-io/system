@@ -197,7 +197,7 @@ stack_have_load() {
     [[ -x "$bin" ]] || continue
     case "$kind" in
       packages) STACK_HAVE[$kind]=$("$bin" list --installed --json </dev/null 2>/dev/null |
-        yq -p json -r '.[] | select(.installed != null) | .package + "\tinstalled"') || true ;;
+        yq -p json -r '.[] | select(.status != null) | .package + "\tinstalled"') || true ;;
       containers) STACK_HAVE[$kind]=$("$bin" list --json </dev/null 2>/dev/null |
         yq -p json -r '.[] | select(.status != null and .status != "shadowed") | .container + "\t" + (.status | sub(", shadowed$"; ""))') || true ;;
       machines) STACK_HAVE[$kind]=$("$bin" list --json </dev/null 2>/dev/null |

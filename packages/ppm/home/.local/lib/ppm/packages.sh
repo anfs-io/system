@@ -435,7 +435,7 @@ cmd_list() {
     @*) collect_repos; category_members "${filter#@}"; return ;;
   esac
 
-  # One row per package: its name and the version installed, if it is. The table is anfs's
+  # One row per package: its name, its status and a version. The table is anfs's
   # (lib/anfs/table.sh): aligned on a terminal, --json for a tool that reads it.
   local pkg line
   if $installed_only; then
@@ -444,18 +444,37 @@ cmd_list() {
       line="${pkg%.yml}"
       line="${line#"$PPM_INSTALLED_DIR"/}"
       [[ -z "$filter" || "$line" == *"$filter"* ]] || continue
-      anfs_row "$line" "$(_installed_version "$pkg")"
+      _list_row "$line"
     done
   else
     collect_packages
     for pkg in ${PACKAGES[@]+"${PACKAGES[@]}"}; do
       [[ -z "$filter" || "$pkg" == *"$filter"* ]] || continue
-      anfs_row "$pkg" "$(_installed_version "$PPM_INSTALLED_DIR/$pkg.yml")"
+      _list_row "$pkg"
     done
-  fi | anfs_table "PACKAGE INSTALLED" "package installed"
+  fi | anfs_table "PACKAGE STATUS VERSION" "package status version"
 }
 
-# The version a tracker records, or nothing when there is no tracker
+# One row of ppm list for "repo/pkg": installed (the source's version is the tracker's, or not
+# newer), outdated (the source's is newer) or empty (not installed; - on a terminal, null in
+# JSON). The version is the installed one when installed, else the source's.
+_list_row() {
+  local have src
+  src=$(_installed_version "$ANFS_SOURCES_HOME/${1%%/*}/packages/${1#*/}/package.yml")
+  if [[ ! -f "$PPM_INSTALLED_DIR/$1.yml" ]]; then
+    anfs_row "$1" "" "$src"
+    return
+  fi
+  have=$(_installed_version "$PPM_INSTALLED_DIR/$1.yml")
+  if [[ -n "$src" && "$src" != "$have" && "$src" != "?" \
+        && "$(printf '%s\n%s\n' "$have" "$src" | sort -V | tail -n1)" == "$src" ]]; then
+    anfs_row "$1" outdated "$have"
+  else
+    anfs_row "$1" installed "$have"
+  fi
+}
+
+# The version a file (tracker or package.yml) records, or nothing when there is no file
 _installed_version() {
   local line
   [[ -f "$1" ]] || return 0
