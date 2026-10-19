@@ -145,7 +145,7 @@ anfs_rpc_units_write() {
 
 # Unload what is loaded (a missing job is fine), write the units, load them. Never fails: a
 # machine without a launchd GUI session or a systemd user manager (ssh only, a container) gets a
-# warning and the files, loaded at the next login.
+# warning and the files (launchd loads the agent at the next login; on Linux, enable them by hand).
 anfs_rpc_listener_install() {
   anfs_rpc_listener_unload
   anfs_rpc_units_write
@@ -156,7 +156,7 @@ anfs_rpc_listener_install() {
     command -v systemctl >/dev/null 2>&1 &&
       _anfs_rpc_systemctl daemon-reload 2>/dev/null &&
       _anfs_rpc_systemctl enable --now anfs-rpc.socket anfs-rpc-write.socket 2>/dev/null ||
-      { echo "anfs: could not enable anfs-rpc.socket (no systemd user manager?)" >&2; return 0; }
+      { echo "anfs: could not enable anfs-rpc.socket (no systemd user manager?); later: systemctl --user enable --now anfs-rpc.socket anfs-rpc-write.socket" >&2; return 0; }
   fi
 }
 
