@@ -6,11 +6,15 @@
 # pattern.
 #
 # Checked: every suite's bats files, helpers, stubs and e2e scripts. Not checked: the round trips
-# and their harness, whose ~ and /home are a test box's.
+# and their harness, whose ~ and /home are a test box's, and anfs-dev's suites (its own repo).
+# What a grep cannot see, a suite that never sets PMM_SOCK_DIR, pmm refuses itself under bats
+# (sock_dir_path in lib/pmm/core.sh).
 # Run: bats packages/anfs/tests/
 
 setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
+  # the live socket directory, by $(id -u), $UID, a $uid of the test's own, or a number
+  SOCK_RE='/tmp/pmm-(\$\(id -u\)|\$\{?[A-Za-z_]*(UID|uid)\}?|[0-9]+)([^0-9A-Za-z_-]|$)'
 }
 
 # The files the rule covers, one per line
@@ -27,13 +31,22 @@ matches() {
   done < <(covered)
 }
 
+@test "the patterns catch what they are for" {
+  PROBE="$BATS_TEST_TMPDIR/probe.bash"
+  # shellcheck disable=SC2016
+  printf '%s\n' 'd=/tmp/pmm-$uid' 'd=/tmp/pmm-${uid}' 'd=/tmp/pmm-$UID' > "$PROBE"
+  covered() { echo "$PROBE"; }
+  run matches "$SOCK_RE"
+  [ "${#lines[@]}" -eq 3 ]
+}
+
 @test "the rule covers every suite" {
   run covered
   [[ "$output" == *"/pmm/tests/helper.bash"* && "$output" == *"/pmm/tests/e2e"* && "$output" == *"/wsm/tests/"* ]]
 }
 
 @test "no test names the live socket directory, /tmp/pmm-<uid>" {
-  run matches '/tmp/pmm-(\$\(id -u\)|\$\{?UID\}?|[0-9]+)([^0-9A-Za-z_-]|$)'
+  run matches "$SOCK_RE"
   [ -z "$output" ] || { echo "$output"; return 1; }
 }
 

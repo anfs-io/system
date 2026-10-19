@@ -430,3 +430,20 @@ SH
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }
+
+@test "the shell function: anfs <resource> goes through the tool's own function (its cd)" {
+  anfs_home
+  stub anfs
+  local sh="$BATS_TEST_DIRNAME/../home/.config/sh/anfs.sh"
+  # wsm and pmm as shell functions, as sh/wsm.sh and zsh/pmm.zsh define them; pcm not installed
+  # PATH is the stubs' and the system's only: the host's own pcm must not be found
+  run bash -c 'PATH="$HOME/.local/bin:/usr/bin:/bin"; . "$1"
+    wsm() { echo "wsm function: $*"; }; pmm() { echo "pmm function: $*"; }
+    anfs space cd x; anfs wsm ls; anfs machine cd y; anfs container ls' _ "$sh"
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "wsm function: cd x" ]
+  [ "${lines[1]}" = "wsm function: ls" ]
+  [ "${lines[2]}" = "pmm function: cd y" ]
+  # pcm is not installed: anfs is asked, and says so
+  [ "${lines[3]}" = "anfs: container ls" ]
+}

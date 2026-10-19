@@ -128,9 +128,12 @@ for _bin in "$ANFS_BIN_DIR"/anfs-*; do
   [[ "$_name" =~ ^[a-z][a-z0-9-]*$ ]] || continue
   [[ -z "${CLI_KIND[$_name]:-}" && -z "${CLI_ALIAS_TO[$_name]:-}" ]] || continue
   ANFS_FROM_PACKAGE[$_name]="$_bin"
-  cli_cmd "$_name" "$(anfs_display "$_bin")"
+  # its path as anfs_display shows it, without the subshell (this runs on every start)
+  _desc="$_bin"
+  [[ "$_desc" != "$HOME"/* ]] || _desc="~/${_desc#"$HOME"/}"
+  cli_cmd "$_name" "$_desc"
 done
-unset _bin _name
+unset _bin _name _desc
 
 # The executable a tool's or a package's command runs, into REPLY. Returns 1 for a name that is
 # anfs's own, or no command at all. A tool that is not installed is 69, unless <quiet>.
