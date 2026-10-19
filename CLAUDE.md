@@ -406,11 +406,12 @@ This repo (`core/`) contains:
   suites and the end-to-end round trip (Testing).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
-- `packages/{pcm,pmm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
+- `packages/{pcm,pmm,psm,wsm,pvm}` — the other tools, each its own package (deps, hooks, tests)
 - `packages/{podman,varlock,node,qemu}` — the software the tools run on, part of the base install
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
-- `packages/dev` — dev/test tooling: containers, macOS VMs, `ppm user`, `ppm move`, the git hooks
+- dev/test tooling (`anfs work`, `anfs hooks` and the git hooks, `ppm container`, `ppm vm`, `ppm
+  user`, `ppm move`) is the `dev` package of the anfs-dev source (`anfs-io/dev-anfs`), not here
 - `skills/` — the tools' own skills (`pcm-containers`, `pmm-images`), synced by psm like any source's
 - `containers/` — the test boxes (`anfs-test-debian`, `anfs-test-fedora`) as pcm services
 - `isos/isos.yml` — the ISOs the base images install from: the catalogue entries their `image.yml`
@@ -735,6 +736,49 @@ cli_dispatch "$@"
   command line, and a command can never shadow a system binary in package hooks (`install`, `file`).
 - A tool whose tests source its libraries directly keeps its declarations in a library file
   (`lib/pmm/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
+- `cli_section "<title>"`: the top-level commands declared after it are listed under that heading
+  in help, after the others (anfs's "Tools" and "From packages").
+
+**The tools as `anfs <resource>`.** anfs declares one command per tool, named for what it manages,
+with the tool's name as an alias, and execs the tool with the rest of the line (output, exit status
+and all):
+
+| Command | Alias | Runs |
+| --- | --- | --- |
+| `anfs package` | `anfs ppm` | `ppm` |
+| `anfs container` | `anfs pcm` | `pcm` |
+| `anfs machine` | `anfs pmm` | `pmm` |
+| `anfs skill` | `anfs psm` | `psm` |
+| `anfs space` | `anfs wsm` | `wsm` |
+| `anfs vault` | `anfs pvm` | `pvm` |
+
+- `anfs machine image build debian-13` is `pmm image build debian-13`; `anfs help machine` is
+  `pmm help`; `anfs __complete machine ...` is `pmm __complete ...`. They are listed under "Tools"
+  in `anfs help`.
+- The tool is `~/.local/bin/<tool>`, as `anfs install` runs it. One that is not there is
+  `pmm is not installed (ppm install core/pmm)`, exit 69.
+- `sh/anfs.sh`'s `anfs` function sends `anfs package ...` through ppm's function, so `anfs package
+  cd` and the reload after an install work as `ppm`'s do.
+
+**Commands from packages: `anfs <name>` runs `anfs-<name>`.** For a name anfs does not declare,
+anfs execs the executable `~/.local/bin/anfs-<name>` with the rest of the line. That is the only
+seam by which a package adds a command, and it is anfs's alone:
+
+- Nothing is sourced into anfs, so a package cannot redefine anything of anfs's. A declared
+  command or alias always wins: no package can ship `anfs-src` or `anfs-package`.
+- The executable is a `cli.sh` tool like any other and sets `CLI_TOOL="anfs <name>"`, so its
+  messages and usage lines read `anfs work: ...`. It sources `bash.sh` first like every entry
+  point (`bash.bats` checks every `anfs-*` in core's packages; anfs-dev checks its own).
+- `anfs help` lists them by name under "From packages", read from the file names (no process);
+  `anfs help <name>` and `anfs <name> --help` are the executable's own. `anfs __complete <name>
+  ...` asks `anfs-<name> __complete ...`; the name itself completes in anfs.
+- `-d`, `--trace` and `--json` given to anfs are passed on, to a package's command and a tool alike.
+- `anfs <name> cd ...` goes through the shell function: it `cd`s to `anfs <name> path ...`.
+- The other tools get no such seam. ppm keeps what is about packages: hook helpers a package stows
+  into `lib/ppm` (`stack/ruby`'s `install_gem`) and `ppm_resource_<key>` handlers. The `cmd_`
+  functions anfs-dev/dev still stows there (`ppm container`, `ppm vm`, `ppm user`, `ppm move`) are
+  the last of that use, until anfs-dev's plan 03 replaces them.
+- anfs-dev/dev's `anfs work` and `anfs hooks` are the first (`packages/dev/README.md` there).
 
 **The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
 `show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm skills list`,
@@ -827,7 +871,7 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
 - `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
-- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `stack/ruby`'s `install_gem`) or commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (e.g. `core/dev`'s `ppm user`)
+- `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `stack/ruby`'s `install_gem`) or, for now, commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (anfs-dev/dev's `ppm user`; new commands are `~/.local/bin/anfs-<name>`, run as `anfs <name>`)
 - `~/.cache/ppm/brew_last_update`
 - Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
 
@@ -982,21 +1026,22 @@ it, and creates `package.yml` for a package that has none. It then refuses the c
 directory under `packages/` would be left without a `package.yml` (a `package.yml` deleted on its
 own) or with one that is not a YAML map with `categories`, if present, a list (checked when `yq`
 is installed). The files live in the package at
-`packages/dev/home/.config/git/ppm-hooks/` and are stowed to `~/.config/git/ppm-hooks/`.
+`packages/dev/home/.config/git/ppm-hooks/` and are stowed to `~/.config/git/ppm-hooks/`. (The
+`dev` package is in the anfs-dev source now.)
 
-`ppm hooks` wires them up, because **git does not carry hooks through a clone** — so this is an
-install step, not repo content:
+`anfs hooks` (the package's `anfs-hooks`) wires them up, because **git does not carry hooks
+through a clone** — so this is an install step, not repo content:
 
 ```
-ppm hooks                        # status (default)
-ppm hooks install [--all] [repo...]
-ppm hooks uninstall [--all] [repo...]
+anfs hooks status [--all] [repo...]
+anfs hooks install [--all] [repo...]
+anfs hooks uninstall [--all] [repo...]
 ```
 
 With no repo names it acts on the `system.list` repos; `--all` adds your `user.list` ones.
-`core/dev`'s `post_install` runs `ppm hooks install`, and its `post_remove` runs
-`ppm hooks uninstall --all`. Re-run `ppm hooks install` after `anfs src add`, since `post_install`
-can't know about a repo added later.
+The package's `post_install` runs `anfs hooks install`, and its `post_remove` runs
+`anfs hooks uninstall --all`. Re-run `anfs hooks install` after `anfs src add`, since `post_install`
+can't know about a repo added later. `anfs work new` wires the hooks into a job's worktrees itself.
 
 How it is wired, and why:
 
@@ -1007,9 +1052,9 @@ How it is wired, and why:
   *and* suppresses each repo's own `.git/hooks`, which would silently disable husky/lefthook/
   overcommit in unrelated projects. `init.templateDir` is no good either: it copies at
   `git init`/`clone` only, isn't retroactive, and the copies go stale.
-- `core.hooksPath` replaces a repo's `.git/hooks` wholesale, so `ppm hooks install` warns when
+- `core.hooksPath` replaces a repo's `.git/hooks` wholesale, so `anfs hooks install` warns when
   the repo already has real hooks there, and leaves a `core.hooksPath` it didn't set alone.
-  `uninstall` only unsets the value ppm wrote.
+  `uninstall` only unsets the value it wrote.
 - A `core.hooksPath` pointing at a missing directory is harmless — git finds no hooks and commits
   normally — so a leftover setting can never block a commit.
 
@@ -1028,8 +1073,8 @@ because its `meta_*` names would share a namespace with `packages.sh`'s.
 
 `core/dev` ships `ppm move`, which relocates a package from one source repo to another. The files
 live in the package at `packages/dev/home/.local/lib/ppm/move.sh`, stowed to
-`~/.local/lib/ppm/move.sh` — a function named `move` there becomes `ppm move`, like `ppm hooks`
-and `ppm user`.
+`~/.local/lib/ppm/move.sh` — a function named `move` there becomes `ppm move`, like `ppm user`
+(the old seam; a new command is an `anfs-<name>`, see "The Command Line").
 
 ```
 ppm move <repo/package> <target-repo>      # e.g. ppm move stack/rails user
@@ -1153,7 +1198,7 @@ its commands where it defines them: `core/dev`'s `container.sh` calls `cli_group
 
 Library sourcing in `ppm`: every `*.sh` in `$PPM_LIB_DIR` (`~/.local/lib/ppm/`) is
 sourced. That directory holds both ppm's own core libraries (stowed from `core/ppm`)
-and package-contributed extensions (e.g. `core/dev`'s `container.sh`, `vm.sh` and `hooks.sh`). During a fresh
+and package-contributed extensions (e.g. anfs-dev/dev's `container.sh` and `vm.sh`). During a fresh
 install `install.sh` sources the core libs directly from the clone and stows `core/anfs` and `core/ppm`
 so they are present before `ppm` first runs.
 
@@ -1211,6 +1256,27 @@ It runs the working tree's pmm under a temp `HOME` with its own `PMM_SOCK_DIR` a
 the source `core` (its images, and the catalogue their ISOs are in); only the ISO store is the
 real one.
 
+**Jobs testing at once** (anfs-dev's `anfs work`: a job is `~/work/<job>/`, worktrees on one
+branch). `anfs work run <job> -- <cmd>` sets the job's variables, from its number `n`, and the
+tests use them when they are set:
+
+| Variable | Value | Used by |
+| --- | --- | --- |
+| `ANFS_WORK_JOB`, `ANFS_WORK_NUMBER` | the job's name and number | the harness's box names (`anfs-test-<distro>-<n>`), the tart lock's holder |
+| `ROUNDTRIP_SRC_ROOT` | `~/work/<job>` | the round trips: the job's trees |
+| `PMM_SOCK_DIR` | `/tmp/pmm-work-<uid>-<n>` | pmm's helper (`<dir>/bats`) and e2e (a fresh `<dir>/e2e.*`) |
+| `PMM_SSH_PORT_BASE` | `2222 + 100 × n` | pmm's helper (machine suites from it, image suites 50 above) and e2e |
+| `TMPDIR` | `/tmp/anfs-work-<uid>-<n>` | every `mktemp` |
+
+- The ISO store is shared and read-only to tests: the bats helpers use a temp one, only an e2e
+  reads the real store.
+- tart allows two macOS guests in all: `roundtrip-macos` takes `$ANFS_STATE_HOME/work/tart.lock`
+  (exit 75 while another run holds it, naming the pid and the job).
+- **No test may name `/tmp/pmm-<uid>`, point a `*_HOME` at a real home, write under the real `~`,
+  or kill by pattern** (`pkill`, `killall`). `packages/anfs/tests/isolation.bats` greps every
+  suite's bats files, helpers, stubs and e2e scripts for those; the round trips and the harness,
+  whose `~` is a box's, are not covered.
+
 - `packages/anfs/tests/harness` builds and runs the same boxes as `ppm container` (the repo's
   `containers/anfs-test-<distro>/Containerfile`) with podman alone, so changing anfs — pcm
   included — can never break the thing that tests it. `--nested` runs the box privileged with
@@ -1221,7 +1287,9 @@ real one.
 - `packages/anfs/tests/fixtures/acme` is a stand-in org source with every resource kind: a package depending on
   another source's, a container, a skill, and spaces that depend on each other.
 - The round trip starts from a `bootstrap` snapshot (Homebrew, stow, yq, mise; passwordless sudo),
-  built on first use, and tests a copy of `~/anfs-dev/*` (`ROUNDTRIP_SRC_ROOT`).
+  built on first use, and tests a copy of the checkouts in `ROUNDTRIP_SRC_ROOT`: a job's directory
+  under `anfs work run`, by default the directory the running core checkout is in. Of core and
+  stack, one the root does not hold is the installed source (`roundtrip-sources`).
 - Anything the diff reports is a tool writing outside its own directories, or an implode missing
   it. What implode keeps on purpose (Homebrew and its caches, mise's tools, podman's storage,
   GitHub's host keys, space contents) is listed in the script's `IGNORE_RE`.
