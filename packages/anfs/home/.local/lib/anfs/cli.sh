@@ -11,8 +11,8 @@
 #     --opt "-y --yes: Do not ask" \
 #     --opt "-f --force: Also remove what depends on it" \
 #     --arg "service..."
-#   cli_group skills "Declared skills and their state"
-#   cli_cmd "skills remove" "Remove skills" --alias rm --arg "skill..."
+#   cli_group repo "The repos skills come from"
+#   cli_cmd "repo remove" "Remove a repo's config" --alias rm --arg "dir"
 #   cli_standard                                    completion and help, the same in every tool
 #   cli_dispatch "$@"
 #

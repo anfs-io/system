@@ -50,10 +50,9 @@ cli_cmd "repo list" "Every declared repo and the config declaring it" --alias ls
 cli_cmd "repo add" "Declare a local skill directory in a config of its own,
 named after the directory unless a name is given" --arg "dir" --arg "[name]"
 cli_cmd "repo remove" "Remove that config" --alias rm --arg "dir"
-cli_group skills "Declared skills and their state"
-cli_cmd "skills list" "Each declared skill: ok, partial, missing or *" --alias ls
-cli_cmd "skills remove" "Remove skills globally" --alias rm --arg "skill..."
-cli_cmd "skills prune" "Installed skills no config declares" --opt "-y --yes: Remove them"
+cli_cmd list "Each declared skill: ok, partial, missing or *" --alias ls
+cli_cmd remove "Remove skills globally" --alias rm --arg "skill..."
+cli_cmd prune "Installed skills no config declares" --opt "-y --yes: Remove them"
 cli_group agents "The agents skills are installed for"
 cli_cmd "agents list" "Agent ids detected from installed ppm packages" --alias ls
 cli_cmd "agents remove" "Unlink every installed skill from these agents,
@@ -66,7 +65,7 @@ cmd_cd() { echo "psm cd requires the psm shell function (source psm.zsh)" >&2; e
 
 cli_help_epilogue() {
   cat <<'EOF'
-Run a noun on its own — psm repo, psm skills, psm agents — for its commands.
+Run a noun on its own — psm repo, psm agents — for its commands.
 sync and update stay at the top: they are the only commands that span all
 three, reading repos to install skills for agents.
 
@@ -232,7 +231,7 @@ _config_sources() {
   [[ $# -gt 0 && ${#names[@]} -eq 0 ]] && return 0
 
   # yq is checked on its own rather than through the pipeline: under pipefail a
-  # consumer that stops reading (psm skills | head) would otherwise surface as
+  # consumer that stops reading (psm list | head) would otherwise surface as
   # an unparseable config
   _config_files ${names[@]+"${names[@]}"} | while IFS= read -r file; do
     if ! rows=$(yq -r '.sources[]? | [.repo,
@@ -377,7 +376,7 @@ cmd_repo_remove() {
 
   rm -f "$file"
   echo "Removed $(_abbreviate "$path") ($config)"
-  echo "Run: psm skills prune   # its skills are still installed"
+  echo "Run: psm prune   # its skills are still installed"
 }
 
 cmd_repo_list() {
@@ -387,11 +386,11 @@ cmd_repo_list() {
     [[ -n "$repo" ]] || continue
     path=$(_expand_home "$repo")
     if _is_local "$path" && [[ ! -d "$path" ]]; then
-      anfs_row "$config" "$repo" missing
+      anfs_row "$repo" missing "$config"
     else
-      anfs_row "$config" "$repo" ""
+      anfs_row "$repo" "" "$config"
     fi
-  done < <(_config_sources) | anfs_table "CONFIG REPO NOTE" "config repo note"
+  done < <(_config_sources) | anfs_table "REPOSITORY STATUS CONFIG" "repository status config"
 }
 
 cmd_agents_list() {
@@ -532,7 +531,7 @@ cmd_update() {
   cmd_sync "$@"
 }
 
-cmd_skills_list() {
+cmd_list() {
   require_npx
   _load_installed
 
@@ -556,12 +555,12 @@ cmd_skills_list() {
       else
         status="missing"
       fi
-      anfs_row "$status" "$config" "$item" "$repo"
+      anfs_row "$config/$item" "$status" "$config" "$repo"
     done
-  done < <(_config_sources) | anfs_table "STATUS CONFIG SKILL REPO" "status config skill repo"
+  done < <(_config_sources) | anfs_table "SKILL STATUS" "skill status config repo"
 }
 
-cmd_skills_prune() {
+cmd_prune() {
   local yes=${CLI_OPT[yes]:-false}
 
   require_npx
@@ -597,7 +596,7 @@ cmd_skills_prune() {
   fi
 }
 
-cmd_skills_remove() {
+cmd_remove() {
   require_npx
   skills_cli remove -g -y "$@"
 }

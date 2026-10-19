@@ -47,17 +47,41 @@ skill() {
 
 psm() { "$PSM" "$@"; }
 
-@test "skills ls: a source's skills are listed under its alias" {
+@test "ls: a source's skills are listed as source/skill" {
   source_dir acme
   skill acme hello
   skill acme bye
-  run psm skills ls
+  run psm ls
   [ "$status" -eq 0 ]
-  [[ "$output" == *"missing"$'\t'"acme"$'\t'"bye"$'\t'* ]]
-  [[ "$output" == *"missing"$'\t'"acme"$'\t'"hello"$'\t'* ]]
-  run psm skills ls --json
-  run yq -p json -r '.[] | .status + " " + .config + " " + .skill' <<< "$output"
-  [ "${lines[0]}" = "missing acme bye" ]
+  [[ "$output" == *"acme/bye"$'\t'"missing"* ]]
+  [[ "$output" == *"acme/hello"$'\t'"missing"* ]]
+  ANFS_TABLE=aligned run psm ls
+  [[ "${lines[0]}" == "SKILL"*"STATUS" ]]
+  run psm ls --json
+  run yq -p json -r '.[] | .skill + " " + .status + " " + .config + " " + (.repo | test("skills$") | tostring)' <<< "$output"
+  [ "${lines[0]}" = "acme/bye missing acme true" ]
+}
+
+@test "repo ls: REPOSITORY STATUS CONFIG" {
+  source_dir acme
+  skill acme hello
+  ANFS_TABLE=aligned run psm repo ls
+  [ "$status" -eq 0 ]
+  [[ "${lines[0]}" == "REPOSITORY"*"STATUS"*"CONFIG" ]]
+  run psm repo ls --json
+  run yq -p json -r '.[0] | keys | join(" ")' <<< "$output"
+  [ "$output" = "repository status config" ]
+}
+
+@test "remove and prune are top-level; skills is no group" {
+  run psm remove hello
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$NPX_LOG")" == *"remove -g -y hello"* ]]
+  run psm prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Nothing to prune"* ]]
+  run psm skills ls
+  [ "$status" -eq 64 ]
 }
 
 @test "install source/: adds each of its skills for the detected agents" {

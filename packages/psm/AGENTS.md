@@ -66,13 +66,13 @@ which ppm calls after every install/remove run with the packages involved:
   they span all three nouns — read repos, install skills, target agents.
 - `path` is plumbing for the `psm cd` function in `psm.zsh`, deliberately kept
   out of the usage and the completion.
-- Commands name other commands in their output ("Run: psm skills prune"), so
+- Commands name other commands in their output ("Run: psm prune"), so
   renaming one means grepping the strings, not just the dispatch.
 
 ## Two traps in the source
 
 - `_config_sources` checks `yq` on its own rather than through the pipeline.
-  Under `pipefail` a consumer that stops reading (`psm skills | head`) would
+  Under `pipefail` a consumer that stops reading (`psm list | head`) would
   otherwise surface as an unparseable config.
 - For the same reason, never `return` early from a loop reading
   `< <(_config_sources)`: it closes the pipe under the writer, whose `yq` then
