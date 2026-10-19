@@ -143,7 +143,10 @@ memory: 512m                                # what it needs; also its limit
   `container.yml` is still valid (version `-`), with a warning. Leave a field out rather than
   guess it.
 - `pcm list` has `VERSION`; its `--json` adds `version`, `description`, `upstream`, `license`,
-  `url`, `memory`. `pcm show` prints the fields.
+  `url`, `memory`. `pcm show` prints, all derived: the fields, each compose service's image (or
+  `built from <context>/Containerfile`), ports, data (`$PCM_VOLUMES_HOME/<name>/` and its bind
+  mounts), the `.env.schema` names (`@sensitive` ones as `secrets`, never values), deps,
+  ingress and privileges; so a container README keeps only what it can't derive.
 - **`memory:` is the limit**: pcm's override sets it as every compose service's `mem_limit`,
   whatever compose says, and validate errors when compose sets a different `mem_limit`.
 - **`pcm up` checks there is room**, adding up `memory:` (a service without one counts 0):

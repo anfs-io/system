@@ -64,8 +64,47 @@ ids_with_state() {
   echo "${out:-—}"
 }
 
-# `pcm show <service>`: the definition, its dependencies, data, and its containers with ports and
-# mounts; when nothing is created yet, the ports and mounts it declares
+# Images of service $1, one per line: compose-service|image, expanded with its resolved env;
+# a service with build: gives "built from <context>/<dockerfile>" (Containerfile by default)
+service_images() {
+  local id="$1" key image ctx file
+  while IFS='|' read -r key image ctx file; do
+    [[ -n "$key" ]] || continue
+    if [[ -n "$image" && -z "$ctx" ]]; then
+      ctx=$(expand_vars "$id" "$image")
+      # An env that does not resolve leaves ":"; the declared form says more
+      [[ "$ctx" == :* || -z "$ctx" ]] && ctx="$image"
+      echo "$key|$ctx"
+    elif [[ -n "$ctx" ]]; then
+      echo "$key|built from ${ctx%/}/${file:-Containerfile}"
+    fi
+  done < <(yq eval '.services // {} | to_entries | .[] | .key + "|" + (.value.image // "") + "|" +
+    ((.value.build | select(tag == "!!str")) // .value.build.context // "") + "|" +
+    (.value.build.dockerfile // "")' "$(compose_file "$id")" 2>/dev/null)
+}
+
+# Names service $1's .env.schema declares (never values): "env|NAME" or "secret|NAME" lines,
+# secret when the item (or the header's @defaultSensitive=true) marks it sensitive
+schema_names() {
+  local schema line def=false sens=""
+  schema="$(svc_dir "$1")/.env.schema"
+  [[ -f "$schema" ]] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      *@defaultSensitive=true*) def=true ;;
+    esac
+    if [[ "$line" =~ ^#.*@sensitive=false ]]; then sens=false
+    elif [[ "$line" =~ ^#.*@sensitive([[:space:]]|=true|$) ]]; then sens=true
+    elif [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)= ]]; then
+      [[ "${sens:-$def}" == true ]] && echo "secret|${BASH_REMATCH[1]}" || echo "env|${BASH_REMATCH[1]}"
+      sens=""
+    elif [[ -z "$line" ]]; then sens=""
+    fi
+  done < "$schema"
+}
+
+# `pcm show <service>`: the definition, its images, env names, dependencies, data, and its
+# containers with ports and mounts; when nothing is created yet, the ports and mounts it declares
 cmd_show() {
   local id
   if ! id=$(canon "$1"); then
@@ -104,6 +143,13 @@ cmd_show() {
     [[ "$mk" == version && -z "${MANIFEST[$mi]}" ]] && printf '  %-12s %s\n' version "- (no container.yml)"
     mi=$((mi + 1))
   done
+  load_env "$id" 2>/dev/null || true
+  local images ikey img
+  images=$(service_images "$id")
+  while IFS='|' read -r ikey img; do
+    [[ -n "$ikey" ]] && printf '  %-12s %s%s\n' image "$img" \
+      "$([[ $(grep -c . <<< "$images") -gt 1 ]] && echo " in $ikey")"
+  done <<< "$images"
   local status="unknown (podman unreachable)"
   $reachable && status="${state:-not created}${from:+ from $from}"
   printf '  %-12s %s\n' status "$status"
@@ -113,11 +159,16 @@ cmd_show() {
   printf '  %-12s %s\n' "used by" "$(ids_with_state "$containers" ${users[@]+"${users[@]}"})"
   printf '  %-12s %s\n' data "$(tilde "$data")${size:+  $size}$([[ -d "$data" ]] || echo '  (none yet)')"
   [[ -f "$PCM_ENV_HOME/$name.env" ]] && printf '  %-12s %s\n' env "$(tilde "$PCM_ENV_HOME/$name.env")"
+  local names vars secrets
+  names=$(schema_names "$id")
+  vars=$(sed -n 's/^env|//p' <<< "$names" | paste -sd ' ' -)
+  secrets=$(sed -n 's/^secret|//p' <<< "$names" | paste -sd ' ' -)
+  [[ -n "$vars" ]] && printf '  %-12s %s\n' "reads env" "$vars"
+  [[ -n "$secrets" ]] && printf '  %-12s %s\n' secrets "$secrets"
   local role icsvc iport proxy
   role=$(service_role "$id")
   [[ -n "$role" ]] && printf '  %-12s %s\n' provides "$role"
   if has_ingress "$id"; then
-    load_env "$id" 2>/dev/null || true
     IFS='|' read -r icsvc iport _ _ < <(service_ingress "$id") || true
     proxy=$(active_proxy) || proxy="no proxy"
     printf '  %-12s %s -> %s:%s (via %s)\n' ingress "$(ingress_hosts "$id" | sed 's/,/, /g')" "$icsvc" "$iport" "$proxy"

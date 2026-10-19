@@ -152,6 +152,60 @@ url: https://example.com'
   [[ "$output" != *"description"* ]]
 }
 
+@test "show: one image, without the compose service" {
+  define "$T/src/a/containers" web
+  load_sources
+  run cmd_show web
+  [[ "$output" == *"image        docker.io/library/alpine:3"$'\n'* ]]
+}
+
+@test "show: images per compose service; build: is built from its Containerfile" {
+  define "$T/src/a/containers" two 'services:
+  app:
+    image: docker.io/library/alpine:3
+  api:
+    build: ./api
+  job:
+    build:
+      context: .
+      dockerfile: Job.Containerfile'
+  load_sources
+  run cmd_show two
+  [[ "$output" == *"image        docker.io/library/alpine:3 in app"* ]]
+  [[ "$output" == *"image        built from ./api/Containerfile in api"* ]]
+  [[ "$output" == *"image        built from ./Job.Containerfile in job"* ]]
+}
+
+@test "show: .env.schema names, sensitive ones as secrets, never values" {
+  define "$T/src/a/containers" web
+  cat > "$T/src/a/containers/web/.env.schema" <<'EOF'
+# @defaultSensitive=false
+# ---
+# @type=port
+WEB_PORT=8080
+# @required @sensitive @type=string
+WEB_TOKEN=hunter2
+# @sensitive=false
+WEB_NAME=web
+EOF
+  load_sources
+  run schema_names a/web
+  [ "$output" = "env|WEB_PORT
+secret|WEB_TOKEN
+env|WEB_NAME" ]
+  run cmd_show web
+  [[ "$output" == *"reads env    WEB_PORT WEB_NAME"* ]]
+  [[ "$output" == *"secrets      WEB_TOKEN"* ]]
+  [[ "$output" != *hunter2* ]]
+}
+
+@test "show: no .env.schema, no env lines" {
+  define "$T/src/a/containers" web
+  load_sources
+  run cmd_show web
+  [[ "$output" != *"reads env"* && "$output" != *secrets* ]]
+}
+
 # --- memory as the limit ------------------------------------------------------
 
 @test "memory: is every compose service's mem_limit in the override" {
