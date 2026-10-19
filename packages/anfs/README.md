@@ -18,5 +18,5 @@ a layer of this one: its `user.list` holds your sources, and an `anfs.conf` ther
 default settings for every tool. Machine-only settings go in `~/.config/anfs/anfs.local.conf`. The
 environment wins over both files.
 
-`tests/` holds the bats suites for `lib/anfs` (see CLAUDE.md, Testing); the end-to-end round
+`tests/` holds the bats suites for `lib/anfs` (see AGENTS.md, Testing); the end-to-end round
 trips are in the anfs-dev source.
