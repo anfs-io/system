@@ -33,10 +33,11 @@ module Anfs
              source: ->(row) { row["alias"] },
              columns: { "Alias" => "alias", "List" => "list", "Provides" => "provides", "URL" => "url" }),
     Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], every: 60,
-             status: ->(row) { row["installed"] ? "installed" : "available" },
+             # status is installed, outdated (the source has a newer version) or null.
+             status: ->(row) { row["status"] || "available" },
              source: first_segment["package"],
-             columns: { "Package" => "package", "Version" => "installed" },
-             action: ->(row) { [row["installed"] ? "remove" : "install", row["package"]] },
+             columns: { "Package" => "package", "Version" => "version" },
+             action: ->(row) { [row["status"] ? "remove" : "install", row["package"]] },
              action_flags: %w[-y]),
     Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], every: 5,
              status: ->(row) { row["status"] || "not created" },
@@ -80,7 +81,7 @@ module Anfs
 
   TONES = {
     good: %w[running clean ok installed built],
-    warn: ["dirty", "partial", "stale", "pending", "unknown", "shadowed", "running, shadowed",
+    warn: ["dirty", "outdated", "partial", "stale", "pending", "unknown", "shadowed", "running, shadowed",
            "stopped, shadowed", "not in the source", "needs a terminal"],
     bad: ["failed", "missing", "conflict", "dangling", "not a repo", "no path"]
   }.flat_map { |tone, statuses| statuses.map { [it, tone] } }.to_h.freeze

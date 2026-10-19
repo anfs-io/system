@@ -19,8 +19,8 @@ ROWS = {
       "provides" => %w[spaces] }
   ],
   "packages" => [
-    { "package" => "stack/ruby", "installed" => "0.1.1" },
-    { "package" => "stack/node", "installed" => nil }
+    { "package" => "stack/ruby", "status" => "installed", "version" => "0.1.1" },
+    { "package" => "stack/node", "status" => nil, "version" => "0.1.0" }
   ],
   "containers" => [
     { "name" => "postgres", "source" => "stack", "status" => "running" },
