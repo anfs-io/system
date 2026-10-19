@@ -1,10 +1,14 @@
 # frozen_string_literal: true
 
 ENV["RACK_ENV"] = "test"
+# Host mode unless a spec hands out a client: never the real toolkit API.
+ENV.delete("ANFS_RPC_URL")
+ENV.delete("ANFS_RPC_TOKEN")
 
 require "rack/test"
 require "tmpdir"
 require_relative "../app"
+require_relative "fake_api"
 
 # Rows shaped like the tools' real output.
 ROWS = {

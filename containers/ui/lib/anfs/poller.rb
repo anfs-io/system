@@ -2,27 +2,28 @@
 
 module Anfs
   # Keeps the store current. Each kind is re-read on its own interval, and
-  # sooner when the shared anfs log shows somebody running that tool.
+  # sooner when somebody runs that tool: the toolkit API's watch events, or on
+  # the host the shared anfs log.
   class Poller
-    LOG = File.join(ENV.fetch("XDG_STATE_HOME", File.expand_path("~/.local/state")), "anfs/anfs.log")
-
     # 2026-10-11T16:58:17-0400 pmm[52089] start: up debian-13
     START_LINE = /\s(?<tool>\w+)\[(?<pid>\d+)\] start: (?<command>.*)$/
     READ_ONLY = /\b(list|ls|show|path|ps|builds|docs|status|validate|deps|help|completion|log|callbacks)\b/
     MAX_RUN = 600
 
-    def initialize(store:, hub:, cli: CLI.new, kinds: KINDS.values, log: LOG)
+    # events: Anfs.events, a Watch or a LogFollower; nil for none.
+    def initialize(store:, hub:, cli: CLI.new, kinds: KINDS.values, events: Anfs.events)
       @store = store
       @hub = hub
       @cli = cli
       @kinds = kinds
-      @log = log
+      @events = events
       @wake = kinds.to_h { [it.key, Queue.new] }
+      @writes = Set.new
     end
 
     def start
       @kinds.each { |kind| Thread.new { poll(kind) } }
-      Thread.new { follow_log } if @log
+      Thread.new { @events.each { it.is_a?(Hash) ? event(it) : log_line(it) } } if @events
       self
     end
 
@@ -48,6 +49,20 @@ module Anfs
       end
     end
 
+    # A watch event: refresh when a command that changes something starts, and again when it ends.
+    def event(event)
+      tool = event["tool"]
+      case event["event"]
+      when "start"
+        return if READ_ONLY.match?(event["args"].to_s)
+
+        @writes << event["id"]
+        nudge(tool)
+      when "end"
+        nudge(tool) if @writes.delete?(event["id"])
+      end
+    end
+
     private
 
     def poll(kind)
@@ -58,32 +73,6 @@ module Anfs
       rescue StandardError => e
         warn "anfs-ui: #{kind.key}: #{e.class}: #{e.message}"
         sleep kind.every
-      end
-    end
-
-    def follow_log
-      from_end = true
-      loop do
-        File.open(@log) do |io|
-          io.seek(0, IO::SEEK_END) if from_end
-          from_end = false
-          tail(io)
-        end
-      rescue Errno::ENOENT
-        sleep 5
-      end
-    end
-
-    # Returns once the log has been rotated away from under io.
-    def tail(io)
-      loop do
-        if (line = io.gets)
-          log_line(line)
-        elsif File.stat(@log).ino != io.stat.ino
-          return
-        else
-          sleep 0.5
-        end
       end
     end
 

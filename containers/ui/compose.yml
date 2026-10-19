@@ -2,9 +2,9 @@
 #
 # pcm service: `pcm up ui`, then http://localhost:9292. Built from the Containerfile's dev target:
 # Ruby and the gems only, with this directory mounted read-only at /app, so an edit on the host
-# shows on the next request (views/; restart for the rest: pcm restart ui). The tools are not
-# reachable from the container until the toolkit API exists (docs units/toolkit-api.md): the pages
-# say so instead of listing anything.
+# shows on the next request (views/; restart for the rest: pcm restart ui). It reaches the tools
+# through the toolkit API: container.yml's toolkit: write has pcm add ANFS_RPC_URL (and on macOS
+# ANFS_RPC_TOKEN, or on Linux the socket's mount).
 
 services:
   ui:

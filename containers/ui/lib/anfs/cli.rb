@@ -4,30 +4,43 @@ require "json"
 require "open3"
 
 module Anfs
-  Result = Data.define(:rows, :error, :exit_code) do
+  # command is set for exit 77: what to run in a terminal instead.
+  Result = Data.define(:rows, :error, :exit_code, :command) do
+    def initialize(command: nil, **) = super
+
     def ok? = error.nil?
+
+    def needs_terminal? = exit_code == NEEDS_TERMINAL
   end
 
-  # Runs one anfs tool with --json and returns a Result. Never raises: the
-  # tools report failure as text on stderr plus an exit code, and a panel has
-  # to be able to show that.
+  # A confirm or a sudo the toolkit API cannot answer: the command has to be run by a person.
+  NEEDS_TERMINAL = 77
+
+  # Runs one anfs tool with --json and returns a Result, through the toolkit API when there is
+  # one (ANFS_RPC_URL), else from ANFS_BIN. Never raises: the tools report failure as text on
+  # stderr plus an exit code, and a panel has to be able to show that.
   class CLI
     # The tools append every invocation to a shared log. The poller follows
     # that log, so our own calls must stay out of it.
     ENV_OVERRIDES = { "ANFS_LOG" => "off" }.freeze
 
-    # In a container the tools are not there: they run on the host, and the toolkit API that will
-    # reach them from here (anfs rpc) does not exist yet.
-    UNAVAILABLE = "the tools are not reachable from here (no toolkit API yet)"
+    # Neither the toolkit API (ANFS_RPC_URL) nor the tools themselves (ANFS_BIN).
+    UNAVAILABLE = "the tools are not reachable from here (no ANFS_RPC_URL, and not in ANFS_BIN)"
 
     class Timeout < StandardError; end
 
-    def initialize(bin_dir: ENV.fetch("ANFS_BIN", File.expand_path("~/.local/bin")), timeout: 30)
+    def initialize(bin_dir: ENV.fetch("ANFS_BIN", File.expand_path("~/.local/bin")), timeout: 30,
+                   rpc: RPC.from_env)
       @bin_dir = bin_dir
       @timeout = timeout
+      @rpc = rpc
     end
 
-    def run(tool, *)
+    def run(tool, *) = @rpc ? remote(tool, *) : local(tool, *)
+
+    private
+
+    def local(tool, *)
       path = File.join(@bin_dir, tool)
       return failure("#{tool}: #{UNAVAILABLE}", nil) unless File.executable?(path)
 
@@ -41,15 +54,24 @@ module Anfs
       failure(e.message, nil)
     end
 
-    private
+    # The API adds --json and ANFS_LOG=off to a read itself.
+    def remote(tool, *)
+      answer = @rpc.call({ run: [tool, *] })
+      return failure(answer["error"].to_s, answer["exit"], answer["command"]) if answer["error"] || answer["exit"] != 0
 
-    def parse(tool, out)
-      rows = JSON.parse(out)
+      rows(tool, answer["data"])
+    rescue RPC::Error => e
+      failure(e.message, nil)
+    end
+
+    def parse(tool, out) = rows(tool, JSON.parse(out))
+
+    def rows(tool, rows)
       rows.is_a?(Array) ? Result.new(rows:, error: nil, exit_code: 0) : failure("#{tool}: expected a JSON list", 0)
     end
 
-    def failure(message, exit_code)
-      Result.new(rows: nil, error: message.empty? ? "exit #{exit_code}" : message, exit_code:)
+    def failure(message, exit_code, command = nil)
+      Result.new(rows: nil, error: message.empty? ? "exit #{exit_code}" : message, exit_code:, command:)
     end
 
     # Own process group, so a timeout takes the tool's children with it

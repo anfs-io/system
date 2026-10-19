@@ -2,7 +2,7 @@
 
 A local dashboard over the anfs tools. It runs each tool's list command with `--json`, shows the results, and updates open pages as they change. Packages can be installed and removed, and containers and machines brought up and down, from their rows.
 
-It ships as a pcm service of core (`containers/ui`, in the `system` stack). The API it will reach the tools through from a container is docs `units/toolkit-api.md`.
+It ships as a pcm service of core (`containers/ui`, in the `system` stack, running). In the container it reaches the tools through the toolkit API (`anfs rpc`, core AGENTS.md "The toolkit API").
 
 ## Run
 
@@ -18,7 +18,7 @@ bundle install
 bundle exec puma        # http://localhost:9292
 ```
 
-**In the container the tools are not reachable** until the toolkit API (`anfs rpc`) exists: they run on the host, and so does `anfs.log`. Every panel then says "the tools are not reachable from here (no toolkit API yet)": there are no rows, so no actions either.
+**Two modes, one switch** (`Anfs::RPC.from_env`): with `ANFS_RPC_URL` set (`tcp://host:port` or `unix:///path`; pcm sets it from `container.yml`'s `toolkit: write`) every list, command and event goes through the toolkit API: lists as `{"run":[...]}`, commands as a stream with `yes`, and a `{"watch":true}` connection (reconnecting with backoff) instead of following `anfs.log`. The token line goes first when `ANFS_RPC_TOKEN` is set. Without it the tools run from `ANFS_BIN` and the poller follows `anfs.log` (on the host). With neither, every panel says the tools are not reachable. A command that needs a terminal (exit 77) shows "Run this in a terminal: <command>"; a write refused under a read grant says so.
 
 ## The image
 
@@ -35,7 +35,9 @@ Gems are in the image (`/usr/local/bundle`) and puma writes only under `/tmp`, s
 |---|---|---|
 | `HOST` | `localhost` | Address to bind; `0.0.0.0` for every interface |
 | `PORT` | `9292` | Port to listen on |
-| `ANFS_BIN` | `~/.local/bin` | Where the tools are; when one is not there its panel says the tools are not reachable |
+| `ANFS_RPC_URL` | none | The toolkit API: `tcp://host:port` or `unix:///path`. Set, it replaces `ANFS_BIN` and `anfs.log` |
+| `ANFS_RPC_TOKEN` | none | Sent as the first line, `{"token":"..."}` (the macOS listener) |
+| `ANFS_BIN` | `~/.local/bin` | Where the tools are without `ANFS_RPC_URL`; when one is not there its panel says the tools are not reachable |
 | `ANFS_UI_HOSTS` | none | Extra host names to answer to, comma-separated |
 | `ANFS_UI_REMOTE_ACTIONS` | off | `1` lets other machines run commands, not only view. There is no login |
 

@@ -8,6 +8,8 @@ module Anfs
   # not wait on them. Held in memory: a restart forgets the history, and the
   # tools' own log keeps the record.
   class Jobs
+    NEEDS_TERMINAL_STATUS = "needs a terminal"
+    REFUSED = "This dashboard may only read: its container.yml says toolkit: read, or the token is the read one."
     KEEP = 50
     MAX_LINES = 2000
 
@@ -17,9 +19,11 @@ module Anfs
     end
 
     # on_finish is called with the kind once its command has ended.
-    def initialize(hub:, bin_dir: ENV.fetch("ANFS_BIN", File.expand_path("~/.local/bin")), on_finish: nil)
+    def initialize(hub:, bin_dir: ENV.fetch("ANFS_BIN", File.expand_path("~/.local/bin")), on_finish: nil,
+                   rpc: RPC.from_env)
       @hub = hub
       @bin_dir = bin_dir
+      @rpc = rpc
       @on_finish = on_finish
       @mutex = Mutex.new
       @jobs = []
@@ -54,19 +58,38 @@ module Anfs
       end
     end
 
-    # Own process group: stopping the server from a terminal must not cut an
-    # install off half-way.
     def run(job, kind)
-      Open3.popen2e(File.join(@bin_dir, job.command.first), *job.command.drop(1), pgroup: true) do |stdin, out, wait|
-        stdin.close
-        out.each_line { append(job, it) }
-        finish(job, wait.value.exitstatus)
-      end
+      @rpc ? remote(job) : local(job)
     rescue StandardError => e # whatever happens, the job must not stay "running"
       append(job, e.message)
       finish(job, nil)
     ensure
       @on_finish&.call(kind)
+    end
+
+    # Own process group: stopping the server from a terminal must not cut an
+    # install off half-way.
+    def local(job)
+      Open3.popen2e(File.join(@bin_dir, job.command.first), *job.command.drop(1), pgroup: true) do |stdin, out, wait|
+        stdin.close
+        out.each_line { append(job, it) }
+        finish(job, wait.value.exitstatus)
+      end
+    end
+
+    # The API adds -y itself (yes), so the kind's own -y is left out.
+    def remote(job)
+      answer = @rpc.call({ run: job.command - ["-y"], stream: true, yes: true }) { append(job, it) }
+      explain(job, answer)
+      finish(job, answer["exit"])
+    end
+
+    def explain(job, answer)
+      if (error = answer["error"])
+        append(job, error)
+        append(job, REFUSED) if error.start_with?("refused: a write")
+      end
+      append(job, "Run this in a terminal: #{Array(answer["command"]).join(" ")}") if answer["needs"] == "terminal"
     end
 
     def append(job, line)
@@ -80,7 +103,7 @@ module Anfs
     def finish(job, exit_code)
       @mutex.synchronize do
         job.exit_code = exit_code
-        job.status = exit_code&.zero? ? "ok" : "failed"
+        job.status = { 0 => "ok", NEEDS_TERMINAL => NEEDS_TERMINAL_STATUS }.fetch(exit_code, "failed")
       end
       announce(job)
     end

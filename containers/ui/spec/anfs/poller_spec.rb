@@ -7,7 +7,7 @@ RSpec.describe Anfs::Poller do
   let(:cli) { instance_double(Anfs::CLI) }
   let(:machines) { Anfs::KINDS.fetch("machines") }
 
-  subject(:poller) { described_class.new(store:, hub:, cli:, log: nil) }
+  subject(:poller) { described_class.new(store:, hub:, cli:, events: nil) }
 
   def result(rows) = Anfs::Result.new(rows:, error: nil, exit_code: 0)
 

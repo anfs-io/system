@@ -34,7 +34,7 @@ module Views
         td { a(href:) { job.started_at.strftime("%H:%M:%S") } }
         td do
           a(href:) { code { job.title } }
-          a(href:, class: "reason") { job.output.last } if job.status == "failed" && job.output.any?
+          a(href:, class: "reason") { job.output.last } if job.status != "ok" && !job.running? && job.output.any?
         end
         td(class: "status") { a(href:) { render Badge.new(job.status) } }
       end
@@ -51,7 +51,7 @@ module Views
       section(id: "job-#{@job.id}", class: "panel") do
         header(class: "page-head") do
           h1 { code { @job.title } }
-          render Badge.new(@job.exit_code&.positive? ? "failed (exit #{@job.exit_code})" : @job.status)
+          render Badge.new(@job.status == "failed" && @job.exit_code ? "failed (exit #{@job.exit_code})" : @job.status)
           a(href: "/#{@job.key}", class: "muted") { "Back to #{Anfs::KINDS.fetch(@job.key).label.downcase}" }
         end
         pre(class: "output") { @job.output.join("\n") }

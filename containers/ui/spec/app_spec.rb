@@ -63,7 +63,7 @@ RSpec.describe App do
   context "with no tools, as in a container before the toolkit API" do
     let(:store) do
       Anfs::Store.new.tap do |store|
-        poller = Anfs::Poller.new(store:, hub: Anfs::Hub.new, cli: Anfs::CLI.new(bin_dir: Dir.mktmpdir), log: nil)
+        poller = Anfs::Poller.new(store:, hub: Anfs::Hub.new, cli: Anfs::CLI.new(bin_dir: Dir.mktmpdir), events: nil)
         Anfs::KINDS.each_value { poller.refresh(it) }
       end
     end
