@@ -1,7 +1,7 @@
 version: 0.1.0
 description: The anfs toolkit itself, what install.sh installs and anfs implode removes
-# The tools and the software they run on, and the dashboard: pcm brings podman and varlock, psm node.
+# The tools and the software they run on: pcm brings podman and varlock, psm node.
 # Not pmm, pmm-network, qemu or pvm: those are `ppm install core/pmm` (or a stack that names them).
 packages: [core/anfs, core/ppm, core/pcm, core/psm, core/wsm, core/podman, core/node, core/varlock]
-# The dashboard, a pcm service built here (containers/ui). No status: pcm's default after install.
-containers: [core/ui]
+# Not the dashboard (containers/ui) yet: pcm install starts a service, and ui cannot reach the tools
+# until the toolkit API exists. It joins with `status: running` then; until then `pcm up ui`.

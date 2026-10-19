@@ -74,7 +74,8 @@ machines: []                             # running|stopped
 | `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
 
 **`system`** (`stacks/system/stack.yml`) is the toolkit: `core/anfs`, `ppm`, `pcm`, `psm`, `wsm`
-and `podman`, `node`, `varlock`, and the dashboard container `core/ui` (no `status:`). `install.sh` ends with `anfs install system -y` (then any extra
+and `podman`, `node`, `varlock`. The dashboard `core/ui` is not in it yet (it starts on
+install and cannot reach the tools before the toolkit API): `pcm up ui`. `install.sh` ends with `anfs install system -y` (then any extra
 packages). pmm, qemu and pvm are not in it: `ppm install core/pmm`. `anfs implode`, in order:
 every other installed stack removed (last installed first, from the records' `installed_at`), each
 installed tool's implode but ppm's (wsm psm pmm pcm; a tool that is not installed is never
@@ -544,7 +545,7 @@ This repo (`core/`) contains:
 - `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
   `packages/qemu` is pmm's, installed with it
 - `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
-  `core/wsm` and `podman`, `node`, `varlock`, and the container `core/ui`. Not pmm, qemu or pvm
+  `core/wsm` and `podman`, `node`, `varlock` (not yet `core/ui`). Not pmm, qemu or pvm
   (`ppm install core/pmm`)
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
