@@ -702,13 +702,17 @@ _rpc_run() {
     rc=${PIPESTATUS[0]}
     set -e
   else
+    # The run in its own process group (set -m), so the timeout reaches everything under it: a
+    # tool's $(yq ...) blocked on a file (a hung iCloud or network mount) outlives the tool itself
+    set -m
     ( ! $read || export ANFS_LOG=off; exec "$bin" ${args[@]+"${args[@]}"} </dev/null >"$dir/out" 2>"$dir/err" ) &
     local pid=$! wpid
+    set +m
     mkfifo "$dir/tick"
-    # the timeout: a read on a fifo nobody writes, then the run and its children
+    # the timeout: a read on a fifo nobody writes, then the run's group: TERM, KILL what is left
     ( exec {fd}<>"$dir/tick"
       read -r -t "$RPC_TIMEOUT" -u "$fd" _ ||
-        { : > "$dir/timeout"; pkill -TERM -P "$pid"; kill -TERM "$pid"; } ) 2>/dev/null &
+        { : > "$dir/timeout"; kill -TERM -- "-$pid"; read -r -t 2 -u "$fd" _; kill -KILL -- "-$pid"; } ) 2>/dev/null &
     wpid=$!
     wait "$pid" || rc=$?
     kill "$wpid" 2>/dev/null || true

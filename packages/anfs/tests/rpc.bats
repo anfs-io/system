@@ -47,7 +47,8 @@ cmd_show() { printf '<%s>\n' "\$@"; }
 cmd_install() { printf '%s\n' "\$@" > "$ARGS"; echo installed; }
 cmd_remove() { anfs_confirm "remove deletes \$1" "Remove?"; echo "removed \$1"; }
 cmd_fail() { echo "first" >&2; echo "the last line" >&2; exit 3; }
-cmd_hang() { sleep 30 & echo \$! > "$BATS_TEST_TMPDIR/hang.pid"; wait; }
+# A grandchild, as pvm's \$(yq ...) on a hung mount: the timeout must reach past the tool's children
+cmd_hang() { local x; x=\$(bash -c 'echo \$\$ > "\$1"; exec sleep 30' - "$BATS_TEST_TMPDIR/hang.pid"; true); }
 cmd_noisy() { echo one; echo two >&2; echo three; }
 cli_dispatch "\$@"
 SH
@@ -160,7 +161,7 @@ EOF
   [[ "${lines[*]}" == *'{"out":"one"}'*'{"out":"three"}'* ]]
 }
 
-@test "the timeout kills a run that hangs, and its children" {
+@test "the timeout kills a run that hangs, and everything under it" {
   ANFS_RPC_TIMEOUT=1 run rpc --grant write <<<'{"run":["ppm","hang"]}'
   [ "$output" = '{"exit":124,"error":"timed out after 1s","command":["ppm","hang"]}' ]
   sleep 0.2

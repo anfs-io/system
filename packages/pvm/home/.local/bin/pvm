@@ -220,7 +220,26 @@ _reg_by_path() {
 
 # True when the entry no longer describes a live vault: the path is gone, or the pvm.yml there
 # no longer holds the recorded id
+# Whether <dir>/pvm.yml can be read within PVM_PROBE_SECONDS (3): a vault on a hung iCloud or
+# network mount blocks every read of it, so pvm looks once, in a process an alarm can end, and
+# leaves the vault alone after that. Remembered per path for the run.
+declare -A PVM_REACH=()
+_reachable() {
+  local dir="$1"
+  if [[ -z "${PVM_REACH[$dir]:-}" ]]; then
+    if perl -e 'alarm shift; stat $ARGV[0]; exit 0' "${PVM_PROBE_SECONDS:-3}" "$dir/$PVM_CONFIG" 2>/dev/null
+    then PVM_REACH[$dir]=yes
+    else PVM_REACH[$dir]=no
+    fi
+  fi
+  [[ "${PVM_REACH[$dir]}" == yes ]]
+}
+
+# Unreachable is not stale: what cannot be read cannot be judged, and prune must not drop it
+_is_unreachable() { ! _reachable "${REG_PATH[$1]}"; }
+
 _is_stale() {
+  ! _is_unreachable "$1" || return 1
   [[ -d "${REG_PATH[$1]}" ]] || return 0
   [[ "$(_cfg_id "${REG_PATH[$1]}")" != "${REG_ID[$1]}" ]]
 }
@@ -375,6 +394,7 @@ _live_vaults() {
   LIVE=() LIVE_ID=() LIVE_NAME=()
   _registry_load
   for i in "${!REG_ID[@]}"; do
+    ! _is_unreachable "$i" || { warn "vault ${REG_NAME[$i]} skipped: $(_display "${REG_PATH[$i]}") does not answer"; continue; }
     _is_stale "$i" && continue
     LIVE+=("${REG_PATH[$i]}") LIVE_ID+=("${REG_ID[$i]}") LIVE_NAME+=("${REG_NAME[$i]}")
   done
@@ -443,10 +463,12 @@ cmd_list() {
   _registry_load
   for i in "${!REG_ID[@]}"; do
     state=ok
-    _is_stale "$i" && state=stale
+    if _is_unreachable "$i"; then state=unreachable
+    elif _is_stale "$i"; then state=stale
+    fi
     # Stale entries only with --stale, where they are all that is listed; --json has both
     if ! anfs_json_on; then
-      if $stale; then [[ "$state" == stale ]] || continue; else [[ "$state" == ok ]] || continue; fi
+      if $stale; then [[ "$state" == stale ]] || continue; else [[ "$state" != stale ]] || continue; fi
     elif $stale && [[ "$state" != stale ]]; then
       continue
     fi
