@@ -88,6 +88,7 @@ order: declared and actual status, and the stack that brought each in" --arg "st
 cli_cmd install "Install stacks: the stacks they depend on, then packages, skills,
 vaults, spaces, containers and machines, each kind by its tool,
 then the status: entries. Recorded, for remove." \
+  --opt "-y --yes: Do not ask before installing the plan" \
   --opt "-t --target TARGET: Where: host (the default; the only one for now)" \
   --opt "--build: Only what belongs in an image: packages and skills" --arg "stack..."
 cli_cmd remove "Undo stacks: what their install put here that was not here before
@@ -297,7 +298,7 @@ cmd_path()    { _need_lib stack_path stacks.sh; stack_path "$1"; }
 cmd_install() {
   _need_lib stack_install stacks.sh
   gitsrc_update_stale >/dev/null 2>&1 || true
-  stack_install "${CLI_OPT[build]:-false}" "${CLI_OPT[target]:-}" "$@"
+  stack_install "${CLI_OPT[yes]:-false}" "${CLI_OPT[build]:-false}" "${CLI_OPT[target]:-}" "$@"
 }
 cmd_remove() {
   _need_lib stack_remove stacks.sh

@@ -282,8 +282,8 @@ _stack_target() {
 
 # `anfs install <stack>...`
 stack_install() {
-  local build="$1" target="$2"
-  shift 2
+  local yes="$1" build="$2" target="$3"
+  shift 3
   _stack_target "$target"
   local spec
   anfs_sources stacks
@@ -339,6 +339,8 @@ stack_install() {
       printf '  vaults: not installed, pvm does not install vaults from sources yet (%s)\n' "${!vaults[*]}"
     fi
   fi
+  # A stack is a group: the plan above is more than the names typed
+  $yes || anfs_confirm "install changes this machine" "Install?"
 
   # The records: what each one held already (before is never flipped to false), and what was
   # there before this run and no other stack's record holds

@@ -342,13 +342,16 @@ packages: [p/c]'
   [[ "$(yq -p json -r '.[] | select(.source == "core") | .provides | join(" ")' <<< "$output")" == *stacks* ]]
 }
 
-@test "install does not ask: a stack is what was named; remove does" {
+@test "install and remove both ask: a stack is a group" {
   run "$ANFS" install lgat/app </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"pass -y"* ]]
+  [ ! -s "$LOG" ]
+  run "$ANFS" install -y lgat/app </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" != *"pass -y"* ]]
   grep -qx "ppm install -y stack/git stack/ruby" "$LOG"
   run "$ANFS" install --help
-  [[ "$output" != *"--yes"* ]]
+  [[ "$output" == *"--yes"* ]]
   : > "$LOG"
   run "$ANFS" remove lgat/app </dev/null
   [ "$status" -eq 77 ]
