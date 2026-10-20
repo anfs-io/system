@@ -265,6 +265,39 @@ check_ports() {
   return 0
 }
 
+# What listens on host TCP port $1, "<name> <pid>" a line; nothing when it is free. "? -" for a
+# listener ss cannot name (another user's)
+port_holders() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$1" -sTCP:LISTEN -Fpc 2>/dev/null |
+      awk '/^p/ { pid = substr($0, 2) } /^c/ { print substr($0, 2), pid }' | sort -u
+  elif command -v ss >/dev/null 2>&1; then
+    ss -Hltnp "sport = :$1" 2>/dev/null |
+      sed -n 's/.*users:(("\([^"]*\)",pid=\([0-9]*\).*/\1 \2/p; t; s/.*/? -/p' | sort -u
+  fi
+}
+
+# up: every host port the services publish is free. Something holding one on one address family
+# while podman takes the other gives no error, and half the clients reach the wrong program. A
+# service already running holds its own ports, and podman's forwarders are podman's to report.
+check_ports_free() {
+  local svc port name pid rc=0
+  for svc in "$@"; do
+    [[ -z "$(project_containers "$svc")" ]] || continue
+    load_env "$svc" || true
+    while IFS= read -r port; do
+      while read -r name pid; do
+        case "$name" in
+          ""|gvproxy|rootlessport*|pasta*|slirp4netns|conmon|podman|krunkit|vfkit) continue ;;
+        esac
+        anfs_warn "not starting $(svc_name "$svc"): host port $port is in use by $name (pid $pid)"
+        rc=1
+      done < <(port_holders "$port")
+    done < <(service_ports "$svc" | sort -u)
+  done
+  return $rc
+}
+
 # pcm runs every service as compose project <name>, so a different top-level name: is ignored
 check_project_name() {
   local svc="$1" declared

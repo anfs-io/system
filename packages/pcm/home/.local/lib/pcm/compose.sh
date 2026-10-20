@@ -39,6 +39,7 @@ compose_command() {
     fi
     # Room for what starts: memory: (container.yml), against the host or the podman machine
     check_memory "${CLOSURE[@]}" || return 1
+    check_ports_free "${CLOSURE[@]}" || return 1
     # Nothing elevated starts unannounced: each privilege, with the reason it was declared
     local key reason
     for arg in "${CLOSURE[@]}"; do

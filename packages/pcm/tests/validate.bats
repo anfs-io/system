@@ -127,3 +127,24 @@ x-pcm:
   [ "$(service_dependents a/db)" = "a/app" ]
   [ "$(service_dependents a/cache)" = "a/app" ]
 }
+
+@test "up: a host port held by another program refuses with its name; podman's own and a running service's are fine" {
+  define "$T/src/a/containers" web 'services:
+  app:
+    image: docker.io/library/alpine:3
+    ports:
+      - "127.0.0.1:9292:9292"'
+  load_sources
+  port_holders() { [[ "$1" == 9292 ]] && printf '%s\n' "${HOLDERS[@]}"; }
+  HOLDERS=("ruby 4242")
+  run check_ports_free a/web
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not starting web: host port 9292 is in use by ruby (pid 4242)"* ]]
+  HOLDERS=("gvproxy 10" "rootlessport 11" "pasta.avx2 12")
+  run check_ports_free a/web
+  [ "$status" -eq 0 ]
+  HOLDERS=("ruby 4242")
+  project_containers() { echo web_app_1; }
+  run check_ports_free a/web
+  [ "$status" -eq 0 ]
+}
