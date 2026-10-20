@@ -157,6 +157,66 @@ SH
   [ "${lines[1]}" = "demo: usage: demo up [--share PATH] [-p PORT] [--fresh] <thing> [snapshot]" ]
 }
 
+# --- asking: -i -----------------------------------------------------------------------------
+# The answers are piped in; ANFS_TEST_TERMINAL=1 makes that stdin count as a terminal.
+
+@test "-i asks for the arguments, then the value options, in order; answers land as if typed" {
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i <<< $'beta\nsnap\n/a\n8080'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<thing>: [snapshot]: Share a directory (PATH): Publish a port (PORT): args: <beta> <snap>"* ]]
+  [[ "$output" != *"--fresh"* ]]
+  [ "${lines[-3]}" = "interactive=true" ]
+  [ "${lines[-2]}" = "p=8080" ]
+  [ "${lines[-1]}" = "share=/a" ]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i <<< $'beta\n\n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"args: <beta>"$'\n'"interactive=true" ]]
+}
+
+@test "-i: a required argument answered empty is asked again; a ... one is split on spaces" {
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i <<< $'\n\nbeta\n\n\n'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"<thing>: "*"<thing>: "*"<thing>: "*"[snapshot]: "*"args: <beta>"* ]]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" remove -i <<< 'one two  three'
+  [[ "$output" == *"<thing>...: args: <one> <two> <three>"* ]]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i < /dev/null
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"demo: nothing done" ]]
+}
+
+@test "-i shows a kind's candidates; a lone one is the default; dir and file show none" {
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i <<< $'alpha\n\n\n'
+  [[ "$output" == "  alpha  the first"$'\n'"  beta"$'\n'"<thing>: "* ]]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" link add -i <<< $'\n\nprod'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "[dir]:   src/ws"$'\n'"Where (SPEC) [src/ws]: Its name (NAME): args:"* ]]
+  [[ "$output" == *"as=prod"*"to=src/ws"* ]]
+}
+
+@test "-i given some values asks only for the rest; --interactive is -i" {
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up t -p 80 --interactive <<< $'\n/s'
+  [ "$status" -eq 0 ]
+  [[ "$output" == "[snapshot]: Share a directory (PATH): args: <t>"$'\n'* ]]
+  [[ "$output" == *"p=80"*"share=/s"* ]]
+}
+
+@test "-i with no terminal is 77; with -y it is a usage error; it is no passthrough's option" {
+  run "$TOOL" up -i < /dev/null
+  [ "$status" -eq 77 ]
+  [ "$output" = "demo: -i needs a terminal" ]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" up -i -y t < /dev/null
+  [ "$status" -eq 64 ]
+  [ "${lines[0]}" = "demo: -i and -y: one asks, the other does not" ]
+  ANFS_TEST_TERMINAL=1 run "$TOOL" ps --format json -i < /dev/null
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "args: <--format> <json>" ]
+  [ "${lines[1]}" = "interactive=true" ]
+  run "$TOOL" up --bogus t
+  [[ "${lines[1]}" != *"-i"* ]]
+  run "$TOOL" --help
+  [[ "$output" == *"  -i, --interactive  Ask for what is not given (after any command)"* ]]
+}
+
 @test "an unknown command, and an unknown sub-command, exit 64 with the help that applies" {
   run "$TOOL" nope
   [ "$status" -eq 64 ]

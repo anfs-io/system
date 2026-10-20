@@ -54,6 +54,9 @@
 #   --json                   anywhere on the line up to a `--` (table.sh)
 #   -y/--yes                 after any command: anfs_confirm does not ask. A command that asks
 #                            declares it too, to say in its help what it skips
+#   -i/--interactive         after any command: ask for each positional argument, then each value
+#                            option, not given (CLI_OPT[interactive]). Needs a terminal (else 77);
+#                            with -y it is a usage error. cli_call does not pass it on by itself
 #   --version, -h/--help     and `<command> --help`, `help <command>`
 #   __complete <words...>    what tab completion asks; see cmd_completion
 #
@@ -251,6 +254,11 @@ _cli_opt() {
     _O_KIND="" _O_KEY=yes
     return 0
   fi
+  # And -i, to be asked for what is not given (_cli_ask_missing)
+  if [[ "$2" == -i || "$2" == --interactive ]]; then
+    _O_KIND="" _O_KEY=interactive
+    return 0
+  fi
   return 1
 }
 
@@ -327,6 +335,15 @@ _cli_parse() {
     esac
   done
 
+  if ${CLI_OPT[interactive]:-false}; then
+    ! ${CLI_OPT[yes]:-false} || cli_usage_err "-i and -y: one asks, the other does not"
+    if ! _cli_terminal; then
+      echo "$CLI_TOOL: -i needs a terminal" >&2
+      exit "$CLI_EX_TERMINAL"
+    fi
+    _cli_ask_missing "$name"
+  fi
+
   while IFS= read -r spec; do
     [[ -n "$spec" ]] || continue
     [[ "$spec" == "["* ]] || min=$((min + 1))
@@ -336,6 +353,76 @@ _cli_parse() {
   [[ -z "$pass" ]] || many=true
   (( ${#CLI_POS[@]} >= min )) || cli_usage_err
   $many || (( ${#CLI_POS[@]} <= max )) || cli_usage_err "too many arguments"
+}
+
+# True when stdin is a terminal. ANFS_TEST_TERMINAL=1 makes it one for -i, so a test can pipe
+# the answers in.
+_cli_terminal() {
+  [[ -t 0 || "${ANFS_TEST_TERMINAL:-}" == 1 ]]
+}
+
+# One question of -i, on stderr; the answer in REPLY. The kind's candidates are listed first (up
+# to 20); a lone one is the default. End of input is "nothing done", exit 1.
+_cli_ask_line() {
+  local kind="$1" question="$2" line default="" i=0
+  local -a cands=()
+  while IFS= read -r line; do
+    [[ -z "$line" ]] || cands+=("$line")
+  done < <(_cli_candidates "$kind" 2>/dev/null)
+  [[ "${cands[0]:-}" != :* ]] || cands=()
+  for line in ${cands[@]+"${cands[@]}"}; do
+    if (( ++i > 20 )); then
+      echo "  ..." >&2
+      break
+    fi
+    printf '  %s\n' "${line/$'\t'/  }" >&2
+  done
+  [[ ${#cands[@]} -ne 1 ]] || default="${cands[0]%%$'\t'*}"
+  printf '%s%s: ' "$question" "${default:+ [$default]}" >&2
+  if ! IFS= read -r REPLY; then
+    printf '\n%s: nothing done\n' "$CLI_TOOL" >&2
+    exit 1
+  fi
+  [[ -n "$REPLY" ]] || REPLY="$default"
+}
+
+# -i: ask for each positional argument not given, in order, then each value option not given (a
+# flag is not asked), into CLI_POS and CLI_OPT as if typed. Enter leaves an optional one out (and
+# so every argument after it); a required argument is asked again. A ... argument is asked once
+# and the answer split on spaces.
+_cli_ask_missing() {
+  local name="$1" spec word q n short long kind help key
+  local -a specs=() opts=() words=()
+  while IFS= read -r spec; do
+    [[ -z "$spec" ]] || specs+=("$spec")
+  done <<< "${CLI_ARGSPEC[$name]:-}"
+  for (( n = ${#CLI_POS[@]}; n < ${#specs[@]}; n++ )); do
+    spec="${specs[$n]}"
+    word="${spec#[}" word="${word%]}" word="${word%...}"
+    q="$spec"
+    [[ "$spec" == "["* ]] || { q="<$word>"; [[ "$spec" != *... ]] || q+="..."; }
+    CLI_COMPLETE_ARGS=(${CLI_POS[@]+"${CLI_POS[@]}"})
+    while _cli_ask_line "$word" "$q"; [[ -z "$REPLY" && "$spec" != "["* ]]; do :; done
+    [[ -n "$REPLY" ]] || break
+    if [[ "$spec" == *... ]]; then
+      read -ra words <<< "$REPLY"
+      CLI_POS+=("${words[@]}")
+      break
+    fi
+    CLI_POS+=("$REPLY")
+  done
+  while IFS= read -r spec; do
+    [[ -z "$spec" ]] || opts+=("$spec")
+  done <<< "${CLI_OPTSPEC[$name]:-}"
+  for spec in ${opts[@]+"${opts[@]}"}; do
+    IFS="$_CLI_US" read -r short long kind help <<< "$spec"
+    [[ -n "$kind" ]] || continue
+    key="${long#--}"
+    [[ -n "$key" ]] || key="${short#-}"
+    [[ -z "${CLI_OPT[$key]+set}" ]] || continue
+    _cli_ask_line "${kind,,}" "${help:-${long:-$short}} ($kind)"
+    [[ -z "$REPLY" ]] || CLI_OPT[$key]="$REPLY"
+  done
 }
 
 # Run a declared command from inside the tool, as if typed: `cli_call up --fresh "$id"`. The
@@ -582,12 +669,13 @@ cli_help() {
   done
   echo ""
   echo "Options, before the command:"
-  echo "  -d, --debug    Show debug output (always written to the log: anfs log)"
-  echo "  --trace        Trace every command the tool runs"
-  echo "  --json         Lists as JSON (anywhere on the line)"
-  echo "  -y, --yes      Do not ask (after any command)"
-  echo "  --version      Print the version"
-  echo "  -h, --help     This help; after a command, that command's"
+  echo "  -d, --debug        Show debug output (always written to the log: anfs log)"
+  echo "  --trace            Trace every command the tool runs"
+  echo "  --json             Lists as JSON (anywhere on the line)"
+  echo "  -y, --yes          Do not ask (after any command)"
+  echo "  -i, --interactive  Ask for what is not given (after any command)"
+  echo "  --version          Print the version"
+  echo "  -h, --help         This help; after a command, that command's"
   if declare -F cli_help_epilogue >/dev/null; then
     echo ""
     cli_help_epilogue

@@ -951,7 +951,7 @@ cli_dispatch "$@"
   and the word is its **kind**. `--arg "service..."`, `--arg "[snapshot]"`: `[..]` is optional,
   `...` is one or more, the word is its kind.
 - `--passthrough`: options the command does not declare are left for it, in place (`pcm up`,
-  `pcm ps`, `pmm shell`: they go on to podman or ssh). `-y` is never passed on: it is the tool's.
+  `pcm ps`, `pmm shell`: they go on to podman or ssh). `-y` and `-i` are never passed on: they are the tool's.
 - **The function gets positional arguments as `"$@"` and options in `CLI_OPT`**, keyed by the long
   name without dashes: `${CLI_OPT[yes]:-false}`, `${CLI_OPT[to]:-}`. A value option given twice
   holds both, one per line. No command writes a loop over its own options.
@@ -1042,6 +1042,18 @@ source, a group, dependents); starting, installing and cloning what was named do
 `anfs src remove` and `anfs install <stack>` (a stack is a group: it prints the plan, then asks). A tool calling another after it asked, or
 unattended (stacks.sh, `anfs src install`, implode), passes `-y`.
 
+**Every command takes `-i, --interactive`** too (cli.sh, as `-y`; `CLI_OPT[interactive]`): after
+the options are read and before the argument count is checked, it asks for each positional argument
+not given, in order, then each declared value option not given (flags are not asked). The question
+is the option's help and its kind (`Where (SPEC):`), or the argument as the usage line writes it
+(`<thing>:`, `[snapshot]:`); a kind's `complete_<kind>` candidates are listed first (up to 20), and
+a lone one is the default. Enter leaves an optional one out; a required argument is asked again; a
+`...` argument is asked once and split on spaces. The answers go into `CLI_POS` and `CLI_OPT` as if
+typed. `-i` with no terminal exits 77; `-i -y` is a usage error (64). `cli_call` does not pass it
+on: a command that runs another passes `-i` itself, and only when it was given one. Without `-i`
+nothing asks for a missing value: it is a usage error, as before. Tests pipe the answers in with
+`ANFS_TEST_TERMINAL=1`, which makes stdin count as a terminal for `-i`.
+
 A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`; anfs's is the
 stack, `anfs list`), never in a group
 of its own name; a group is for another kind of thing the tool manages (`psm repo`, `psm agents`,
@@ -1057,7 +1069,7 @@ functions in the bootstrap files did not change.
 
 **Exit codes:** 0 done; 1 what was asked for is not there or could not be done; 2 ambiguous;
 64 used wrongly; 69 something this needs is missing; 73 already exists; 75 locked (busy);
-77 needs a person at a terminal (`anfs_confirm` with no terminal and no `-y`, sudo with no
+77 needs a person at a terminal (`anfs_confirm` with no terminal and no `-y`, `-i` with no terminal, sudo with no
 terminal and no `SUDO_ASKPASS`: ppm's `_system_sudo`, anfs's `implode --all`).
 
 **Completion asks the tool.** `<tool> __complete <words...>` answers from the declarations: the
