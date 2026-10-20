@@ -34,6 +34,10 @@ class App < Roda
   # There is no login. Running commands is for whoever is sitting at this
   # machine, unless this says other machines may too.
   opts[:remote_actions] = ENV["ANFS_UI_REMOTE_ACTIONS"] == "1"
+  # In the container every request comes from podman's forwarder, never loopback, so the
+  # address it is published on decides instead: published on loopback, only this machine
+  # reaches it. Unset on the host (bundle exec puma), where REMOTE_ADDR is real.
+  opts[:local_only] = LOOPBACK.include?(ENV.fetch("ANFS_UI_BIND", nil))
 
   plugin :heartbeat, path: "/up"
   plugin :host_authorization, HOSTS
@@ -135,7 +139,7 @@ class App < Roda
     request.halt
   end
 
-  def may_act? = opts[:remote_actions] || LOOPBACK.include?(env["REMOTE_ADDR"])
+  def may_act? = opts[:remote_actions] || opts[:local_only] || LOOPBACK.include?(env["REMOTE_ADDR"])
 
   # A form on another site can post here too; the browser says where from.
   def same_origin? = env["HTTP_ORIGIN"] == "#{request.scheme}://#{env["HTTP_HOST"]}"

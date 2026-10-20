@@ -72,8 +72,11 @@ module Anfs
              unset: ->(row) { row["dir"] ? "installed" : "not installed" },
              columns: { "Space" => "space", "Level" => "level", "Directory" => "dir" },
              action: ->(row) { [row["dir"] ? "remove" : "install", row["space"]] }),
+    # missing: its space is installed and it is not cloned. A space not installed is the
+    # Spaces panel's install, which clones its repositories too.
     Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[repo list], every: 60, id: "repository",
-             columns: { "Repository" => "repository", "URL" => "url" }),
+             columns: { "Repository" => "repository", "URL" => "url" },
+             action: ->(row) { ["install", row["repository"]] if row["status"] == "missing" }),
     Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], every: 300, id: "skill",
              columns: { "Skill" => "skill", "Config" => "config", "Repo" => "repo" },
              # psm syncs a whole config, so every row of one shares the subject and the job.

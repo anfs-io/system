@@ -19,6 +19,7 @@ services:
       RACK_ENV: development
       HOST: 0.0.0.0
       PORT: "9292"
+      ANFS_UI_BIND: "${ANFS_UI_BIND}"
       ANFS_UI_HOSTS: "${ANFS_UI_HOSTS}"
       ANFS_UI_REMOTE_ACTIONS: "${ANFS_UI_REMOTE_ACTIONS}"
     ports:

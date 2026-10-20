@@ -5,12 +5,15 @@ RSpec.describe App do
 
   let(:store) { store_with }
   let(:jobs) { instance_double(Anfs::Jobs, latest: {}, all: [], start: nil) }
+  let(:local_only) { false }
   let(:app) do
     store = self.store
     jobs = self.jobs
+    local_only = self.local_only
     Class.new(described_class) do
       opts[:store] = store
       opts[:jobs] = jobs
+      opts[:local_only] = local_only
     end.app
   end
 
@@ -190,6 +193,20 @@ RSpec.describe App do
 
       act "packages", "install", "stack/node", remote
       expect(last_response.status).to eq(403)
+    end
+
+    context "when published on loopback only" do
+      let(:local_only) { true }
+
+      it "lets the forwarded requests act: only this machine reaches it" do
+        forwarded = origin.merge("REMOTE_ADDR" => "192.168.127.1")
+
+        get "/packages", {}, forwarded
+        expect(last_response.body).to include("<form")
+
+        act "packages", "install", "stack/node", forwarded
+        expect(jobs).to have_received(:start)
+      end
     end
   end
 

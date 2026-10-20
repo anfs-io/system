@@ -36,5 +36,9 @@ RSpec.describe Anfs::Kind do
     expect(kind("containers").action[{ "container" => "core/ui", "status" => "stopped" }]).to eq(%w[up core/ui])
     expect(kind("containers").action[{ "container" => "x/ui", "status" => "running, shadowed" }]).to be_nil
     expect(kind("stacks").action).to be_nil
+    repo = { "repository" => "lgat/next/docs", "status" => "missing" }
+    expect(kind("repos").action[repo]).to eq(%w[install lgat/next/docs])
+    expect(kind("repos").action_command("install", "lgat/next/docs")).to eq(%w[wsm repo install lgat/next/docs])
+    expect(kind("repos").action[repo.merge("status" => "not installed")]).to be_nil
   end
 end
