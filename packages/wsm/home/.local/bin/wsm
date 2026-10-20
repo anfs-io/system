@@ -106,8 +106,9 @@ cli_cmd path "Print that path; no QUERY means the level containing ." \
 cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask"
 cli_group repo "The repositories the levels' space.yml files declare"
 cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls --arg "[spec]"
-cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing;
-nothing is stowed, nothing is pulled" --opt "-n --dry-run: Say what would be done" --arg "[spec]"
+cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing, or
+the one REPOSITORY (as repo list names it); nothing is stowed, nothing is pulled" \
+  --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
 cli_standard
 
 cmd_cd() {
@@ -653,10 +654,10 @@ _repo_paths() {
   return 0
 }
 
-# Clone the repositories <file> declares into the level at <root>
-# Usage: _repositories <root> <file> <dry:true|false>
+# Clone the repositories <file> declares into the level at <root>, or only the one at <only>
+# Usage: _repositories <root> <file> <dry:true|false> [only]
 _repositories() {
-  local root="$1" file="$2" dry="$3"
+  local root="$1" file="$2" dry="$3" only="${4:-}"
   command -v git >/dev/null 2>&1 || fail "$EX_UNAVAIL" "install needs git"
 
   # One field per line rather than @tsv: tab is IFS whitespace, so `IFS=$TAB read` collapses
@@ -675,6 +676,7 @@ _repositories() {
       continue
     fi
     seen="$seen$path"$'\n'
+    [[ -z "$only" || "$path" == "$only" ]] || continue
 
     target="$root/$path"
     if [[ -d "$target/.git" ]]; then
@@ -1295,9 +1297,45 @@ _repo_install_level() {
   _level_repositories "$d" "$2" "$REPO_DRY" || REPO_FAILED=$((REPO_FAILED + 1))
 }
 
-# `wsm repo install [SPEC] [-n]`: the clone half of install, for the levels already installed
+# _each_level's callback for REPO_WANT (source/ws/space/path, as repo list names it): the
+# level that declares it, that level's dir in the source and the path, a line each
+REPO_WANT=""
+_repo_find_level() {
+  local path
+  while IFS= read -r path; do
+    [[ "${1%/}/$path" == "$REPO_WANT" ]] && printf '%s\n%s\n%s\n' "$1" "$2" "$path"
+  done < <(_repo_paths "$2/space.yml")
+  return 0
+}
+
+# `wsm repo install REPOSITORY [-n]`: clone that one, from what _repo_find_level found; its
+# level must be installed
+_repo_install_one() {
+  local id from path d file
+  { IFS= read -r id; IFS= read -r from; IFS= read -r path; } <<< "$1"
+  d=$(_installed_dir "${id%/}")
+  [[ -n "$d" && -d "$d" ]] || fail "$EX_NOTFOUND" "${id%/} is not installed: wsm install ${id%/} clones its repositories"
+  file="$d/space.yml"
+  [[ -f "$file" ]] || file="$from/space.yml"
+  _repositories "$d" "$file" "$REPO_DRY" "$path"
+}
+
+# `wsm repo install [SPEC|REPOSITORY] [-n]`: the clone half of install, for the levels already
+# installed; a repository's id clones that one
 cmd_repo_install() {
   REPO_DRY=${CLI_OPT[dry-run]:-false} REPO_FAILED=0
+  local found=""
+  if [[ "${1:-}" == */* ]]; then
+    _require_yq
+    _installed_load
+    anfs_sources spaces
+    REPO_WANT="$1"
+    found=$(_each_level "${1%%/*}/" _repo_find_level)
+  fi
+  if [[ -n "$found" ]]; then
+    _repo_install_one "$found"
+    return
+  fi
   _levels_load "${1:-}"
   _each_level "${1:-}" _repo_install_level
   [[ $REPO_FAILED -eq 0 ]]

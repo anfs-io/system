@@ -120,6 +120,35 @@ YML
   [[ "$output" == *"present repos/alpha"* ]]
 }
 
+@test "repo install REPOSITORY clones that one; its level must be installed" {
+  local a b c
+  a=$(mkbare alpha) b=$(mkbare beta) c=$(mkbare gamma)
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+    path: repos/alpha
+  - url: $c
+YML
+  space_def acme spikes/tech <<YML
+repositories:
+  - url: $b
+    path: beta
+YML
+  wsm install acme/main/tech >/dev/null
+  rm -rf "$HOME/spaces/acme/main/tech/repos" "$HOME/spaces/acme/main/tech/gamma"
+  run wsm repo install -n acme/main/tech/repos/alpha
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would clone repos/alpha"* && "$output" != *gamma* ]]
+  run wsm repo install acme/main/tech/repos/alpha
+  [ "$status" -eq 0 ]
+  [ -d "$HOME/spaces/acme/main/tech/repos/alpha/.git" ]
+  [ ! -e "$HOME/spaces/acme/main/tech/gamma" ]
+  run wsm repo install acme/spikes/tech/beta
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"acme/spikes/tech is not installed"* ]]
+  [ ! -e "$HOME/spaces/acme/spikes" ]
+}
+
 @test "path resolves space, ws/space and source/ws/space, then a workspace" {
   wsm install acme/ >/dev/null
   run wsm path finance
