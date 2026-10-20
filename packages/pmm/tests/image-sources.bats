@@ -288,7 +288,11 @@ base: ghcr.io/x/macos:latest"
   [[ "$output" == *"acme/web ok"*"acme/m1 ok"* ]]
   PMM_INSTALL=bogus run cli_call install acme/
   [ "$status" -ne 0 ]
-  PMM_INSTALL=create run cli_call install acme/
+  # a whole source: asked about, so no terminal and no -y is 77 and nothing is built
+  PMM_INSTALL=create run cli_call install acme/ </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" != *"build acme/web"* ]]
+  PMM_INSTALL=create run cli_call install -y acme/
   [[ "$output" == "build acme/web"* ]]
 }
 

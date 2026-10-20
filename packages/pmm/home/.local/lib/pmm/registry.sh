@@ -417,7 +417,8 @@ cmd_image_remove() {
 # `pmm image prune`: delete superseded build disks that no other build and no machine is on, and
 # stale build workspaces. The ISOs are not pmm's alone: `pmm iso remove`, `pmm iso prune`
 cmd_image_prune() {
-  local f dir keys d d_key src freed=0
+  local f dir keys d d_key src
+  local -a disks=()
   for dir in "$PMM_DATA_HOME"/images/*/*/; do
     dir="${dir%/}"
     # a shadowed definition's record, when the definition is gone, is nothing's
@@ -438,15 +439,21 @@ cmd_image_prune() {
       [[ "$d" == *.part || "$keys" != *" $d_key "* ]] || continue
       [[ -n "$(dependents_of_disk "$d")" ]] && continue
       [[ -n "$(holders_of "$(basename "$(dirname "$dir")")" "$(basename "$dir")" "$d_key")" ]] && continue
-      echo "Deleting $(tilde "$d")"
-      rm -f "$d" "${d%.qcow2}-efivars.fd"
-      freed=$((freed + 1))
+      disks+=("$d")
     done
+  done
+  if [[ ${#disks[@]} -gt 0 ]]; then
+    for d in "${disks[@]}"; do echo "  $(tilde "$d")"; done
+    confirm "prune deletes ${#disks[@]} superseded build disks" "Delete them?"
+  fi
+  for d in ${disks[@]+"${disks[@]}"}; do
+    echo "Deleting $(tilde "$d")"
+    rm -f "$d" "${d%.qcow2}-efivars.fd"
   done
   for d in "$PMM_STATE_HOME"/build/*/; do
     [[ -d "$d" ]] || continue
     [[ -f "${d}pid" ]] && pid_alive "$(cat "${d}pid")" && continue
     rm -rf "$d"
   done
-  echo "Pruned ($freed superseded disks)"
+  echo "Pruned (${#disks[@]} superseded disks)"
 }

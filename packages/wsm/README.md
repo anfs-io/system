@@ -45,7 +45,7 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
 | `wsm repo install [SPEC] [--dry-run]` | Clones what the installed levels under `SPEC` declare and is missing; stows nothing, pulls nothing (the clone half of `install`) |
 | `wsm install [SPEC [DIR]] [--dry-run]` | Stows levels into `DIR/<source>/<ws>/<space>` and clones their repositories, dependencies first. With no `SPEC`, the level at `.`, which must hold a `space.yml` |
-| `wsm remove SPEC...` | Unstows installed spaces, and the workspace or source the spec names; cloned repos and your own files stay |
+| `wsm remove [-y] SPEC...` | Asks, then unstows installed spaces, and the workspace or source the spec names; cloned repos and your own files stay |
 | `wsm new [[SOURCE/]WS/]SPACE` | Creates a space in a source; installs it when its workspace is installed |
 | `wsm add FILE...` | Moves files (or every file under a directory) into the source, then stows them back |
 | `wsm status [SOURCE...]` | Lists what an installed tree and its source disagree on |

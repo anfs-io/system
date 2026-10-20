@@ -91,6 +91,8 @@ cmd_install() {
       src="${arg%/}"
       # images and networks are directories of the source's machines/: without it, there are none
       catalog_source_dir "$src" >/dev/null || die "'$src' is not a source with machines/ (see: anfs src list)"
+      [[ "$PMM_INSTALL" == validate ]] ||
+        anfs_confirm "install $arg builds, installs and makes everything $src defines" "Install it all?"
       # in a subshell: the images' catalogue is loaded there, the machines' stays loaded here
       if ( load_images; source_dir "$src" >/dev/null ); then
         # not in an || list: errexit must stay on inside a build
@@ -98,7 +100,7 @@ cmd_install() {
         [[ $? -eq 0 ]] || return 1
       fi
       if net_source_dir "$src" >/dev/null; then
-        cli_call "network install" "$arg"
+        cli_call "network install" -y "$arg"
       fi
       for id in $(all_ids); do
         [[ "$(mach_src "$id")" == "$src" ]] && machines+=("$id")

@@ -108,3 +108,17 @@ setup() {
   run bash -c 'awk -F"\t" "{ print \$1 } \$2 !~ /shadowed/ { sub(/^[^\/]*\//, \"\", \$1); print \$1 }"' < <(cmd_list)
   [ "${lines[*]}" = "local/mine mine a/only-a only-a a/postgres postgres b/postgres" ]
 }
+
+@test "install source/: a whole source is asked about (77 without a terminal); a named one is not" {
+  cmd_up() { echo "up $*"; }
+  run cli_call install b/ </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"pass -y"* ]]
+  [[ "$output" != *"up "* ]]
+  run cli_call install -y b/
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"up b/postgres"* ]]
+  run cli_call install postgres </dev/null
+  [ "$status" -eq 0 ]
+  [ "$output" = "up postgres" ]
+}

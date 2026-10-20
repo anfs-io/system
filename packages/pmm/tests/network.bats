@@ -303,7 +303,7 @@ lab() { network "$PMM_NETWORKS_HOME/lab" "$(printf 'kind: nat\nsubnet: 10.20.0.0
   [ "$status" -eq 0 ]
   [[ "$output" == *"acme/lab ok"*"nets/iso ok"* ]]
   [ ! -f "$VIRSH_STUB/pmm-lab.state" ]
-  PMM_INSTALL=create run cli_call install acme/ nets/
+  PMM_INSTALL=create run cli_call install -y acme/ nets/
   echo "$output"
   [ "$status" -eq 0 ]
   [ "$(net_status lab)" = active ]

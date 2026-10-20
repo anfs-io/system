@@ -89,6 +89,8 @@ cmd_install() {
 # Remove one or more packages as requested by the user
 cmd_remove() {
   expand_packages "remove" "$@"
+  echo "About to remove: ${EXPANDED_PACKAGES[*]}"
+  anfs_confirm "remove takes away ${EXPANDED_PACKAGES[*]} and the software ppm installed for them" "Remove?"
   remover "${EXPANDED_PACKAGES[@]}"
   _run_callbacks remove ${PPM_REMOVED[@]+"${PPM_REMOVED[@]}"}
   flush_user_messages

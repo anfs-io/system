@@ -43,6 +43,7 @@ cmd_snapshot_create() {
   [[ -n "$snap" ]] || snap=$(date +%Y%m%d-%H%M%S)
   snap_ok "$snap" || die "snapshot names are lowercase letters, digits, . _ -"
   mach_exists "$name" || die "$name is not made yet (pmm up $name)"
+  [[ ! -d "$(snap_dir "$name")/$snap" ]] || confirm "snapshot $snap of $name exists; this replaces it" "Replace snapshot $snap?"
   mach_running "$name" && { was=true; mach_stop "$name"; }
   if [[ "$(state_get "$name" .backend)" == tart ]]; then
     vm=$(tart_vm "$name")

@@ -70,7 +70,8 @@ cli_group src "The sources every tool reads"
 cli_cmd "src list" "The sources in priority order: status, and what each provides" --alias ls
 cli_cmd "src add" "Add a source to your list (and clone it)" \
   --opt "--top: Before your other sources (highest priority)" --arg "url" --arg "[alias]"
-cli_cmd "src remove" "Take a source off your list" --alias rm --arg "source"
+cli_cmd "src remove" "Take a source off your list" --alias rm \
+  --opt "-y --yes: Do not ask before taking it off" --arg "source"
 cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "[source]"
 cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
 never pulled)" --arg "[source...]"
@@ -79,7 +80,7 @@ never pulled)" --arg "[source...]"
 cli_cmd "src install" "Install everything a source holds: its packages (ppm),
 containers (pcm), machines (pmm), skills (psm)
 and spaces (wsm), in that order. To pick single resources use the
-tool itself." --opt "-y --yes: Do not ask" --arg "source..."
+tool itself." --opt "-y --yes: Do not ask before installing whole sources" --arg "source..."
 # Stacks, anfs's own resource (lib/anfs/stacks.sh)
 cli_cmd list "Every stack in every source: STACK STATUS VERSION (installed, partial, -)" --alias ls
 cli_cmd show "A stack's resources through the stacks it depends on, in install
@@ -87,12 +88,11 @@ order: declared and actual status, and the stack that brought each in" --arg "st
 cli_cmd install "Install stacks: the stacks they depend on, then packages, skills,
 vaults, spaces, containers and machines, each kind by its tool,
 then the status: entries. Recorded, for remove." \
-  --opt "-y --yes: Do not ask" \
   --opt "-t --target TARGET: Where: host (the default; the only one for now)" \
   --opt "--build: Only what belongs in an image: packages and skills" --arg "stack..."
 cli_cmd remove "Undo stacks: what their install put here that was not here before
 and no other installed stack holds, in reverse order" --alias rm \
-  --opt "-y --yes: Do not ask" \
+  --opt "-y --yes: Do not ask before removing" \
   --opt "-t --target TARGET: Where: host (the default; the only one for now)" --arg "stack..."
 cli_cmd path "Print a stack's directory" --arg "stack"
 # A step's options are declared by the package that owns it (package.yml onboard.options), so
@@ -121,7 +121,7 @@ implode (wsm, psm, pmm, pcm), the system stack, ppm's implode,
 then the sources. Space contents are kept. It ends by listing what anfs's installer added
 that is still there (mise and its tools, the base formulas,
 Homebrew if it installed it)." \
-  --opt "-y --yes: Do not ask" \
+  --opt "-y --yes: Do not ask before imploding" \
   --opt "--all: That too, and nothing that was on the machine before anfs"
 cli_cmd callbacks "Who listens to which tool's events (ppm and wsm emit
 install and remove): tool, listener, ok or stale, handler" --arg "[tool]"
@@ -278,7 +278,10 @@ confirm() { anfs_confirm "$@"; }
 # `anfs src ...`: the work is lib/anfs/sources.sh's
 cmd_src_list()   { _need_lib anfs_table table.sh; gitsrc_list; }
 cmd_src_add()    { if ${CLI_OPT[top]:-false}; then gitsrc_add --top "$@"; else gitsrc_add "$@"; fi; }
-cmd_src_remove() { gitsrc_remove "$@"; }
+cmd_src_remove() {
+  anfs_confirm "src remove takes $1 off your list" "Remove source $1?"
+  gitsrc_remove "$@"
+}
 cmd_src_ssh()    { gitsrc_ssh "$@"; }
 cmd_src_update() { gitsrc_update "$@"; }
 
@@ -294,7 +297,7 @@ cmd_path()    { _need_lib stack_path stacks.sh; stack_path "$1"; }
 cmd_install() {
   _need_lib stack_install stacks.sh
   gitsrc_update_stale >/dev/null 2>&1 || true
-  stack_install "${CLI_OPT[yes]:-false}" "${CLI_OPT[build]:-false}" "${CLI_OPT[target]:-}" "$@"
+  stack_install "${CLI_OPT[build]:-false}" "${CLI_OPT[target]:-}" "$@"
 }
 cmd_remove() {
   _need_lib stack_remove stacks.sh
@@ -342,10 +345,8 @@ cmd_src_install() {
       continue
     fi
     echo "== $t install ${specs[*]}"
-    case "$t" in
-      ppm) tool ppm install -y "${specs[@]}" || rc=1 ;;
-      *)   tool "$t" install "${specs[@]}" || rc=1 ;;
-    esac
+    # Confirmed above: a whole source is what each tool asks about
+    tool "$t" install -y "${specs[@]}" || rc=1
   done
   return $rc
 }

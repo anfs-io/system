@@ -16,11 +16,11 @@ setup() {
   mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources" "$T/bin"
   ln -s "$(cd "$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs" && pwd)" "$HOME/.local/lib/anfs"
 
-  # npx stub: `skills list -g --json` lists nothing; everything else is logged
+  # npx stub: `skills list -g --json` lists $NPX_LIST (nothing by default); everything else is logged
   cat > "$T/bin/npx" <<'STUB'
 #!/usr/bin/env bash
 shift 2   # --yes skills@<version>
-[[ "$1" == list ]] && { echo '[]'; exit 0; }
+[[ "$1" == list ]] && { echo "${NPX_LIST:-[]}"; exit 0; }
 echo "$*" >> "$NPX_LOG"
 STUB
   chmod +x "$T/bin/npx"
@@ -74,7 +74,10 @@ psm() { "$PSM" "$@"; }
 }
 
 @test "remove and prune are top-level; skills is no group" {
-  run psm remove hello
+  run psm remove hello </dev/null
+  [ "$status" -eq 77 ]
+  [ ! -s "$NPX_LOG" ]
+  run psm remove -y hello
   [ "$status" -eq 0 ]
   [[ "$(cat "$NPX_LOG")" == *"remove -g -y hello"* ]]
   run psm prune
@@ -87,7 +90,9 @@ psm() { "$PSM" "$@"; }
 @test "install source/: adds each of its skills for the detected agents" {
   source_dir acme
   skill acme hello
-  run psm install acme/
+  run psm install acme/ </dev/null
+  [ "$status" -eq 77 ]
+  run psm install -y acme/
   [ "$status" -eq 0 ]
   run cat "$NPX_LOG"
   [[ "$output" == "add $(cd -P "$T/srcs/acme/skills" && pwd) -g -y -s hello -a pi" ]]
@@ -147,4 +152,36 @@ psm() { "$PSM" "$@"; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"No agent installed yet: 1 skill source(s) sync when an agent package is installed"* ]]
   [ ! -s "$NPX_LOG" ]
+}
+
+@test "prune and agents remove ask before removing; -y removes" {
+  export NPX_LIST='[{"name":"stray","agents":["Pi"],"source":""}]'
+  run psm prune </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"undeclared  stray"* ]]
+  [ ! -s "$NPX_LOG" ]
+  run psm prune -y
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$NPX_LOG")" == "remove -g -y stray" ]]
+  : > "$NPX_LOG"
+  run psm agents remove pi </dev/null
+  [ "$status" -eq 77 ]
+  [ ! -s "$NPX_LOG" ]
+  run psm agents remove -y pi
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$NPX_LOG")" == "remove stray -g -y -a pi" ]]
+}
+
+@test "repo remove asks before deleting the config" {
+  mkdir -p "$T/mine/one"
+  printf -- '---\nname: one\ndescription: test\n---\n' > "$T/mine/one/SKILL.md"
+  psm repo add "$T/mine" >/dev/null
+  local f
+  f=$(ls "$HOME/.config/psm/"*.yml)
+  run psm repo remove "$T/mine" </dev/null
+  [ "$status" -eq 77 ]
+  [ -f "$f" ]
+  run psm repo rm -y "$T/mine"
+  [ "$status" -eq 0 ]
+  [ ! -e "$f" ]
 }

@@ -188,12 +188,17 @@ setup() { pvm_setup; }
   vault a
   vault b
   vault c
-  run pvm remove a
+  # it asks: no terminal and no -y is 77, and the entry stays
+  run pvm remove a </dev/null
+  [ "$status" -eq 77 ]
+  run pvm ls
+  [ "${#lines[@]}" -eq 3 ]
+  run pvm remove -y a
   [ "$status" -eq 0 ]
   [ -f a/pvm.yml ]
   run pvm ls
   [ "${#lines[@]}" -eq 2 ]
-  run pvm remove a
+  run pvm remove -y a
   [ "$status" -eq 1 ]
   rm -rf b
   run pvm prune -n
@@ -202,7 +207,11 @@ setup() { pvm_setup; }
   [[ "$output" == "would drop b"* ]]
   run pvm ls --stale
   [ "${#lines[@]}" -eq 1 ]
-  run pvm prune
+  run pvm prune </dev/null
+  [ "$status" -eq 77 ]
+  run pvm ls --stale
+  [ "${#lines[@]}" -eq 1 ]
+  run pvm prune -y
   [[ "$output" == "dropped b"* ]]
   run cat "$REGISTRY"
   [ "${#lines[@]}" -eq 1 ]
@@ -237,7 +246,7 @@ setup() { pvm_setup; }
   run pvm help
   [[ "$output" == *"link <add|remove|list|apply|validate>"* ]]
   [[ "$output" == *"list, ls [--stale]"* ]]
-  [[ "$output" == *"remove, rm <vault>"* ]]
+  [[ "$output" == *"remove, rm [-y] <vault>"* ]]
   [[ "$output" == *"-d, --debug"* ]]
   run pvm nope
   [ "$status" -eq 64 ]

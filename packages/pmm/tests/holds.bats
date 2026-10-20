@@ -118,7 +118,11 @@ setup() {
   [[ "$output" == *"(0 superseded disks)"* ]]
   [ -f "$PMM_DATA_HOME/images/d/arm64/$old.qcow2" ]
   rm -rf "$PMM_DATA_HOME/machines/web1"
-  run cli_call "image prune"
+  # it asks before deleting: no terminal and no -y is 77, and nothing goes
+  run cli_call "image prune" </dev/null
+  [ "$status" -eq 77 ]
+  [ -f "$PMM_DATA_HOME/images/d/arm64/$old.qcow2" ]
+  run cli_call "image prune" -y
   [[ "$output" == *"(1 superseded disks)"* ]]
   [ ! -f "$PMM_DATA_HOME/images/d/arm64/$old.qcow2" ]
   [ -f "$PMM_DATA_HOME/images/d/arm64/$KEY.qcow2" ]

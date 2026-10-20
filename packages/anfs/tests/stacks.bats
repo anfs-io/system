@@ -172,10 +172,10 @@ packages: [p/c]'
   [[ "$output" == *"pvm does not install vaults"* ]]
   run cat "$LOG"
   [ "${lines[0]}" = "ppm install -y stack/git stack/ruby" ]
-  [ "${lines[1]}" = "psm install core/s1" ]
-  [ "${lines[2]}" = "wsm install lgat/" ]
-  [ "${lines[3]}" = "pcm install core/ui core/db" ]
-  [ "${lines[4]}" = "pmm install core/vm" ]
+  [ "${lines[1]}" = "psm install -y core/s1" ]
+  [ "${lines[2]}" = "wsm install -y lgat/" ]
+  [ "${lines[3]}" = "pcm install -y core/ui core/db" ]
+  [ "${lines[4]}" = "pmm install -y core/vm" ]
   [ "${lines[5]}" = "pcm up core/ui" ]
   [ "${lines[6]}" = "pmm stop core/vm" ]
   [ "${lines[7]}" = "wsm repo install lgat/" ]
@@ -232,7 +232,7 @@ packages: [p/c]'
   [[ "$output" == *"--build: no vault is installed (lgat/dev)"* ]]
   run cat "$LOG"
   [ "${lines[0]}" = "ppm install -y stack/git stack/ruby" ]
-  [ "${lines[1]}" = "psm install core/s1" ]
+  [ "${lines[1]}" = "psm install -y core/s1" ]
   [ "${#lines[@]}" -eq 2 ]
   [ "$(yq -r '.build' "$RECORDS/lgat/app.yml")" = true ]
   [ "$(yq -r '[.resources[].kind] | unique | join(" ")' "$RECORDS/lgat/app.yml")" = "packages skills" ]
@@ -270,7 +270,7 @@ packages: [p/c]'
   run cat "$LOG"
   [ "${lines[0]}" = "pmm remove -y core/vm" ]
   [ "${lines[1]}" = "pcm remove -y core/db core/ui" ]
-  [ "${lines[2]}" = "wsm remove lgat/" ]
+  [ "${lines[2]}" = "wsm remove -y lgat/" ]
   [ "${lines[3]}" = "ppm remove -y stack/ruby" ]
   [ "${#lines[@]}" -eq 4 ]
   [ ! -f "$RECORDS/lgat/app.yml" ]
@@ -342,6 +342,30 @@ packages: [p/c]'
   [[ "$(yq -p json -r '.[] | select(.source == "core") | .provides | join(" ")' <<< "$output")" == *stacks* ]]
 }
 
+@test "install does not ask: a stack is what was named; remove does" {
+  run "$ANFS" install lgat/app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pass -y"* ]]
+  grep -qx "ppm install -y stack/git stack/ruby" "$LOG"
+  run "$ANFS" install --help
+  [[ "$output" != *"--yes"* ]]
+  : > "$LOG"
+  run "$ANFS" remove lgat/app </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"pass -y"* ]]
+  [ ! -s "$LOG" ]
+}
+
+@test "src remove asks before taking a source off the list" {
+  printf 'file:///x/mine.git  mine\n' >> "$HOME/.config/anfs/user.list"
+  run "$ANFS" src remove mine </dev/null
+  [ "$status" -eq 77 ]
+  grep -q ' mine$' "$HOME/.config/anfs/user.list"
+  run "$ANFS" src rm -y mine </dev/null
+  [ "$status" -eq 0 ]
+  ! grep -q ' mine$' "$HOME/.config/anfs/user.list"
+}
+
 # --- anfs src install ----------------------------------------------------------------------------
 
 @test "src install: every resource of a source, tool by tool" {
@@ -350,7 +374,12 @@ packages: [p/c]'
   [ "$status" -eq 0 ]
   run cat "$LOG"
   [ "${lines[0]}" = "ppm install -y core/" ]
-  [ "${lines[1]}" = "psm install core/" ]
+  [ "${lines[1]}" = "psm install -y core/" ]
+  : > "$LOG"
+  # a whole source: asked about
+  run "$ANFS" src install core </dev/null
+  [ "$status" -eq 77 ]
+  [ ! -s "$LOG" ]
   run "$ANFS" src install -y core/x </dev/null
   [ "$status" -ne 0 ]
   [[ "$output" == *"src install takes whole sources"* ]]

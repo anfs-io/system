@@ -101,6 +101,7 @@ cmd_install() {
     if [[ "$arg" == */ ]]; then
       src="${arg%/}"
       dir=$(source_dir "$src") || { anfs_warn "'$src' is not a source with containers (see: anfs src list)"; return 1; }
+      anfs_confirm "install $arg starts every service $src defines" "Install them?"
       for id in $(all_ids); do
         [[ "$(svc_src "$id")" == "$src" ]] && services+=("$id")
       done

@@ -37,7 +37,9 @@ setup() {
   }
   is_repo_name() { [[ -d "$ANFS_SOURCES_HOME/$1/packages" ]]; }
 
-  force=false yes=true
+  # @category asks (anfs_confirm); -y is what the tests give
+  force=false
+  CLI_OPT[yes]=true
 }
 
 # pkg <repo> <name> [package.yml lines...]
@@ -94,6 +96,16 @@ pkg() {
   [[ "$output" == *"Skipping other"* ]]
   expand_packages install @ai >/dev/null
   [ "${EXPANDED_PACKAGES[*]}" = "claude" ]
+}
+
+@test "expand @category: install asks, so no terminal and no -y is 77; remove leaves it to cmd_remove" {
+  pkg stack claude 'categories: [ai]'
+  CLI_OPT[yes]=false
+  run expand_packages install @ai </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"install @ai installs 1 packages; pass -y"* ]]
+  run expand_packages remove @ai </dev/null
+  [ "$status" -eq 0 ]
 }
 
 @test "expand @category: an empty category is an error" {

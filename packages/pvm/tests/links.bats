@@ -112,17 +112,20 @@ setup() {
 @test "link rm removes the symlink and the entry; --to picks one of several" {
   pvm link add notes/product --to acme/main/tech >/dev/null
   pvm link add notes/product --to acme/main >/dev/null
-  run pvm link rm notes/product --to acme/main
+  run pvm link rm notes/product --to acme/main </dev/null
+  [ "$status" -eq 77 ]
+  [ -L "$HOME/spaces/acme/main/product" ]
+  run pvm link rm -y notes/product --to acme/main
   [ "$status" -eq 0 ]
   [ ! -e "$HOME/spaces/acme/main/product" ]
   [ -L "$LINK" ]
   cd notes/product
-  run pvm link rm
+  run pvm link rm -y
   [ "$status" -eq 0 ]
   [ ! -e "$LINK" ]
   run yq -r 'has("links")' "$HOME/notes/pvm.yml"
   [ "$output" = "false" ]
-  run pvm link rm
+  run pvm link rm -y
   [ "$status" -eq 1 ]
 }
 
@@ -130,7 +133,7 @@ setup() {
   pvm link add notes/product --to acme/main/tech >/dev/null
   rm "$LINK"
   mkdir "$LINK"
-  run pvm link rm notes/product
+  run pvm link rm -y notes/product
   [ "$status" -eq 0 ]
   [ -d "$LINK" ]
 }

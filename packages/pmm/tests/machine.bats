@@ -218,6 +218,14 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$(cat "$PMM_DATA_HOME/snapshots/web1/s1/disk.qcow2")" = one ]
   [ "$(held deb)" = "web1 web1@s1" ]
+  # a snapshot of that name is replaced only when asked, or with -y
+  echo other > "$PMM_DATA_HOME/machines/web1/disk.qcow2"
+  run cli_call "snapshot create" web1 s1 </dev/null
+  [ "$status" -eq 77 ]
+  [ "$(cat "$PMM_DATA_HOME/snapshots/web1/s1/disk.qcow2")" = one ]
+  echo one > "$PMM_DATA_HOME/machines/web1/disk.qcow2"
+  run cli_call "snapshot create" -y web1 s1
+  [ "$status" -eq 0 ]
   ANFS_JSON=true run cli_call "snapshot list" web1
   [ "$(yq -p json -r '.[] | .name + " " + .build' <<< "$output")" = "s1 $KEY" ]
   echo two > "$PMM_DATA_HOME/machines/web1/disk.qcow2"

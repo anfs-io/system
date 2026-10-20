@@ -335,12 +335,12 @@ EOF
 @test "iso remove deletes the file and keeps the entry; --entry is for a hand-made one only" {
   catalogue
   iso pull debian
-  run iso remove debian
+  run iso remove -y debian
   [ "$status" -eq 0 ]
   [ ! -e "$STORE/debian.iso" ]
   [ ! -e "$STORE/debian.iso.sha256" ]
   anfs_iso_known debian
-  run iso remove debian
+  run iso remove -y debian
   [ "$status" -eq 0 ]
   [[ "$output" == *"debian: not in the store"* ]]
 
@@ -348,7 +348,7 @@ EOF
   iso pull debian
   local before
   before=$(cat "$T/sources/hi/isos/isos.yml")
-  run iso remove --entry debian
+  run iso remove -y --entry debian
   [ "$status" -eq 1 ]
   [[ "$output" == *"a source's catalogue is changed in the source"* ]]
   [ -f "$STORE/debian.iso" ]
@@ -358,7 +358,7 @@ EOF
   iso add https://x/mine/debian.iso -f
   iso add https://x/extra.iso
   [ "$(anfs_iso_get debian url)" = "https://x/mine/debian.iso" ]
-  run iso rm --entry debian
+  run iso rm -y --entry debian
   [ "$status" -eq 0 ]
   [ ! -e "$STORE/debian.iso" ]
   [ "$(anfs_iso_get debian url)" = "https://x/debian.iso" ]
@@ -462,7 +462,7 @@ EOF
   [[ "${lines[2]}" == "nofile"$'\t'"invalid"$'\t'*$'\t'"-"$'\t'"-" ]]
 }
 
-@test "iso remove asks before a file with no url goes: it cannot be pulled again" {
+@test "iso remove asks before deleting, and says when a file has no url to pull it again" {
   echo mine > "$T/mine.iso"
   iso add "$T/mine.iso"
   iso add https://x/debian.iso
@@ -472,12 +472,14 @@ EOF
   [[ "$output" == *"mine.iso"*"no url"* ]]
   [[ "$output" == *"pass -y"* ]]
   [ -f "$STORE/mine.iso" ] && [ -f "$STORE/debian.iso" ]
-  # one with a url is not asked about
+  # one with a url is asked about too, without the warning
   run iso remove debian </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" != *"no url"* ]]
+  [ -f "$STORE/debian.iso" ]
+  run iso remove -y mine debian
   [ "$status" -eq 0 ]
-  run iso remove -y mine
-  [ "$status" -eq 0 ]
-  [ ! -e "$STORE/mine.iso" ]
+  [ ! -e "$STORE/mine.iso" ] && [ ! -e "$STORE/debian.iso" ]
 }
 
 @test "iso show and path: the entry and its file; an unknown id is 1" {

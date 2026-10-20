@@ -122,11 +122,11 @@ expand_packages() {
     [[ ${#supported[@]} -gt 0 ]] || { anfs_warn "No packages in $label support $(platform)"; exit 1; }
     PACKAGES=("${supported[@]}")
 
-    if ! $force && ! ${yes:-false}; then
+    # remove asks for every run (cmd_remove); install only for this, more than was named
+    if [[ "$verb" == install ]]; then
       echo "About to $verb all packages (${#PACKAGES[@]}) from $label:"
       printf '  %s\n' "${PACKAGES[@]}"
-      read -p "Continue? [y/N] " confirm
-      [[ "$confirm" =~ ^[Yy]$ ]] || { echo "Aborted."; exit 0; }
+      anfs_confirm "install $arg installs ${#PACKAGES[@]} packages" "Install them?"
     fi
     EXPANDED_PACKAGES+=("${PACKAGES[@]}")
   done

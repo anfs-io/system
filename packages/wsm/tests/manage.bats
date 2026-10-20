@@ -150,7 +150,7 @@ YML
 }
 
 @test "path resolves space, ws/space and source/ws/space, then a workspace" {
-  wsm install acme/ >/dev/null
+  wsm install -y acme/ >/dev/null
   run wsm path finance
   [ "$status" -eq 0 ]
   [ "$output" = "$HOME/spaces/acme/main/finance" ]
@@ -164,7 +164,7 @@ YML
 }
 
 @test "an ambiguous query lists the candidates and exits 2; no match exits 1" {
-  wsm install acme/ >/dev/null
+  wsm install -y acme/ >/dev/null
   run wsm path tech
   [ "$status" -eq 2 ]
   [[ "$output" == *"acme/main/tech"* && "$output" == *"acme/spikes/tech"* ]]
@@ -204,7 +204,11 @@ YML
   wsm install acme/main >/dev/null
   echo mine > "$HOME/spaces/acme/main/tech/TODO"
 
-  run wsm remove acme/main/tech
+  # it asks: no terminal and no -y is 77, and nothing is unstowed
+  run wsm remove acme/main/tech </dev/null
+  [ "$status" -eq 77 ]
+  [ -L "$HOME/spaces/acme/main/tech/space.yml" ]
+  run wsm remove -y acme/main/tech
   [ "$status" -eq 0 ]
   [[ "$output" == *"removed acme/main/tech"* ]]
   [ ! -e "$HOME/spaces/acme/main/tech/space.yml" ]
@@ -216,11 +220,11 @@ YML
 
 @test "remove of a whole workspace leaves no empty directories behind" {
   wsm install acme/main >/dev/null
-  run wsm remove acme/main
+  run wsm remove -y acme/main
   [ "$status" -eq 0 ]
   [ ! -e "$HOME/spaces/acme/main" ]
   [ "$(installed)" -eq 0 ]
-  run wsm remove acme/main
+  run wsm remove -y acme/main
   [ "$status" -eq 1 ]
 }
 
@@ -228,7 +232,7 @@ YML
   wsm install acme/main/tech >/dev/null
   rm "$HOME/spaces/acme/main/tech/space.yml"
   echo mine > "$HOME/spaces/acme/main/tech/space.yml"
-  wsm remove acme/main/tech >/dev/null
+  wsm remove -y acme/main/tech >/dev/null
   [ "$(cat "$HOME/spaces/acme/main/tech/space.yml")" = mine ]
 }
 
@@ -353,7 +357,7 @@ YML
   [[ "$output" == *"space acme/main/tech"*"linked 0 of 2 file(s)"* ]]
   [[ "$output" != *"linked 1"* ]]
   cd "$HOME"
-  wsm remove acme/main/tech >/dev/null
+  wsm remove -y acme/main/tech >/dev/null
   [ ! -e "$HOME/spaces/acme" ]
 }
 
@@ -431,7 +435,7 @@ repositories:
   - url: $a
     path: alpha
 YML
-  wsm install acme/ >/dev/null
+  wsm install -y acme/ >/dev/null
   run wsm implode </dev/null
   [ "$status" -ne 0 ]
   run wsm implode -y
@@ -455,20 +459,20 @@ YML
 
   # A space under a workspace installed by name: removing it leaves the workspace
   wsm install acme/main >/dev/null
-  wsm remove acme/main/tech acme/main/finance >/dev/null
+  wsm remove -y acme/main/tech acme/main/finance >/dev/null
   [ -f "$TRACKERS/acme/main.yml" ]
   # A workspace installed only along with its space goes with it
   wsm install acme/spikes/tech >/dev/null
-  wsm remove acme/spikes/tech >/dev/null
+  wsm remove -y acme/spikes/tech >/dev/null
   [ ! -e "$TRACKERS/acme/spikes.yml" ] && [ ! -e "$HOME/spaces/acme/spikes" ]
 
-  run wsm remove acme/ops
+  run wsm remove -y acme/ops
   [ "$status" -eq 0 ]
   [[ "$output" == *"removed acme/ops"* ]]
   [ ! -e "$HOME/spaces/acme/ops" ]
   [ -f "$TRACKERS/acme.yml" ]
 
-  run wsm remove acme
+  run wsm remove -y acme
   [ "$status" -eq 0 ]
   [ ! -e "$TRACKERS/acme.yml" ] && [ ! -e "$TRACKERS/acme/main.yml" ]
   [ ! -e "$HOME/spaces/acme" ]

@@ -101,6 +101,7 @@ cmd_snapshot() {
   fi
   [[ "$snap" =~ ^[a-z0-9][a-z0-9_.-]*$ && "$snap" != active ]] ||
     { anfs_warn "snapshot names are lowercase letters, digits, . _ - (and not 'active')"; return 1; }
+  [[ ! -f "$dir/$snap" ]] || anfs_confirm "snapshot $snap of $id exists; this replaces it" "Replace snapshot $snap?"
   [[ -n "$(project_containers "$id" -a)" ]] || { anfs_warn "$id has no containers to snapshot (pcm up $(svc_name "$id"))"; return 1; }
 
   mkdir -p "$dir"

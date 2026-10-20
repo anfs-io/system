@@ -68,7 +68,7 @@ machines: []                             # running|stopped
 | --- | --- |
 | `anfs list` (`ls`) | `STACK STATUS VERSION`: every stack in every source (and installed ones whose definition is gone); STATUS `installed`, `partial`, `-` |
 | `anfs show <stack>` | `KIND RESOURCE DECLARED ACTUAL FROM`, the stacks it depends on first, after a `<stack> <version>: <description>` line (not in `--json`) |
-| `anfs install <stack>... [-y] [-t host] [--build]` | prints the plan, confirms, installs kind by kind, then applies `status:` (`pcm up\|stop`, `pmm up\|stop`, `wsm repo install` for `cloned`) |
+| `anfs install <stack>... [-t host] [--build]` | prints the plan (it does not ask: a stack is what was named), installs kind by kind, then applies `status:` (`pcm up\|stop`, `pmm up\|stop`, `wsm repo install` for `cloned`) |
 | `anfs remove <stack>... [-y] [-t host]` (`rm`) | the reverse, from the record: lists what it removes and what it keeps (and why), confirms |
 | `anfs path <stack>` | the stack's directory |
 | `anfs src install <source>...` | every resource of a source, tool by tool (what `anfs install <source>` was) |
@@ -1036,7 +1036,11 @@ says what would happen. **Every command takes `-y`** (cli.sh adds it to each), s
 toolkit API's `yes` never has to know which commands ask; one with nothing to ask ignores it. A
 command that asks still declares it, so its help says what `-y` skips. A command asks
 (`anfs_confirm`) when it destroys or replaces something, or acts on more than was named (a whole
-source, a group, dependents); starting, installing and cloning what was named do not ask.
+source, a group, dependents); starting, installing and cloning what was named do not ask. So every
+`remove`, `reset`, `prune` and `implode` asks, and so do `install source/` (and ppm's `repo/` and
+`@category`), `anfs src install`, a snapshot or an `-o` file that would be replaced, `ppm file reset`
+and `anfs src remove`; `anfs install <stack>` does not. A tool calling another after it asked, or
+unattended (stacks.sh, `anfs src install`, implode), passes `-y`.
 
 A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`; anfs's is the
 stack, `anfs list`), never in a group

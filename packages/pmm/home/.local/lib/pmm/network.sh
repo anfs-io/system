@@ -507,6 +507,7 @@ cmd_network_install() {
     if [[ "$arg" == */ ]]; then
       src="${arg%/}"
       net_source_dir "$src" >/dev/null || die "'$src' is not a source with networks (see: anfs src list)"
+      [[ "$PMM_INSTALL" == validate ]] || anfs_confirm "install $arg makes every network $src defines" "Install them?"
       while IFS= read -r id; do
         [[ "${id%%/*}" != "$src" ]] || ids+=("$id")
       done < <(net_all_ids)

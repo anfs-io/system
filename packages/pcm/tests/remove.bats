@@ -29,3 +29,14 @@ setup() {
   [[ "$output" == *"pass -y"* ]]
   [ -d "$PCM_VOLUMES_HOME/app" ]
 }
+
+@test "snapshot: one of that name is replaced only when asked, or with -y" {
+  local dir
+  dir=$(_snapshot_dir a/app)
+  mkdir -p "$dir"
+  echo "app localhost/pcm-snapshot/app-app:s1" > "$dir/s1"
+  run cli_call snapshot app s1 </dev/null
+  [ "$status" -eq 77 ]
+  [[ "$output" == *"s1 of a/app exists"* ]]
+  [ "$(cat "$dir/s1")" = "app localhost/pcm-snapshot/app-app:s1" ]
+}

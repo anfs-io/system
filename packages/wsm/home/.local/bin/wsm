@@ -92,9 +92,10 @@ cli_cmd list "The sources' workspaces and spaces, and where each is installed" -
 cli_cmd install "Stow levels into DIR/<source>/<ws>/<space> and clone their
 repositories, dependencies first. SPEC is source/, source/ws,
 source/ws/space, ws or ws/space; none is the level at ." \
-  --opt "-n --dry-run: Say what would be done" --arg "[spec]" --arg "[dir]"
+  --opt "-n --dry-run: Say what would be done" \
+  --opt "-y --yes: Do not ask before installing a whole source/" --arg "[spec]" --arg "[dir]"
 cli_cmd remove "Unstow installed spaces (and a named ws or source); clones and your files stay" \
-  --alias rm --arg "level..."
+  --alias rm --opt "-y --yes: Do not ask before unstowing" --arg "level..."
 cli_cmd new "Create a space in a source ([[SOURCE/]WS/]SPACE); the parts left out
 come from where you are. Installed too when its workspace is" --arg "space"
 cli_cmd add "Move files from an installed tree into the source and stow them back" --arg "file..."
@@ -103,7 +104,7 @@ cli_cmd cd "Change to an installed space or workspace (requires the wsm shell fu
   --opt "-s --source: Its directory in the source" --arg "[query]"
 cli_cmd path "Print that path; no QUERY means the level containing ." \
   --opt "-s --source: Its directory in the source" --arg "[query]"
-cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask"
+cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask before imploding"
 cli_group repo "The repositories the levels' space.yml files declare"
 cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls --arg "[spec]"
 cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing, or
@@ -851,6 +852,7 @@ cmd_install() {
     usage_err "$u"
   fi
   _require_yq
+  [[ "$spec" != */ ]] || $dry || anfs_confirm "install $spec installs every space ${spec%/} has" "Install them?"
 
   anfs_sources spaces
   WANTED=()
@@ -1042,6 +1044,10 @@ cmd_remove() {
     fi
   done
 
+  local what=""
+  for j in ${drop[@]+"${drop[@]}"}; do what+=" ${INST_ID[$j]}"; done
+  for id in ${levels[@]+"${levels[@]}"}; do what+=" $id"; done
+  [[ -z "$what" ]] || anfs_confirm "remove unstows$what (clones and your files stay)" "Remove?"
   for j in ${drop[@]+"${drop[@]}"}; do
     _unlink_unit "${INST_FILE[$j]}"
     _in_list "${INST_SRC[$j]}/${INST_WS[$j]}" ${sws[@]+"${sws[@]}"} || sws+=("${INST_SRC[$j]}/${INST_WS[$j]}")

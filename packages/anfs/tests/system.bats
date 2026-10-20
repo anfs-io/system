@@ -117,7 +117,7 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
 @test "implode: the other stacks first (last installed first), then the tools, system, ppm" {
   run "$ANFS" install -y system </dev/null
   [ "$status" -eq 0 ]
-  grep -qx "pcm install core/ui" "$LOG"   # the dashboard, then its status: running
+  grep -qx "pcm install -y core/ui" "$LOG"   # the dashboard, then its status: running
   grep -qx "pcm up core/ui" "$LOG"
   "$ANFS" install -y lgat/app </dev/null
   "$ANFS" install -y lgat/web </dev/null
@@ -185,6 +185,6 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
   run "$ANFS" src install -y lgat </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"pmm is not installed: skipping lgat/ machines (ppm install core/pmm)"* ]]
-  grep -qx "psm install lgat/" "$LOG"
+  grep -qx "psm install -y lgat/" "$LOG"
   ! grep -q '^pmm' "$LOG"
 }

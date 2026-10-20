@@ -53,7 +53,7 @@ SH
   wsm install acme/main/tech >/dev/null
   wsm install acme/main/org >/dev/null
   rm "$CALLS"
-  run wsm remove acme/main/tech
+  run wsm remove -y acme/main/tech
   [ "$status" -eq 0 ]
   run cat "$CALLS"
   [ "$output" = "heard remove acme/main/tech" ]

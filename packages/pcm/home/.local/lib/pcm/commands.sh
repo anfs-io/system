@@ -8,7 +8,8 @@ containers, ports and mounts (declared ones when nothing is created)" --arg "ser
 cli_cmd path "Print the path of a service definition" --arg "service"
 cli_cmd cd "Change to a service definition (requires the pcm shell function)" --arg "[service]"
 cli_cmd install "Validate and start services; source/ is every service that
-source defines (\`anfs install\` uses this)" --arg "service-spec..."
+source defines (\`anfs install\` uses this)" \
+  --opt "-y --yes: Do not ask before installing a whole source/" --arg "service-spec..."
 cli_cmd up "Start services, detached unless -d/--detach is given; other
 options go on to podman compose" --passthrough --arg "service..."
 cli_cmd down "Stop services; refuses if running services depend on them;
@@ -17,7 +18,7 @@ other options go on to podman compose" --passthrough \
 cli_cmd remove "Down, then delete everything pcm created for it: containers,
 networks, built images, its data under \${PCM_VOLUMES_HOME}/<name>/;
 runs dependencies' deprovision hooks. The definition is kept." --alias rm \
-  --opt "-y --yes: Do not ask" --opt "-f --force: Stop running dependents" --arg "service..."
+  --opt "-y --yes: Do not ask before deleting" --opt "-f --force: Stop running dependents" --arg "service..."
 cli_cmd ps "pcm's containers (podman ps; options go on to it)" --passthrough --arg "[service...]"
 cli_cmd exec "Run a command in a running service's container: <service> -- <cmd>..." --passthrough \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" \
@@ -25,15 +26,16 @@ cli_cmd exec "Run a command in a running service's container: <service> -- <cmd>
 cli_cmd shell "A login shell in a running service's container" \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" --arg "service"
 cli_cmd snapshot "Save the service as it is: containers committed to images,
-its data copied. No name lists the snapshots (* = active)" --arg "service" --arg "[snapshot]"
+its data copied. No name lists the snapshots (* = active)" \
+  --opt "-y --yes: Do not ask before replacing a snapshot of that name" --arg "service" --arg "[snapshot]"
 cli_cmd reset "Recreate the service from a snapshot, or from its definition
-with fresh data; replaces its data" --opt "-y --yes: Do not ask" --arg "service" --arg "[snapshot]"
+with fresh data; replaces its data" --opt "-y --yes: Do not ask before replacing its data" --arg "service" --arg "[snapshot]"
 cli_cmd validate "Check services against pcm conventions (all if none given);
 \`up\` runs it before starting anything" --arg "[service...]"
 cli_group machine "The podman machine containers run in (macOS)"
 cli_cmd "machine resize" "Stop, resize and start the podman machine; no size is what
 runs needs (container.yml memory:) plus headroom. Confirms when containers run" \
-  --opt "-y --yes: Do not ask" --arg "[size]"
+  --opt "-y --yes: Do not ask before stopping running containers" --arg "[size]"
 cli_cmd implode "Delete every container, network, volume and directory pcm
-created, whichever definition it came from" --opt "-y --yes: Do not ask"
+created, whichever definition it came from" --opt "-y --yes: Do not ask before imploding"
 cli_standard

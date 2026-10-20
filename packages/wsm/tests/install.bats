@@ -52,7 +52,13 @@ YML
   [ "$status" -eq 0 ]
   [ "$(installed)" -eq 2 ]
   [ ! -e "$HOME/spaces/acme/spikes" ]
-  run wsm install acme/
+  # a whole source is asked about: no terminal and no -y is 77, nothing stowed; -n does not ask
+  run wsm install acme/ </dev/null
+  [ "$status" -eq 77 ]
+  [ ! -e "$HOME/spaces/acme/spikes" ]
+  run wsm install -n acme/ </dev/null
+  [ "$status" -eq 0 ]
+  run wsm install -y acme/
   [ "$status" -eq 0 ]
   [ "$(installed)" -eq 3 ]
   [ -L "$HOME/spaces/acme/spikes/rails/space.yml" ]
@@ -173,10 +179,10 @@ YML
 
   wsm install acme/spikes/x >/dev/null
   # the levels go with their last space
-  wsm remove acme/main/tech >/dev/null
+  wsm remove -y acme/main/tech >/dev/null
   [ ! -e "$HOME/spaces/acme/main" ]
   [ -L "$HOME/spaces/acme/mise.toml" ]
-  wsm remove acme/spikes >/dev/null
+  wsm remove -y acme/spikes >/dev/null
   [ ! -e "$HOME/spaces/acme" ]
   [ -z "$(find "$TRACKERS" -name '*.yml' 2>/dev/null)" ]
 }
@@ -291,7 +297,7 @@ YML
   run wsm install acme/main
   [ "$status" -eq 0 ]
   [ -d "$HOME/spaces/acme/main/ws-repo/.git" ] && [ ! -e "$HOME/spaces/acme/org-repo" ]
-  run wsm install acme/
+  run wsm install -y acme/
   [ "$status" -eq 0 ]
   [ -d "$HOME/spaces/acme/org-repo/.git" ]
   [[ "$output" == *"present ws-repo"* ]]

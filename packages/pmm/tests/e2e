@@ -128,7 +128,7 @@ step "snapshot remove"                bash -c "'$PMM' snapshot remove -y a s1 >/
 step "run --rm: gone at its shutdown" bash -c "'$PMM' run --rm $img --name c >/dev/null && '$PMM' down c >/dev/null && ! '$PMM' show c 2>/dev/null"
 step "rm a and b"                     pmm rm -y a b
 step "the build is no longer held"    bash -c "[ \"\$('$PMM' image list --json $img | yq -p json -r '.[0].held | length')\" = 0 ]"
-step "image prune"                    pmm image prune
+step "image prune"                    pmm image prune -y
 step "image remove, now that nothing is on it" pmm image remove -y "$img"
 step "implode"                        pmm implode -y
 left=$(find "$root/pmm" -mindepth 1 2>/dev/null | head -5)

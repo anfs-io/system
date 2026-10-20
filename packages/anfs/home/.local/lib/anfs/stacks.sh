@@ -282,8 +282,8 @@ _stack_target() {
 
 # `anfs install <stack>...`
 stack_install() {
-  local yes="$1" build="$2" target="$3"
-  shift 3
+  local build="$1" target="$2"
+  shift 2
   _stack_target "$target"
   local spec
   anfs_sources stacks
@@ -339,7 +339,6 @@ stack_install() {
       printf '  vaults: not installed, pvm does not install vaults from sources yet (%s)\n' "${!vaults[*]}"
     fi
   fi
-  $yes || anfs_confirm "install changes this machine" "Install?"
 
   # The records: what each one held already (before is never flipped to false), and what was
   # there before this run and no other stack's record holds
@@ -393,10 +392,10 @@ _stack_install_kind() {
   shift
   bin="$ANFS_BIN_DIR/$(stack_tool "$k")"
   case "$k" in
-    packages) "$bin" install -y "$@" ;;
+    # -y: a stack may hold a whole source (source/), which each tool asks about
     # wsm installs one level per run
-    spaces) local rc=0; for r in "$@"; do "$bin" install "$r" || rc=1; done; return $rc ;;
-    *) "$bin" install "$@" ;;
+    spaces) local rc=0; for r in "$@"; do "$bin" install -y "$r" || rc=1; done; return $rc ;;
+    *) "$bin" install -y "$@" ;;
   esac
 }
 
@@ -498,10 +497,8 @@ stack_remove() {
     bin="$ANFS_BIN_DIR/$(stack_tool "$k")"
     read -ra items <<< "${todo[$k]}"
     echo "== $(stack_tool "$k") remove ${items[*]}"
-    case "$k" in
-      packages|containers|machines) "$bin" remove -y "${items[@]}" || rc=1 ;;
-      *) "$bin" remove "${items[@]}" || rc=1 ;;
-    esac
+    # Confirmed above: every tool's remove asks
+    "$bin" remove -y "${items[@]}" || rc=1
   done
   if [[ $rc -eq 0 ]]; then
     for q in "${names[@]}"; do

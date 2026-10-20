@@ -30,17 +30,18 @@ cli_cmd ps "Running machines: NAME ARCH BACKEND PID SSH"
 cli_cmd list "Every machine, defined, made or running: NAME SOURCE IMAGE STATE ADDRESS" --alias ls
 cli_cmd show "Settings, the build it is on, snapshots" --arg "machine"
 cli_cmd reset "Recreate the machine from a snapshot, or onto its image's current build" \
-  --opt "-y --yes: Do not ask" --arg "machine" --arg "[snapshot]"
+  --opt "-y --yes: Do not ask before replacing its disk" --arg "machine" --arg "[snapshot]"
 cli_cmd remove "Stop and delete machines and their snapshots; a definition is kept" \
-  --alias rm --opt "-y --yes: Do not ask" --arg "machine..."
+  --alias rm --opt "-y --yes: Do not ask before deleting" --arg "machine..."
 cli_cmd path "Print the definition directory" --arg "machine"
 cli_cmd cd "Change to a machine definition (requires the pmm shell function)" --arg "[machine]"
 cli_cmd validate "Check definitions (all if none given); up runs it first" --arg "[machine...]"
 cli_group snapshot "Saved copies of a machine's disk"
 cli_cmd "snapshot list" "A machine's snapshots: NAME BUILD" --alias ls --arg "machine"
 cli_cmd "snapshot create" "Save the machine's disk (stopped first, restarted after); with no
-name, named for the time" --arg "machine" --arg "[snapshot]"
-cli_cmd "snapshot remove" "Delete a snapshot" --alias rm --opt "-y --yes: Do not ask" --arg "machine" --arg "snapshot"
+name, named for the time" --opt "-y --yes: Do not ask before replacing a snapshot of that name" \
+  --arg "machine" --arg "[snapshot]"
+cli_cmd "snapshot remove" "Delete a snapshot" --alias rm --opt "-y --yes: Do not ask before deleting" --arg "machine" --arg "snapshot"
 cli_group image "What machines run from: definitions and their builds"
 cli_cmd "image list" "Images, a row per built arch: NAME SOURCE ARCH STATE KEY ..." --alias ls --arg "[image...]"
 cli_cmd "image show" "Definition, its from: chain, every file a build reads, and its builds" --arg "image"
@@ -56,10 +57,11 @@ cli_cmd "image test" "Boot a throwaway copy of the build and run the image's tes
   --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image export" "Write the build as one standalone qcow2" \
   --opt "-c --compress: Compressed" --opt "-o --output FILE: There (default: \$PMM_DATA_HOME/exports/<image>-<arch>-<key>.qcow2)" \
-  --opt "--arch ARCH: Of that architecture" --arg "image"
+  --opt "--arch ARCH: Of that architecture" \
+  --opt "-y --yes: Do not ask before overwriting an -o file that exists" --arg "image"
 cli_cmd "image remove" "Delete every build of the image; the definition is kept" --alias rm \
-  --opt "-y --yes: Do not ask" --opt "-f --force: Even if other builds or machines are on it" --arg "image..."
-cli_cmd "image prune" "Delete superseded builds nothing is on"
+  --opt "-y --yes: Do not ask before deleting" --opt "-f --force: Even if other builds or machines are on it" --arg "image..."
+cli_cmd "image prune" "Delete superseded builds nothing is on" --opt "-y --yes: Do not ask before deleting"
 cli_cmd "image path" "Print the definition directory" \
   --opt "--disk: The built disk instead" --opt "--arch ARCH: Of that architecture" --arg "image"
 cli_cmd "image cd" "Change to an image definition (requires the pmm shell function)" --arg "[image]"
@@ -73,14 +75,15 @@ cli_cmd "network create" "Make a network now; recorded with pmm's data, no defin
 cli_cmd "network show" "Settings, bridge, addresses, the machines on it" --arg "network"
 cli_cmd "network path" "Print the definition directory" --arg "network"
 cli_cmd "network install" "Make networks from their definitions; source/ is every network
-that source defines. A machine's networks are installed with it" --arg "network-spec..."
+that source defines. A machine's networks are installed with it" \
+  --opt "-y --yes: Do not ask before installing a whole source/" --arg "network-spec..."
 cli_cmd "network remove" "Take networks away; refused while machines are on one. A definition
-is kept" --alias rm --opt "-y --yes: Do not ask" --arg "network..."
+is kept" --alias rm --opt "-y --yes: Do not ask before taking them away" --arg "network..."
 # The iso group is lib/anfs/iso.sh's, the same in every tool that uses ISOs
 anfs_iso_cli
 cli_cmd install "Create and start machines; source/ is everything that source defines:
 its images are built, its networks installed, then its machines (\`anfs
 install\` uses this). PMM_INSTALL=create starts nothing, PMM_INSTALL=validate
-only validates" --arg "machine-spec..."
-cli_cmd implode "Stop every machine and delete everything pmm created: machines, builds, networks" --opt "-y --yes: Do not ask"
+only validates" --opt "-y --yes: Do not ask before installing a whole source/" --arg "machine-spec..."
+cli_cmd implode "Stop every machine and delete everything pmm created: machines, builds, networks" --opt "-y --yes: Do not ask before imploding"
 cli_standard

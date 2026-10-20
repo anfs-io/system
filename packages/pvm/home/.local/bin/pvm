@@ -73,8 +73,10 @@ cli_cmd new "Create a directory and init it" \
 cli_cmd list "The vaults this machine knows" --alias ls \
   --opt "--stale: Only the ones that are gone or changed id"
 cli_cmd scan "Find pvm.yml under the directories (default ~) and register what is found" --arg "[dir...]"
-cli_cmd remove "Drop a vault from the registry; its files are untouched" --alias rm --arg "vault"
-cli_cmd prune "Drop every stale registry entry" --opt "-n --dry-run: Say what would be dropped"
+cli_cmd remove "Drop a vault from the registry; its files are untouched" --alias rm \
+  --opt "-y --yes: Do not ask before dropping it" --arg "vault"
+cli_cmd prune "Drop every stale registry entry" --opt "-n --dry-run: Say what would be dropped" \
+  --opt "-y --yes: Do not ask before dropping them"
 cli_cmd path "Print the path of a vault (default: the one you are in) or of a document" --arg "[vault-or-doc]"
 cli_cmd docs "List documents: id, type, title, space, path" \
   --opt "--type TYPE: Only that type" --opt "--space SPEC: Only the documents of that wsm level" --arg "[dir]"
@@ -84,7 +86,8 @@ cli_cmd "link add" "Link a directory (default .) into a level, and record it in 
   --opt "--to SPEC: The wsm level: source, source/ws or source/ws/space" \
   --opt "--as NAME: The symlink's name (default: the directory's)" --arg "[dir]"
 cli_cmd "link remove" "Remove a directory's links and their pvm.yml entries" --alias rm \
-  --opt "--to SPEC: Only the link to that level" --arg "[dir]"
+  --opt "--to SPEC: Only the link to that level" \
+  --opt "-y --yes: Do not ask before removing the links" --arg "[dir]"
 cli_cmd "link list" "The configured links and their state" --alias ls --arg "[dir]"
 cli_cmd "link apply" "Create this vault's links that are missing" \
   --opt "--event EVENT: From wsm: install or remove, for the levels that follow" --arg "[spec...]"
@@ -494,6 +497,7 @@ cmd_remove() {
   [[ $rc -ne 2 ]] || _ambiguous "$1"
   [[ $rc -eq 0 ]] || fail "$EX_NOTFOUND" "no vault matching '$1' (pvm ls, pvm ls --stale)"
   id="${REG_ID[$V_I]}" name="${REG_NAME[$V_I]}"
+  anfs_confirm "remove drops $name from the registry (its files stay)" "Remove $name?"
   REG_ID[V_I]=""
   _registry_write
   _lock_release
@@ -505,6 +509,11 @@ cmd_prune() {
   local dry=${CLI_OPT[dry-run]:-false} i n=0
   _lock_acquire
   _registry_load
+  if ! $dry; then
+    for i in "${!REG_ID[@]}"; do _is_stale "$i" && n=$((n + 1)); done
+    [[ $n -eq 0 ]] || anfs_confirm "prune drops $n stale registry entries" "Drop them?"
+    n=0
+  fi
   for i in "${!REG_ID[@]}"; do
     _is_stale "$i" || continue
     n=$((n + 1))
@@ -890,6 +899,11 @@ cmd_link_remove() {
   _links_load "$LK_ROOT"
   _wsm_load
   local i n=0 file="$LK_ROOT/$PVM_CONFIG"
+  for i in "${!L_SRC[@]}"; do
+    [[ "${L_SRC[$i]}" == "$LK_SRC" && ( -z "$to" || "${L_TGT[$i]}" == "$to" ) ]] && n=$((n + 1))
+  done
+  [[ $n -eq 0 ]] || anfs_confirm "link remove removes $n links of $LK_SRC and their entries in $(_display "$file")" "Remove them?"
+  n=0
   for i in "${!L_SRC[@]}"; do
     [[ "${L_SRC[$i]}" == "$LK_SRC" ]] || continue
     [[ -z "$to" || "${L_TGT[$i]}" == "$to" ]] || continue

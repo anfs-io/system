@@ -53,7 +53,7 @@
 #     <tool> iso pull [-f] <id>... download and verify into the store (alias: get)
 #     <tool> iso add <url|file>    an entry of your own, in $ANFS_CONFIG_HOME/isos.yml
 #     <tool> iso remove <id>...    delete the file; --entry also drops an entry of your own. It
-#                                  asks (-y) for a file with no url to pull it from again
+#                                  asks (-y), and warns of a file with no url to pull it again
 #     <tool> iso path <id>         the file's path in the store, there or not
 #     <tool> iso prune [-y]        delete the files in the store no entry names. Refused while a
 #                                  catalogue cannot be read, or when there is no entry at all
@@ -302,12 +302,12 @@ its sha256. The id is the file's name without its extension unless given" \
     --opt "--sha256 HEX: Pin the content" --opt "--checksum-url URL: The publisher's checksum file" \
     --opt "-f --force: Replace the entry of that id" --arg "url|file"
   cli_cmd "iso remove" "Delete ISOs from the store. The entry stays: pull fetches it again when it has
-a url. One with none (a file iso add copied in) is asked about first" --alias rm \
+a url (one with none, a file iso add copied in, is gone for good)" --alias rm \
     --opt "--entry: Drop the entry too (one of your own; never a source's)" \
-    --opt "-y --yes: Do not ask" --arg "iso..."
+    --opt "-y --yes: Do not ask before deleting" --arg "iso..."
   cli_cmd "iso path" "Print the file's path in the store, there or not" --arg "iso"
   cli_cmd "iso prune" "Delete the files in the store no catalogue entry names. Refused while a
-catalogue cannot be read, or when there are no entries at all" --opt "-y --yes: Do not ask"
+catalogue cannot be read, or when there are no entries at all" --opt "-y --yes: Do not ask before deleting"
 }
 
 _anfs_iso_need() {
@@ -533,8 +533,11 @@ cmd_iso_remove() {
     files+=("$file")
     [[ ! -f "$file" || -n "$(anfs_iso_get "$id" url)" ]] || lost+=("${file##*/}")
   done
-  [[ ${#lost[@]} -eq 0 ]] ||
+  if [[ ${#lost[@]} -gt 0 ]]; then
     anfs_confirm "this deletes ${lost[*]} from $(anfs_display "$ANFS_ISO_HOME"): no url in the catalogue to pull it from again" "Delete?"
+  else
+    anfs_confirm "this deletes $* from $(anfs_display "$ANFS_ISO_HOME")" "Delete?"
+  fi
   for id in "$@"; do
     file="${files[0]}"
     files=("${files[@]:1}")

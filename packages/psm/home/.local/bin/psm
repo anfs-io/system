@@ -38,7 +38,7 @@ source "$ANFS_LIB/cli.sh"
 source "$ANFS_LIB/table.sh"
 CLI_TOOL=psm
 cli_cmd install "Install a source's skills (source/) or one of them (\`anfs install\` uses this)" \
-  --arg "skill-spec..."
+  --opt "-y --yes: Do not ask before installing a whole source/" --arg "skill-spec..."
 cli_cmd sync "Install declared skills that are missing, or not yet linked to
 every target agent (all sources and configs if none given; a
 source's alias names it)" \
@@ -49,16 +49,18 @@ cli_group repo "The repos skills come from"
 cli_cmd "repo list" "Every declared repo and the config declaring it" --alias ls
 cli_cmd "repo add" "Declare a local skill directory in a config of its own,
 named after the directory unless a name is given" --arg "dir" --arg "[name]"
-cli_cmd "repo remove" "Remove that config" --alias rm --arg "dir"
+cli_cmd "repo remove" "Remove that config" --alias rm \
+  --opt "-y --yes: Do not ask before deleting it" --arg "dir"
 cli_cmd list "Each declared skill: ok, partial, missing or *" --alias ls
-cli_cmd remove "Remove skills globally" --alias rm --arg "skill..."
-cli_cmd prune "Installed skills no config declares" --opt "-y --yes: Remove them"
+cli_cmd remove "Remove skills globally" --alias rm --opt "-y --yes: Do not ask before removing" --arg "skill..."
+cli_cmd prune "Remove the installed skills no config declares" --opt "-y --yes: Do not ask before removing them"
 cli_group agents "The agents skills are installed for"
 cli_cmd "agents list" "Agent ids detected from installed ppm packages" --alias ls
 cli_cmd "agents remove" "Unlink every installed skill from these agents,
-leaving it in place for the others" --alias rm --arg "agent..."
+leaving it in place for the others" --alias rm \
+  --opt "-y --yes: Do not ask before unlinking" --arg "agent..."
 cli_cmd cd "Change to the config directory (requires the psm shell function)"
-cli_cmd implode "Remove every skill and psm's config (back to no skills)" --opt "-y --yes: Do not ask"
+cli_cmd implode "Remove every skill and psm's config (back to no skills)" --opt "-y --yes: Do not ask before imploding"
 cli_standard
 
 cmd_cd() { echo "psm cd needs the psm shell function (source ~/.config/sh/psm.sh)" >&2; exit 1; }
@@ -374,6 +376,7 @@ cmd_repo_remove() {
   [[ "$count" == 1 ]] \
     || die "$config declares $count sources — remove the entry by hand: $file"
 
+  anfs_confirm "repo remove deletes $(_abbreviate "$file")" "Remove $config?"
   rm -f "$file"
   echo "Removed $(_abbreviate "$path") ($config)"
   echo "Run: psm prune   # its skills are still installed"
@@ -416,6 +419,7 @@ cmd_agents_remove() {
       continue
     fi
     echo "unlink $id: ${names[*]}"
+    anfs_confirm "agents remove unlinks ${#names[@]} skills from $id" "Unlink them from $id?"
     skills_cli remove "${names[@]}" -g -y -a "$id" || { warn "skills remove for $id failed"; failed=$((failed + 1)); }
   done
 
@@ -515,6 +519,7 @@ cmd_install() {
     src="${spec%%/*}" name="${spec#*/}"
     _is_skill_source "$src" || die "'$src' is not an anfs source with skills (anfs src list)"
     row=$(_anfs_skill_sources "$src")
+    [[ -n "$name" ]] || anfs_confirm "install $src/ installs every skill $src has" "Install them?"
     if [[ -n "$name" ]]; then
       [[ ",$(cut -d'|' -f3 <<< "$row")," == *",$name,"* ]] || die "no skill '$name' in $src"
       row="$src|$(cut -d'|' -f2 <<< "$row")|$name|"
@@ -561,8 +566,6 @@ cmd_list() {
 }
 
 cmd_prune() {
-  local yes=${CLI_OPT[yes]:-false}
-
   require_npx
   _load_installed
 
@@ -589,15 +592,13 @@ cmd_prune() {
   fi
 
   printf 'undeclared  %s\n' "${orphans[@]}"
-  if $yes; then
-    skills_cli remove -g -y "${orphans[@]}"
-  else
-    echo "Re-run with -y to remove them"
-  fi
+  anfs_confirm "prune removes ${#orphans[@]} skills no config declares" "Remove them?"
+  skills_cli remove -g -y "${orphans[@]}"
 }
 
 cmd_remove() {
   require_npx
+  anfs_confirm "remove takes $* away from every agent" "Remove $*?"
   skills_cli remove -g -y "$@"
 }
 

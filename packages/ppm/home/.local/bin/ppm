@@ -47,10 +47,10 @@ cli_cmd install "Install packages and their dependencies" \
   --opt "-f --force: Replace conflicting files" \
   --opt "-r --reinstall: Re-stow what is installed" \
   --opt "-s --skip-deps: Skip dependencies" \
-  --opt "-y --yes: No confirmation for repo/ and @category" --arg "package-spec..."
+  --opt "-y --yes: Do not ask before installing a whole repo/ or @category" --arg "package-spec..."
 cli_cmd remove "Remove packages (and the software ppm installed for them)" --alias rm \
   --opt "-f --force: Even when a package's pre_remove hook objects" \
-  --opt "-y --yes: No confirmation for repo/ and @category" --arg "installed..."
+  --opt "-y --yes: Do not ask before removing" --arg "installed..."
 cli_cmd show "A package: layers, dependencies, what is installed" --arg "package"
 cli_cmd deps "A package's dependency tree" --arg "package..."
 cli_cmd path "Print a package's directory" --opt "-v --verbose: Every layer" --arg "package"
@@ -61,10 +61,11 @@ cli_cmd "file add" "Move files no package owns into <repo/package> and stow them
 cli_cmd "file claim" "Copy stowed files into your repo and stow them from there" \
   --opt "--repo REPO: Into that repo (default: your user source)" \
   --opt "--package PACKAGE: Into that package (repo/package names both)" --arg "file..."
-cli_cmd "file reset" "Remove claimed files and restore the original links" --arg "file..."
+cli_cmd "file reset" "Remove claimed files and restore the original links" \
+  --opt "-y --yes: Do not ask before deleting the claimed copies" --arg "file..."
 cli_cmd "file protect" "Detach files from ppm; keep a local copy stow will not touch" --arg "file..."
 cli_cmd "file unprotect" "Let ppm manage the files again" --arg "file..."
-cli_cmd implode "Remove every package ppm installed, then ppm's own files" --opt "-y --yes: Do not ask"
+cli_cmd implode "Remove every package ppm installed, then ppm's own files" --opt "-y --yes: Do not ask before imploding"
 
 cmd_cd() {
   echo "ppm cd needs the ppm shell function (source ~/.config/sh/ppm.sh)" >&2
@@ -80,7 +81,10 @@ _file_sub() {
 }
 cmd_file_add()       { _file_sub add "$@"; }
 cmd_file_claim()     { _file_sub claim "$@"; }
-cmd_file_reset()     { _file_sub reset "$@"; }
+cmd_file_reset() {
+  anfs_confirm "file reset deletes the claimed copies of $* from your repo" "Reset $*?"
+  _file_sub reset "$@"
+}
 cmd_file_protect()   { _file_sub protect "$@"; }
 cmd_file_unprotect() { _file_sub unprotect "$@"; }
 

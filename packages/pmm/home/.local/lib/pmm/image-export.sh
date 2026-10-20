@@ -13,6 +13,7 @@ cmd_image_export() {
   disk=$(build_disk "$name" "$arch") || die "$id has no $arch build (pmm image build $id)"
   key=$(meta_get "$name" "$arch" .cache_key)
   [[ -n "$out" ]] || out="$PMM_DATA_HOME/exports/$name-$arch-$key.qcow2"
+  [[ ! -e "$out" ]] || confirm "$(tilde "$out") exists; export overwrites it" "Overwrite $(tilde "$out")?"
   mkdir -p "$(dirname "$out")"
   echo "Writing $(tilde "$out")$($compress && echo " (compressed)")"
   if $compress; then qemu-img convert -c -O qcow2 "$disk" "$out"
