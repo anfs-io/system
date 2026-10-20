@@ -142,6 +142,11 @@ gitsrc_dir_status() {
   fi
 }
 
+# Commits a clone has that its upstream lacks, as of the last fetch; nothing for no upstream
+gitsrc_dir_ahead() {
+  git -C "$1" rev-list --count '@{upstream}..HEAD' 2>/dev/null || true
+}
+
 # State of source $1 (collected)
 gitsrc_status() {
   gitsrc_dir_status "$(gitsrc_dir "$1")"
@@ -166,7 +171,7 @@ gitsrc_list_file() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     gitsrc_parse_line "$line" || continue
     anfs_row "$GITSRC_LINE_NAME" "$(gitsrc_status "$GITSRC_LINE_NAME")" "$GITSRC_LINE_URL" "$list" \
-      "$(gitsrc_provides "$GITSRC_LINE_NAME")"
+      "$(gitsrc_provides "$GITSRC_LINE_NAME")" "$(gitsrc_dir_ahead "$(gitsrc_dir "$GITSRC_LINE_NAME")")"
   done < "$file"
 }
 
@@ -183,7 +188,7 @@ gitsrc_list() {
   {
     gitsrc_list_file "$user_file" user
     gitsrc_list_file "$GITSRC_SYSTEM_LIST" system
-  } | anfs_table "SOURCE STATUS URL LIST PROVIDES" "source status url list provides[]"
+  } | anfs_table "SOURCE STATUS URL LIST PROVIDES" "source status url list provides[] ahead"
 }
 
 # --- src add / remove --------------------------------------------------------------------------

@@ -1218,10 +1218,11 @@ _ls_row() {
 
 # One row per repository a level's space.yml declares: where it goes, its state and its url
 _ls_repositories() {
-  local id="$1" from="$2" file="$2/space.yml" d url path ref state
+  local id="$1" from="$2" file="$2/space.yml" d url path ref state ahead
   [[ -f "$file" ]] || return 0
   d=$(_installed_dir "${id%/}")
   while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+    ahead=""
     if [[ -z "$path" ]]; then
       state="no path"
     elif [[ -z "$d" ]]; then
@@ -1229,8 +1230,9 @@ _ls_repositories() {
     else
       state=$(gitsrc_dir_status "$d/$path")
       [[ "$state" != local ]] || state="not a repo"
+      ahead=$(gitsrc_dir_ahead "$d/$path")
     fi
-    anfs_row "${id%/}/$path" "$state" "$url"
+    anfs_row "${id%/}/$path" "$state" "$url" "$ahead"
   done < <(_repo_entries "$file")
 }
 
@@ -1290,7 +1292,7 @@ cmd_repo_list() {
   local filter="${1:-}" rows
   _levels_load "$filter"
   rows=$(_each_level "$filter" _ls_repositories | grep . || true)
-  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY STATUS URL" "repository status url"
+  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY STATUS URL" "repository status url ahead"
 }
 
 # One installed level's repositories (repo install): a level not installed is skipped

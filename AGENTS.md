@@ -918,10 +918,10 @@ The keys, which are the interface:
 | `psm list` | `skill` (`<config>/<skill>`: the source's alias, or the config's name; `<config>/*` for a whole repo), `status` (`ok`, `partial`, `missing`, `*`), `config`, `repo` |
 | `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
 | `wsm list` | `space` (the level: a source's ends in `/`), `status` (`stale`, `not in the source`), `level` (`source`, `workspace`, `space`), `dir` |
-| `wsm repo list` | `repository` (`<level>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`), `url` |
+| `wsm repo list` | `repository` (`<level>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`), `url`, `ahead` (`--json` only) |
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
 | `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
-| `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url`, `list` (`user`, `system`), `provides` (a list) |
+| `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url`, `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
@@ -930,7 +930,8 @@ The keys, which are the interface:
 A clone's state (`gitsrc_dir_status`, for `anfs src list` and `wsm repo list`): `clean`, `dirty`
 (uncommitted or untracked changes), `unpushed` (commits its upstream lacks, as of the last fetch;
 nothing is fetched), `no upstream` (a branch that tracks none, or a detached HEAD), or `dirty, `
-followed by either of the last two.
+followed by either of the last two. `ahead` is the count of unpushed commits (null: no upstream,
+or not a clone).
 
 On a terminal (not piped, not `--json`, `NO_COLOR` unset) `anfs_table` colors a `STATUS` cell
 that needs attention: `dirty` (alone or first) red, `unpushed` and `no upstream` yellow. The map
