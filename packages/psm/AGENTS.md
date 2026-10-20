@@ -64,7 +64,7 @@ which ppm calls after every install/remove run with the packages involved:
   usage; an unknown verb prints it to stderr and exits 1.
 - `sync` and `update` stay top-level. Their argument is a *config* name, and
   they span all three nouns — read repos, install skills, target agents.
-- `path` is plumbing for the `psm cd` function in `psm.zsh`, deliberately kept
+- `path` is plumbing for the `psm cd` function in `sh/psm.sh`, deliberately kept
   out of the usage and the completion.
 - Commands name other commands in their output ("Run: psm prune"), so
   renaming one means grepping the strings, not just the dispatch.

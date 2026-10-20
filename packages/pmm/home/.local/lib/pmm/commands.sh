@@ -34,7 +34,7 @@ cli_cmd reset "Recreate the machine from a snapshot, or onto its image's current
 cli_cmd remove "Stop and delete machines and their snapshots; a definition is kept" \
   --alias rm --opt "-y --yes: Do not ask" --arg "machine..."
 cli_cmd path "Print the definition directory" --arg "machine"
-cli_cmd cd "Change to a machine definition (requires pmm.zsh)" --arg "[machine]"
+cli_cmd cd "Change to a machine definition (requires the pmm shell function)" --arg "[machine]"
 cli_cmd validate "Check definitions (all if none given); up runs it first" --arg "[machine...]"
 cli_group snapshot "Saved copies of a machine's disk"
 cli_cmd "snapshot list" "A machine's snapshots: NAME BUILD" --alias ls --arg "machine"
@@ -62,7 +62,7 @@ cli_cmd "image remove" "Delete every build of the image; the definition is kept"
 cli_cmd "image prune" "Delete superseded builds nothing is on"
 cli_cmd "image path" "Print the definition directory" \
   --opt "--disk: The built disk instead" --opt "--arch ARCH: Of that architecture" --arg "image"
-cli_cmd "image cd" "Change to an image definition (requires pmm.zsh)" --arg "[image]"
+cli_cmd "image cd" "Change to an image definition (requires the pmm shell function)" --arg "[image]"
 cli_cmd "image validate" "Check definitions (all if none given); build runs it first" --arg "[image...]"
 cli_group network "Networks machines are on: names, fixed addresses, bridges (Linux)"
 cli_cmd "network list" "Networks: NAME SOURCE KIND SUBNET STATE MACHINES" --alias ls

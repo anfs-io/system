@@ -1155,6 +1155,12 @@ Rules:
   `<shell>/` file at *source* time; calling one at *runtime* is fine. `sh/ppm.sh` does exactly
   that: it defines the `ppm()` wrapper and calls `_ppm_shell_reload` (defined per shell) only
   after a successful `install`/`remove`/`src update`.
+- **Every `cd` goes through `_anfs_cd`.** A tool's `cd` is a wrapper in its own `sh/<tool>.sh`
+  (portable, never a `.zsh`) that calls `_anfs_cd [-s WORD] TOOL DEFAULT ARG...` from
+  `sh/anfs.sh`: it runs `TOOL [WORD] path ARG...`, cds on exit 0 or 3 (stale, path still
+  printed), returns any other status without moving, and with no ARG cds to DEFAULT (or, when it
+  is empty, asks `path` with no arguments). The binary's `cmd_cd` only says the function is
+  missing. Wrappers look `_anfs_cd` up at call time, so sourcing order does not matter.
 - **The rc file belongs to a shell package, never to `core/anfs`.** `stack/zsh` owns
   `.zshrc`/`.zshenv` and its sourcing loop; `stack/bash` owns `.bashrc`/`.bash_profile`. With no
   shell package installed nothing sources anything — `ppm` still works, but `ppm cd` and mise

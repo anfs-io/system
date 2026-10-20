@@ -1,4 +1,5 @@
-# pcm.zsh — Personal Container Manager shell function: pcm cd, and the podman compose --pcm wrapper
+# pcm.zsh — pcm's zsh-only integration: exports, completion, cconf and the podman compose --pcm
+# wrapper. The `pcm cd` wrapper is portable and lives in ~/.config/sh/pcm.sh.
 
 export PCM_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}/pcm"
 export PCM_CONTAINERS_HOME="$PCM_CONFIG_HOME/containers"
@@ -13,22 +14,6 @@ zcomp pcm
 cconf() {
   local dir=$PCM_CONTAINERS_HOME file="../../anfs/anfs.local.conf" ext="compose.yml"
   load_conf "$@"
-}
-
-# Wrapper to handle `pcm cd` since subshells can't change parent directory
-pcm() {
-  if [[ "${1:-}" == "cd" ]]; then
-    shift
-    if [[ $# -eq 0 ]]; then
-      builtin cd "$PCM_CONTAINERS_HOME"
-    else
-      local service_path
-      service_path=$(command pcm path "$@") || return $?
-      builtin cd "$service_path"
-    fi
-  else
-    command pcm "$@"
-  fi
 }
 
 # --- podman / podman-compose --pcm integration ------------------------------

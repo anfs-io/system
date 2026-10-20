@@ -149,7 +149,7 @@ EOF
 }
 
 cmd_cd() {
-  echo "pcm cd requires the pcm shell function (source pcm.zsh)" >&2
+  echo "pcm cd needs the pcm shell function (source ~/.config/sh/pcm.sh)" >&2
   return 1
 }
 

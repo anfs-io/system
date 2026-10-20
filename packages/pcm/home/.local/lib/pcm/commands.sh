@@ -6,7 +6,7 @@ cli_cmd list "Services: CONTAINER STATUS (running, stopped, shadowed) VERSION" -
 cli_cmd show "Definition (container.yml), images, env names, dependencies, data,
 containers, ports and mounts (declared ones when nothing is created)" --arg "service"
 cli_cmd path "Print the path of a service definition" --arg "service"
-cli_cmd cd "Change to a service definition (requires pcm.zsh)" --arg "[service]"
+cli_cmd cd "Change to a service definition (requires the pcm shell function)" --arg "[service]"
 cli_cmd install "Validate and start services; source/ is every service that
 source defines (\`anfs install\` uses this)" --arg "service-spec..."
 cli_cmd up "Start services, detached unless -d/--detach is given; other

@@ -210,7 +210,7 @@ EOF
 }
 
 cmd_cd() {
-  echo "pmm cd requires the pmm shell function (source pmm.zsh)" >&2
+  echo "pmm cd needs the pmm shell function (source ~/.config/sh/pmm.sh)" >&2
   return 1
 }
 

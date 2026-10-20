@@ -57,11 +57,11 @@ cli_group agents "The agents skills are installed for"
 cli_cmd "agents list" "Agent ids detected from installed ppm packages" --alias ls
 cli_cmd "agents remove" "Unlink every installed skill from these agents,
 leaving it in place for the others" --alias rm --arg "agent..."
-cli_cmd cd "Change to the config dir (requires psm.zsh)"
+cli_cmd cd "Change to the config directory (requires the psm shell function)"
 cli_cmd implode "Remove every skill and psm's config (back to no skills)" --opt "-y --yes: Do not ask"
 cli_standard
 
-cmd_cd() { echo "psm cd requires the psm shell function (source psm.zsh)" >&2; exit 1; }
+cmd_cd() { echo "psm cd needs the psm shell function (source ~/.config/sh/psm.sh)" >&2; exit 1; }
 
 cli_help_epilogue() {
   cat <<'EOF'

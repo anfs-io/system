@@ -42,7 +42,7 @@ cmd_image_path() {
 }
 
 cmd_image_cd() {
-  echo "pmm image cd requires the pmm shell function (source pmm.zsh)" >&2
+  echo "pmm image cd needs the pmm shell function (source ~/.config/sh/pmm.sh)" >&2
   return 1
 }
 
