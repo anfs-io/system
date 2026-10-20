@@ -22,7 +22,7 @@ source that has it, and `source/name` picks one explicitly (`pcm list` shows sha
 A source is cloned once to `~/.local/share/anfs/sources/<alias>/` and may hold `packages/`,
 `skills/` and `spaces/` next to its `containers/<name>/`. pcm runs definitions straight from the
 clone: `pcm cd <name>` lands in the repo, edits are committed there, and `anfs src list` shows
-each clone clean or dirty. `pcm install <source>/` starts every definition a source holds.
+each clone clean, dirty or unpushed. `pcm install <source>/` starts every definition a source holds.
 
 - New definition for a repo: create `containers/<name>/` in its clone (`pcm path <other>` then
   `..` finds it) and commit there. Scratch or machine-only: create it in the local source.

@@ -30,6 +30,12 @@ RSpec.describe Anfs::Kind do
     expect(kind("vaults").status[{ "status" => "ok" }]).to eq("ok")
   end
 
+  it "warns of a clone with work not on its remote" do
+    states = ["dirty", "unpushed", "no upstream", "dirty, unpushed", "dirty, no upstream"]
+    expect(states.map { Anfs.tone(it) }.uniq).to eq([:warn])
+    expect(Anfs.tone("clean")).to eq(:good)
+  end
+
   it "builds the command of an action on the qualified resource" do
     expect(kind("images").action_command("build", "core/debian-13")).to eq(%w[pmm image build -y core/debian-13])
     expect(kind("packages").action_command("install", "stack/ruby")).to eq(%w[ppm install -y stack/ruby])

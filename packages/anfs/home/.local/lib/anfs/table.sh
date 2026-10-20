@@ -32,7 +32,11 @@
 # list; renaming or removing one breaks its readers. The piped form is for a person's own pipes,
 # and no tool depends on it.
 #
-# ANFS_TABLE=aligned|tsv|json forces a form (tests).
+# On a terminal, and unless NO_COLOR is set, a STATUS cell that needs a person's attention is
+# colored (_anfs_tone): red for work only this machine has and git does not (dirty), yellow for
+# commits only this clone has (unpushed, no upstream). Piped and --json are never colored.
+#
+# ANFS_TABLE=aligned|tsv|json forces a form, ANFS_COLOR=1 color in the aligned form (tests).
 #
 # Like everything in lib/anfs/ but bash.sh: functions only, no tool's code, the bash floor (5.2).
 
@@ -58,6 +62,15 @@ _anfs_json_str() {
   printf '"%s"' "$s"
 }
 
+# The SGR color of a status cell, or nothing
+_anfs_tone() {
+  case "$1" in
+    dirty|"dirty, "*) REPLY=31 ;;
+    unpushed|"no upstream") REPLY=33 ;;
+    *) REPLY="" ;;
+  esac
+}
+
 # A cell as a person reads it
 _anfs_cell() {
   case "$1" in
@@ -70,7 +83,7 @@ _anfs_cell() {
 
 anfs_table() {
   local -a heads keys rows f widths items
-  local form="${ANFS_TABLE:-}" i j k row line n
+  local form="${ANFS_TABLE:-}" i j k row line n cell pad color="" status=-1
   read -ra heads <<< "$1"
   read -ra keys <<< "$2"
   mapfile -t rows
@@ -124,7 +137,12 @@ anfs_table() {
     return 0
   fi
 
-  # Aligned: the widest cell of each column, headers included; the last column is not padded
+  # Aligned: the widest cell of each column, headers included; the last column is not padded.
+  # A color goes on after the padding, so it does not count toward a width.
+  [[ -n "${NO_COLOR:-}" ]] || { [[ -t 1 || "${ANFS_COLOR:-}" == 1 ]] && color=1; }
+  if [[ -n "$color" ]]; then
+    for (( j = 0; j < n; j++ )); do [[ "${heads[$j]}" != STATUS ]] || status=$j; done
+  fi
   local -a cells=()
   for (( j = 0; j < n; j++ )); do widths[j]=${#heads[$j]}; done
   for row in "${rows[@]}"; do
@@ -138,11 +156,14 @@ anfs_table() {
   for (( i = -1; i < ${#rows[@]}; i++ )); do
     line=""
     for (( j = 0; j < n; j++ )); do
-      if (( i < 0 )); then REPLY="${heads[$j]}"; else REPLY="${cells[$(( i * n + j ))]}"; fi
-      if (( j < n - 1 )); then
-        printf -v REPLY '%-*s  ' "${widths[$j]}" "$REPLY"
+      if (( i < 0 )); then cell="${heads[$j]}"; else cell="${cells[$(( i * n + j ))]}"; fi
+      pad=""
+      (( j == n - 1 )) || printf -v pad '%*s  ' "$(( widths[j] - ${#cell} ))" ""
+      if (( i >= 0 && j == status )); then
+        _anfs_tone "$cell"
+        [[ -z "$REPLY" ]] || cell=$'\033['"${REPLY}m$cell"$'\033[0m'
       fi
-      line+="$REPLY"
+      line+="$cell$pad"
     done
     printf '%s\n' "$line"
   done

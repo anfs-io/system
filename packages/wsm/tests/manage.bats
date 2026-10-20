@@ -85,6 +85,10 @@ YML
   echo x > "$HOME/spaces/acme/main/tech/repos/alpha/new"
   run wsm repo ls acme/main
   [[ "$output" == *"dirty"* && "$output" != *"beta"* ]]
+  rm "$HOME/spaces/acme/main/tech/repos/alpha/new"
+  git -C "$HOME/spaces/acme/main/tech/repos/alpha" -c user.email=t@t -c user.name=t commit -qm x --allow-empty
+  run wsm repo ls acme/main
+  [[ "$output" == *$'acme/main/tech/repos/alpha\tunpushed\t'* ]]
   rm -rf "$HOME/spaces/acme/main/tech/repos/alpha"
   run wsm repo ls acme/main/tech
   [[ "$output" == *"missing"* ]]

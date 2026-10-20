@@ -118,15 +118,22 @@ gitsrc_dir() {
   echo "$GITSRC_REPOS_DIR/$1"
 }
 
-# State of a directory: clean, dirty (uncommitted or untracked changes), local (exists, not a git
-# repo) or missing
+# State of a directory: clean, dirty (uncommitted or untracked changes), unpushed (commits its
+# upstream does not have, as of the last fetch), no upstream (a branch that tracks none, or no
+# branch), "dirty, unpushed", "dirty, no upstream", local (exists, not a git repo) or missing.
+# Reads only the clone: no fetch.
 gitsrc_dir_status() {
-  local dir="$1"
+  local dir="$1" dirty="" push="" ahead
   if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then
-    if [[ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
-      echo clean
-    else
-      echo dirty
+    [[ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ]] || dirty=dirty
+    if ! ahead=$(git -C "$dir" rev-list --count '@{upstream}..HEAD' 2>/dev/null); then
+      push="no upstream"
+    elif (( ahead > 0 )); then
+      push=unpushed
+    fi
+    if [[ -n "$dirty" && -n "$push" ]]; then echo "$dirty, $push"
+    elif [[ -n "$dirty$push" ]]; then echo "$dirty$push"
+    else echo clean
     fi
   elif [[ -d "$dir" ]]; then
     echo local

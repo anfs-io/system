@@ -7,7 +7,7 @@ setup() {
   LIB="$BATS_TEST_DIRNAME/../home/.local/lib/anfs"
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME"
-  unset ANFS_JSON ANFS_TABLE
+  unset ANFS_JSON ANFS_TABLE ANFS_COLOR NO_COLOR
   export ANFS_LOG=off
   # shellcheck source=/dev/null
   source "$LIB/table.sh"
@@ -45,6 +45,27 @@ rows() {
   [ "${lines[1]}" = "alpha          ~/spaces/a  -" ]
   [ "${lines[2]}" = 'a longer name  -           say "hi"' ]
   [ "${#lines[@]}" -eq 4 ]
+}
+
+@test "color: a STATUS cell needing attention, on a terminal only, the columns still aligned" {
+  status_rows() { anfs_row a dirty x; anfs_row "a longer" unpushed y; anfs_row b "no upstream" z; anfs_row c clean w; }
+  local red=$'\033[31m' yellow=$'\033[33m' off=$'\033[0m'
+  ANFS_COLOR=1 ANFS_TABLE=aligned run anfs_table "NAME STATUS NOTE" "name status note" < <(status_rows)
+  [ "${lines[0]}" = "NAME      STATUS       NOTE" ]
+  [ "${lines[1]}" = "a         ${red}dirty${off}        x" ]
+  [ "${lines[2]}" = "a longer  ${yellow}unpushed${off}     y" ]
+  [ "${lines[3]}" = "b         ${yellow}no upstream${off}  z" ]
+  [ "${lines[4]}" = "c         clean        w" ]
+  ANFS_COLOR=1 ANFS_TABLE=aligned run anfs_table "NAME STATUS" "name status" < <(anfs_row a "dirty, unpushed")
+  [ "${lines[1]}" = "a     ${red}dirty, unpushed${off}" ]
+  NO_COLOR=1 ANFS_COLOR=1 ANFS_TABLE=aligned run anfs_table "NAME STATUS" "name status" < <(status_rows)
+  [[ "$output" != *$'\033'* ]]
+  ANFS_COLOR=1 run anfs_table "NAME STATUS" "name status" < <(status_rows)
+  [[ "$output" != *$'\033'* ]]
+  ANFS_COLOR=1 ANFS_JSON=true run anfs_table "NAME STATUS" "name status" < <(status_rows)
+  [[ "$output" != *$'\033'* ]]
+  ANFS_COLOR=1 ANFS_TABLE=aligned run anfs_table "NAME STATE" "name state" < <(status_rows)
+  [[ "$output" != *$'\033'* ]]
 }
 
 @test "piped: the same cells, tab-separated, no header" {

@@ -90,8 +90,9 @@ module Anfs
 
   TONES = {
     good: %w[running clean ok installed built],
-    warn: ["dirty", "outdated", "partial", "stale", "pending", "unknown", "shadowed", "running, shadowed",
-           "stopped, shadowed", "not in the source", "needs a terminal"],
+    warn: ["dirty", "unpushed", "no upstream", "dirty, unpushed", "dirty, no upstream", "outdated", "partial",
+           "stale", "pending", "unknown", "shadowed", "running, shadowed", "stopped, shadowed", "not in the source",
+           "needs a terminal"],
     bad: ["failed", "missing", "conflict", "dangling", "not a repo", "no path"]
   }.flat_map { |tone, statuses| statuses.map { [it, tone] } }.to_h.freeze
 

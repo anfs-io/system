@@ -69,7 +69,8 @@ ambiguous query lists the candidates and exits 2. With `-s`, a source-qualified 
 nothing installed: `wsm cd -s lgat/spikes` is `<lgat>/spaces/spikes`.
 
 `SPEC` for ls and repo ls is `source/`, `source/ws` or `source/ws/space`, narrowing the list to that
-subtree. `repo ls` reports each repository as `clean`, `dirty`, `missing`, `not a repo` or `not installed`.
+subtree. `repo ls` reports each repository as `clean`, `dirty`, `unpushed`,
+`no upstream` (both may follow `dirty, `), `missing`, `not a repo` or `not installed`.
 
 `wsm cd` needs the shell function in `~/.config/sh/wsm.sh`: a subshell cannot change its parent's
 directory, so the binary prints the path and the shell does the `cd`.

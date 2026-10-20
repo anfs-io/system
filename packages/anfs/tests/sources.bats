@@ -105,6 +105,27 @@ remote() {
   [[ "$output" == *"Not updated (uncommitted changes): b"* ]]
 }
 
+@test "status: unpushed for commits the upstream lacks, no upstream for a branch tracking none" {
+  local a
+  a=$(remote a)
+  printf '%s  a\n' "$a" > "$GITSRC_USER_LIST"
+  gitsrc_update a
+  local d="$T/repos/a"
+  git -C "$d" -c user.email=t@t -c user.name=t commit -qm more --allow-empty
+  [ "$(gitsrc_status a)" = unpushed ]
+  echo change >> "$d/README"
+  [ "$(gitsrc_status a)" = "dirty, unpushed" ]
+  git -C "$d" checkout -q README
+  git -C "$d" push -q origin HEAD:main
+  [ "$(gitsrc_status a)" = clean ]
+  git -C "$d" checkout -q -b spike
+  [ "$(gitsrc_status a)" = "no upstream" ]
+  echo change >> "$d/README"
+  [ "$(gitsrc_status a)" = "dirty, no upstream" ]
+  git -C "$d" checkout -q --detach
+  [ "$(gitsrc_status a)" = "dirty, no upstream" ]
+}
+
 @test "update pulls new commits" {
   local a
   a=$(remote a)
