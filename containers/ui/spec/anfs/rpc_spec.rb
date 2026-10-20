@@ -97,12 +97,12 @@ RSpec.describe "the toolkit API client" do
       expect(@api.connections(1).first.last).to eq("run" => %w[ppm install stack/ruby], "stream" => true, "yes" => true)
     end
 
-    it "asks for no yes when the kind's command takes no -y" do
+    it "asks for yes on every kind's command: every tool takes -y" do
       api { |_request, answer| answer.call({ exit: 0 }) }
 
       run(Anfs::KINDS.fetch("spaces"), "install", "lgat/next")
 
-      expect(@api.connections(1).first.last).to eq("run" => %w[wsm install lgat/next], "stream" => true, "yes" => false)
+      expect(@api.connections(1).first.last).to eq("run" => %w[wsm install lgat/next], "stream" => true, "yes" => true)
     end
 
     it "says to run a command in a terminal on 77, which is not a failure" do

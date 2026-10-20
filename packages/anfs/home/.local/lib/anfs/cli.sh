@@ -52,6 +52,8 @@
 # EVERY TOOL ALSO TAKES
 #   -d/--debug, --trace      before the command (log.sh)
 #   --json                   anywhere on the line up to a `--` (table.sh)
+#   -y/--yes                 after any command: anfs_confirm does not ask. A command that asks
+#                            declares it too, to say in its help what it skips
 #   --version, -h/--help     and `<command> --help`, `help <command>`
 #   __complete <words...>    what tab completion asks; see cmd_completion
 #
@@ -243,6 +245,12 @@ _cli_opt() {
       return 0
     fi
   done <<< "${CLI_OPTSPEC[$1]:-}"
+  # Every command takes -y: one with nothing to ask ignores it, so a caller (a script, the
+  # toolkit API's yes) never has to know which commands ask. A declaration only says what it skips.
+  if [[ "$2" == -y || "$2" == --yes ]]; then
+    _O_KIND="" _O_KEY=yes
+    return 0
+  fi
   return 1
 }
 
@@ -577,6 +585,7 @@ cli_help() {
   echo "  -d, --debug    Show debug output (always written to the log: anfs log)"
   echo "  --trace        Trace every command the tool runs"
   echo "  --json         Lists as JSON (anywhere on the line)"
+  echo "  -y, --yes      Do not ask (after any command)"
   echo "  --version      Print the version"
   echo "  -h, --help     This help; after a command, that command's"
   if declare -F cli_help_epilogue >/dev/null; then

@@ -12,13 +12,14 @@ module Anfs
   #
   # `action` says what can be done to a row, as [verb, subject] or nil: the one command that
   # moves it out of the state it is in. The subject is the qualified resource.
-  Kind = Data.define(:key, :label, :tool, :args, :every, :id, :columns, :unset, :sourced, :action, :action_flags) do
-    def initialize(unset: nil, sourced: true, action: nil, action_flags: [], **) = super
+  Kind = Data.define(:key, :label, :tool, :args, :every, :id, :columns, :unset, :sourced, :action) do
+    def initialize(unset: nil, sourced: true, action: nil, **) = super
 
     def command = [tool, *args, "--json"].join(" ")
 
-    # In the list's group, if any: `pmm image list` builds with `pmm image build`.
-    def action_command(verb, subject) = [tool, *args[...-1], verb, *action_flags, subject]
+    # In the list's group, if any: `pmm image list` builds with `pmm image build`. Every command
+    # takes -y (core AGENTS.md): the click was the answer.
+    def action_command(verb, subject) = [tool, *args[...-1], verb, "-y", subject]
 
     def status = ->(row) { row["status"] || (unset.respond_to?(:call) ? unset[row] : unset) }
 
@@ -52,8 +53,7 @@ module Anfs
     Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], every: 60, id: "package",
              unset: "available",
              columns: { "Package" => "package", "Version" => "version" },
-             action: ->(row) { [row["status"] ? "remove" : "install", row["package"]] },
-             action_flags: %w[-y]),
+             action: ->(row) { [row["status"] ? "remove" : "install", row["package"]] }),
     Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], every: 5, id: "container",
              unset: "not created",
              columns: { "Container" => "container", "Version" => "version", "Description" => "description" },

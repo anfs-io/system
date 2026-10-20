@@ -117,6 +117,19 @@ SH
 
 # --- refusing -------------------------------------------------------------------------------
 
+@test "every command takes -y and --yes, declared or not; only a declaration puts it in the usage" {
+  run "$TOOL" up -y t
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "args: <t>" ]
+  [ "${lines[1]}" = "yes=true" ]
+  run "$TOOL" link add --yes d
+  [ "${lines[1]}" = "yes=true" ]
+  run "$TOOL" remove -yf one
+  [[ "$output" == *"force=true"* && "$output" == *"yes=true"* ]]
+  run "$TOOL" up --bogus t
+  [[ "${lines[1]}" == "demo: usage: demo up "* && "${lines[1]}" != *"-y"* ]]
+}
+
 @test "an unknown option is named, the generated usage follows, exit 64" {
   run "$TOOL" remove --bogus x
   [ "$status" -eq 64 ]

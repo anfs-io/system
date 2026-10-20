@@ -31,14 +31,14 @@ RSpec.describe Anfs::Kind do
   end
 
   it "builds the command of an action on the qualified resource" do
-    expect(kind("images").action_command("build", "core/debian-13")).to eq(%w[pmm image build core/debian-13])
+    expect(kind("images").action_command("build", "core/debian-13")).to eq(%w[pmm image build -y core/debian-13])
     expect(kind("packages").action_command("install", "stack/ruby")).to eq(%w[ppm install -y stack/ruby])
     expect(kind("containers").action[{ "container" => "core/ui", "status" => "stopped" }]).to eq(%w[up core/ui])
     expect(kind("containers").action[{ "container" => "x/ui", "status" => "running, shadowed" }]).to be_nil
     expect(kind("stacks").action).to be_nil
     repo = { "repository" => "lgat/next/docs", "status" => "missing" }
     expect(kind("repos").action[repo]).to eq(%w[install lgat/next/docs])
-    expect(kind("repos").action_command("install", "lgat/next/docs")).to eq(%w[wsm repo install lgat/next/docs])
+    expect(kind("repos").action_command("install", "lgat/next/docs")).to eq(%w[wsm repo install -y lgat/next/docs])
     expect(kind("repos").action[repo.merge("status" => "not installed")]).to be_nil
   end
 end

@@ -951,7 +951,7 @@ cli_dispatch "$@"
   and the word is its **kind**. `--arg "service..."`, `--arg "[snapshot]"`: `[..]` is optional,
   `...` is one or more, the word is its kind.
 - `--passthrough`: options the command does not declare are left for it, in place (`pcm up`,
-  `pcm ps`, `pmm shell`: they go on to podman or ssh).
+  `pcm ps`, `pmm shell`: they go on to podman or ssh). `-y` is never passed on: it is the tool's.
 - **The function gets positional arguments as `"$@"` and options in `CLI_OPT`**, keyed by the long
   name without dashes: `${CLI_OPT[yes]:-false}`, `${CLI_OPT[to]:-}`. A value option given twice
   holds both, one per line. No command writes a loop over its own options.
@@ -1032,7 +1032,11 @@ tool's main object runs from, and `pmm image` is the reference for it: besides t
 `prune`. pcm and pmm keep `up`/`down`/`ps`, the names of what
 they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image); wsm's `status` is a different question from `ps`.
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
-says what would happen.
+says what would happen. **Every command takes `-y`** (cli.sh adds it to each), so a script or the
+toolkit API's `yes` never has to know which commands ask; one with nothing to ask ignores it. A
+command that asks still declares it, so its help says what `-y` skips. A command asks
+(`anfs_confirm`) when it destroys or replaces something, or acts on more than was named (a whole
+source, a group, dependents); starting, installing and cloning what was named do not ask.
 
 A tool's main resource is at its top level (`psm list`, `pcm list`, `pmm list`; anfs's is the
 stack, `anfs list`), never in a group
@@ -1076,7 +1080,7 @@ cannot go stale.
 aliases of these; don't write another):
 
 - `anfs_confirm "<what this does>" "<the question>"` (cli.sh) asks before something that cannot
-  be undone: true at once with `-y`; without a terminal it says to pass `-y` and exits 1; anything
+  be undone: true at once with `-y`; without a terminal it says to pass `-y` and exits 77; anything
   but a y exits 1 with "nothing done".
 - `anfs_display <path>` shows a path with `~` for home, whether it is spelled as `$HOME` or as what
   `$HOME` resolves to; `anfs_canon <dir>` resolves one (paths.sh).
