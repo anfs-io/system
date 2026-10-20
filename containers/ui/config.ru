@@ -2,7 +2,7 @@
 
 # In development the views are reloaded when they change, so an edit on the host shows on the
 # next request. Only views/: app.rb and lib/ hold the store, the hub and the poller's threads,
-# which a reload would orphan (restart for those: pcm restart ui).
+# which a reload would orphan (for those: pcm down ui && pcm up ui).
 if ENV["RACK_ENV"] == "development"
   require "phlex"
   require "rack/unreloader"

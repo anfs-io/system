@@ -4,7 +4,7 @@
 # in .env.schema: ANFS_UI_BIND and ANFS_UI_PORT say where it is published (127.0.0.1:9292),
 # ANFS_UI_HOSTS and ANFS_UI_REMOTE_ACTIONS who may use it. Built from the Containerfile's dev target:
 # Ruby and the gems only, with this directory mounted read-only at /app, so an edit on the host
-# shows on the next request (views/; restart for the rest: pcm restart ui). It reaches the tools
+# shows on the next request (views/; for the rest: pcm down ui && pcm up ui). It reaches the tools
 # through the toolkit API: container.yml's toolkit: write has pcm add ANFS_RPC_URL (and on macOS
 # ANFS_RPC_TOKEN, or on Linux the socket's mount).
 
