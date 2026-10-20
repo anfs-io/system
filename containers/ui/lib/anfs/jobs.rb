@@ -77,9 +77,11 @@ module Anfs
       end
     end
 
-    # The API adds -y itself (yes), so the kind's own -y is left out.
+    # The API adds -y itself (yes), so the kind's own -y is left out. Only for a command the kind
+    # says takes it: wsm, pcm and the rest refuse an option they do not declare.
     def remote(job)
-      answer = @rpc.call({ run: job.command - ["-y"], stream: true, yes: true }) { append(job, it) }
+      yes = job.command.include?("-y")
+      answer = @rpc.call({ run: job.command - ["-y"], stream: true, yes: }) { append(job, it) }
       explain(job, answer)
       finish(job, answer["exit"])
     end
