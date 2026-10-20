@@ -1,6 +1,6 @@
 ---
 name: pmm-images
-description: Create or edit pmm VM image definitions — the image.yml, answer file (preseed.cfg / kickstart.ks), provision steps, files/, test.sh and README in an anfs source (a repo's machines/images/<name>/, or ~/.config/pmm/machines/images/<name>/). Use when the user wants a new VM image, to add software or configuration to one (a provision step), to change a shipped image such as debian-13 without forking it (from: its own name), to point an image at an ISO, to write a provisioner (what runs a kind of step, e.g. ansible), or to make `pmm image validate` pass.
+description: "Create or edit pmm VM image definitions — the image.yml, answer file (preseed.cfg / kickstart.ks), provision steps, files/, test.sh and README in an anfs source (a repo's machines/images/<name>/, or ~/.config/pmm/machines/images/<name>/). Use when the user wants a new VM image, to add software or configuration to one (a provision step), to change a shipped image such as debian-13 without forking it (from: its own name), to point an image at an ISO, to write a provisioner (what runs a kind of step, e.g. ansible), or to make `pmm image validate` pass."
 ---
 
 # pmm image definitions
