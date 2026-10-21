@@ -11,7 +11,7 @@ A source is a git repo (or a local directory) that may hold any of:
 | `containers/` | `pcm` | podman compose services (`containers/<name>/compose.yml`) |
 | `machines/` | `pmm` | machines (`machines/<name>/machine.yml`), the VM images they run from (`machines/images/<name>/image.yml`) and the networks they are on (`machines/networks/<name>/network.yml`); see pmm |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
-| `spaces/` | `wsm` | workspaces of spaces (`spaces/<ws>/<space>/space.yml`; see wsm) |
+| `spaces/` | `wsm` | spaces (`spaces/**/space.yml`: any directory with one, at any depth; see wsm) |
 | `stacks/` | `anfs` | stacks: manifests of the others, applied together (`stacks/<name>/stack.yml`; see "Stacks") |
 
 `anfs` owns the sources (`anfs src`), its own resource the stack (`stacks/`, see "Stacks") and
@@ -20,7 +20,7 @@ tool by tool (ppm, pcm, pmm, psm, wsm), `anfs install <stack>` what a stack decl
 implode` is `anfs remove system` (the toolkit is the stack `core/system`) with every other stack
 and every tool's `implode` around it, then deletes the sources. Picking single
 resources is each tool's own `install` (`ppm install lgat/rails`, `pcm install lgat/postgres`,
-`psm install lgat/skill`, `wsm install lgat/main/tech`; `source/` means all of that kind).
+`psm install lgat/skill`, `wsm install lgat/tech`; `source/` means all of that kind).
 
 **One tool, one top-level directory** (`anfs_tool_dir <tool>` in `paths.sh`); `isos/` is anfs's,
 shared. What a tool keeps below its directory is its own: pmm has `machines/images/` and
@@ -86,8 +86,10 @@ reinstalled: what is there is recorded as `before`, so `anfs remove system` woul
 removes it anyway). Tests: `packages/anfs/tests/system.bats`.
 
 - Each tool runs once per kind with every resource of that kind still missing (`ppm install -y a
-  b c`, `psm install`, `pcm install`, `pmm install`); wsm installs one level per run, so spaces are
-  one `wsm install <level>` each. A resource already there is not reinstalled.
+  b c`, `psm install`, `wsm install`, `pcm install`, `pmm install`). A resource already there is
+  not reinstalled; a `partial` spaces entry is (wsm links what is missing).
+- A `spaces:` entry is a wsm spec: an id (`lgat/tech`) or a prefix (`lgat/`). A prefix is
+  `installed` when it has spaces and every one is, `partial` when some are, absent when none.
 - A tool not installed for a kind the stack has is 69 (`ppm install core/<tool>`), checked with
   the plan, before anything runs.
 - `--build` installs only packages and skills (what belongs in an image), no `status:`; the record
@@ -96,7 +98,7 @@ removes it anyway). Tests: `packages/anfs/tests/system.bats`.
   `stacks/04-boxes`).
 - `anfs install <source>` with a source's name is 64: "did you mean anfs src install <source>".
 - What is there is asked of each tool with `--json` ("Lists and --json"): `ppm list --installed`
-  (`status` not null), `psm list` (`ok`, `partial`), `wsm list` (`dir` not null), `pcm list`
+  (`status` not null), `psm list` (`ok`, `partial`), `wsm list` (`ok`, `partial`; every row, for prefixes), `pcm list`
   (`status` not null nor `shadowed`), `pmm list` (`running`, `stopped`). A bare name matches any
   source's.
 
@@ -482,51 +484,93 @@ domain: lab               # optional
   does not validate. The tests stub `virsh` (`tests/stubs/virsh`) and point `PMM_BRIDGE_CONF`,
   `PMM_BRIDGE_HELPER` and `PMM_SYS_NET` at a temp dir (`setup_net` in the helper).
 
-## wsm: workspaces
+## wsm: spaces
 
-A source's `spaces/` holds workspaces, each a directory of spaces: `spaces/<ws>/<space>/`. `wsm
+A **space** is any directory of a source's `spaces/` that holds a `space.yml`, at any depth. `wsm
 help` documents the commands.
 
-- **Levels are fixed by depth**: `spaces/` is the source level, every directory below it a
-  workspace, every directory below a workspace a space. A `space.yml` is optional at each level;
-  hidden directories are content, never a level. A space's files are everything below it; a
-  workspace's and the source level's are what is not inside a directory below them. The workspace
-  and source levels are installed with the first space under them and removed with the last,
-  unless the spec named them (`wsm install rws/` with no spaces at all): then the tracker is
-  `named: true` and only a `remove` of that level (or above) takes it.
-- **`space.yml`**: `repositories: [{url, path?, ref?}]`, cloned into that level's directory (a
-  path left out is the one `git clone` would use), and for a space, `depends:`. Install clones the
-  repositories of every `space.yml` under the spec, plus those of the spaces it depends on. A
-  narrower spec still stows the levels above but does not clone their repositories. It never pulls.
-- **`wsm install [SPEC [DIR]]` links, as ppm does** (`lib/anfs/link.sh`): the level's files
-  (`_unit_files`, which leaves out the levels below) into `<target>/<src>/<ws>/<space>/`, one
-  relative link per file, so directories stay real and a clone never lands in the source. Every
-  file is linked but `.DS_Store`, `README.*` and `.gitignore` included, as in ppm. Anything in the
-  way (the plan's `other` and `conflict`) fails the level, except a link the previous install
-  recorded, which is wsm's to replace wherever it points.
-  - With no SPEC, install takes the level at `.`, which must hold a `space.yml`.
-- **Targets.** The target is DIR, else `WSM_SPACES_HOME` (`anfs.conf`, default `~/spaces`). A source
-  lives in one target. A target inside a source checkout, or inside another source's installed
-  tree, is refused.
-- **The trackers are the state**: `$WSM_STATE_HOME/installed/<id>.yml`, where id is `src`,
-  `src/ws` or `src/ws/space`. Each holds the target, the directory and the stowed files.
+- **Ids are paths.** A space's id is its source and its path below `spaces/`: `spaces/space.yml`
+  is the space `lgat` (the source's root space), `spaces/tech/web/space.yml` is `lgat/tech/web`.
+  A directory without a `space.yml` is only a directory (`spaces/a/b/c/space.yml` alone makes one
+  space, `lgat/a/b/c`); hidden directories are content like any other, and a `space.yml` in one
+  makes it a space. There are no levels and no other constraint on how `spaces/` is organized.
+- **A file belongs to the nearest enclosing space**: the closest directory above it with a
+  `space.yml`. A child space's files are its own, not its parent's. A file under no space is not
+  linked, and is warned about once per run (`not in any space, not linked: <source>/<path> (and N
+  more)`).
+- **Specs are ids or prefixes.** `lgat/tech` is that space only; `lgat/` or `lgat/tech/` (a
+  trailing `/`) is every space at or under it. The first segment is the source when it is the
+  alias of a source with `spaces/` (an alias wins over another source's top-level directory of the
+  same name); otherwise the spec is a path, from the highest-priority source that has it.
+  Installing a space installs its dependencies, never the spaces above it. A spec that names
+  nothing fails before anything is touched.
+- **`space.yml`**: `depends:` (ids, or paths resolved from the declaring source down, as ppm's
+  layering rule; a bare `org` is `<this source>/org`, never a sibling) and `repositories: [{url,
+  path?, ref?}]`, cloned into the space's directory (a path left out is git's name for it). A
+  repository's id is `<space id>/<path>`; a path that leaves the space, lies inside a child space or
+  holds one is `invalid` (warned, counted as failed), so the longest prefix of an id that is a
+  space is its space (`_repo_split`). Install never pulls, and never deletes a clone.
+- **`wsm install [SPEC...] [-n] [-f] [-y]` links, as ppm does** (`lib/anfs/link.sh`): each space's
+  files into `$WSM_SPACES_HOME/<source>/<path>/`, one relative link per file, so directories stay
+  real and a clone never lands in the source. Every file is linked but `.DS_Store`, `README.*`
+  and `.gitignore` included. Then its leftovers go, then its repositories are cloned. Several specs
+  in one run (`anfs src install a b` passes every source to one `wsm install`); a prefix asks.
+  With no SPEC, the space at `.`, which must hold a `space.yml`.
+  - Anything in the way (the plan's `other` and `conflict`) fails the space before anything is
+    linked, every file named. A link into the source's `spaces/` (moved, renamed, absolute,
+    dangling) is the plan's `replace`. **`-f` moves what is in the way aside**, as ppm does: to
+    `$WSM_STATE_HOME/backup/<source>/<path>` (`.1`, `.2` when taken). Nothing restores it, not
+    `remove` (there is no record). An obstacle on the way (a file where a directory goes) is never
+    moved.
+- **One root**: `WSM_SPACES_HOME` (`anfs.conf`, default `~/spaces`, `~` and `$HOME` expanded). A
+  source's spaces are always under `<root>/<source>/`; there is no DIR argument. A root inside a
+  source checkout is refused.
+- **Nothing is recorded.** The sources' `spaces/` say what exists (one `find` per source per run,
+  `_spaces_load`); the links say what is installed. `$WSM_STATE_HOME` holds only `backup/`.
+  - A space is **installed** when `<root>/<source>/<path>/space.yml` is a link to its
+    `space.yml`. Each file's state is `anfs_link_check`'s: `ok`, `missing`, `wrong`, `in the way`,
+    one check (one `readlink` for every link) per source.
+  - A **leftover** is a dangling link into the source's `spaces/` that no file of the source owns.
+    The walk (`_leftovers_scan`) lists only the directories of `<root>/<source>/` that mirror a
+    directory of the source's `spaces/` (bash globs, no `find`), and for an entry that is a real
+    directory and no mirror, only `<entry>/space.yml`: the one level that notices a vanished space.
+    So a clone of any size costs one directory entry. **The limit is kept on purpose**: a space
+    that vanished two or more levels below the nearest mirrored directory, and the links under a
+    directory the source no longer has, are not seen. A leftover counts against the nearest
+    installed space above it; a dangling `space.yml` where the source has no space is a `not in the
+    source` row.
+  - The old `~/.local/state/wsm/installed/` trackers are neither read nor deleted.
+- **`wsm ls [SPEC]`**: `SPACE STATUS DIR NOTE`. STATUS is null (not installed), `ok`, `partial`
+  (NOTE counts `missing`, `wrong`, `in the way`, `leftover`), or `not in the source`. `wsm ls <id>
+  --json` adds `files: [{file, status}]` (the check's states plus `leftover`, relative to the
+  space). `wsm status` is gone; drift across the machine is `anfs status` (linker plan 03).
+- **wsm acts only on what it derives from the source**: the spaces' files (links), their
+  leftovers, the repository paths, and `space.yml`. The user's files, their links and other
+  tools' (ovm's absolute links into vaults) are never listed, changed or removed.
 - **The tree mirrors the source, both ways.**
-  - `wsm new` creates a space in the source. A part left out comes from the current directory,
-    either a checkout or an installed tree. If the workspace is installed, the new space is
-    installed too.
+  - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
+    below where you are (in the tree, or below a checkout's `spaces/`). It is installed when the
+    nearest space around it is; a space made inside one takes the files below it, whose links are
+    already right.
   - `wsm add` moves files from the tree into the source and links them back, relative
-    (`anfs_relpath`), so the next install's plan keeps them. It never takes clones, repository
-    paths or what the source's `.gitignore` ignores.
-  - `wsm status` lists the differences.
-  - `wsm ls [SPEC]` lists the defined levels with where each is installed; `wsm repo ls [SPEC]`
-    their repositories' git state, and `wsm repo install [SPEC]` clones what an installed level
-    declares and is missing (install's clone half: nothing stowed, nothing pulled). `wsm cd -s` goes to the source directory instead of the installed one.
+    (`anfs_relpath`), so the next install's plan keeps them. The file's space (its nearest) must be
+    installed. It never takes clones, repository paths, what the source's `.gitignore` ignores, or
+    a file under no space; a copy where the source has the file goes back only when named.
+  - `wsm repo ls [SPEC]` is the repositories' git state, and `wsm repo install [SPEC|REPOSITORY]`
+    clones what an installed space declares and is missing (install's clone half).
+  - `wsm path`/`cd [-s] [QUERY]`: an installed id, else the installed ids that end in `/QUERY`
+    (`web`, `tech/web`; several: exit 2), else a source names `<root>/<source>`; no QUERY, the
+    deepest installed space around `.`. `path`, `cd`, `new`, `add` and `repo` read only the
+    `space.yml` links, never the full check. `-s` gives the directory in the source.
   - wsm never commits.
-- **Names nest**: `ANFS_NAME_PARTS=2`, so `main/tech` is a name and `lgat/main/tech` a qualified
-  one. A bare `depends:` entry is a sibling in the same workspace. Spaces don't layer
-  (`ANFS_RESOLVE_FIRST`); layering may come later (the linker's skip set is how ppm layers).
-- `remove`/`implode` take each recorded link still pointing at the source's file, then the empty
-  directories; clones and the user's files stay.
+- `remove` takes, per space: its files' links that are still `ok`, its leftovers, then
+  `space.yml` last (an interrupted remove leaves it `partial`), then the directories that leaves
+  empty up to `<root>/<source>`; clones, the user's files and a child space's links keep a
+  directory alive. A `not in the source` space is removed by walking its directory for dangling
+  links into the source (not into clones or live spaces). `implode` does that for every space,
+  then deletes `$WSM_STATE_HOME`, backups included.
+- Names nest to any depth in `resolve.sh` (`ANFS_NAME_NEST`, `ANFS_RESOLVE_MARKER=space.yml`);
+  spaces don't layer (`ANFS_RESOLVE_FIRST`).
 
 ## The toolkit API (anfs rpc)
 
@@ -835,11 +879,11 @@ anfs_callbacks_ls        [tool]                    # tool, name, ok|stale, handl
   handlers are something else defines `<tool>_callback_invoke` (ppm does).
 - Each handler runs in a subshell. One that fails is reported (`anfs_warn`) and the rest still
   run; one whose command is no longer on PATH is skipped and shows as `stale`.
-- **Who emits:** ppm (`install`/`remove`, with the packages) and wsm (`install` for each level
-  that became installed, `remove` for each one removed, as `source`, `source/ws`,
-  `source/ws/space`). wsm's are tied to the outcome, not the command: `wsm new` emits `install`
-  for a space it installs, a re-install of what is installed emits nothing, `--dry-run` emits
-  nothing, and `implode` emits `remove` for every level.
+- **Who emits:** ppm (`install`/`remove`, with the packages) and wsm (`install` for each space
+  that became installed, `remove` for each one removed, by id: `lgat` for a source's root space,
+  `lgat/tech/web`, no trailing `/`). wsm's are tied to the outcome, not the command: `wsm new`
+  emits `install` for a space it installs, a re-install of what is installed emits nothing,
+  `--dry-run` emits nothing, and `implode` emits `remove` for every space.
   psm, pcm and pmm emit nothing yet: add an emitter when there is a listener.
 - A package that listens to another tool registers from its own `install.sh` (stack's
   `obsidian`, for `ovm`):
@@ -874,7 +918,7 @@ and names the columns, and the library picks the form.
   not passed on to a tool this one runs. `anfs_result k v ...` is the `--json` answer of a command
   that changes something; `anfs_json_on` asks whether it was given.
 - **A tool reads another tool's list with `--json`, never by column.** stack's ovm reads
-  `wsm ls --json`; anfs-dev's `anfs work` reads `wsm ls` and `wsm repo ls`, `ppm container` and
+  `wsm ls --json`; anfs-dev's `anfs work` reads `wsm repo ls`, `ppm container` and
   `ppm vm` read `pcm list` and `pmm list`; the round trips read `ppm list --json`, `pmm list
   --json`, `pmm image list --json`, `pmm network list --json` and `psm ls --json`. Keys may be added to a list; renaming or
   removing one breaks its readers. The piped form is for a person's own pipes. There is no
@@ -915,8 +959,8 @@ The keys, which are the interface:
 | `pmm network list` | `network` (`source/name`; the plain name: made with `network create`, or the definition is gone), `status` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `kind`, `subnet` (a bridged network: its bridge), `machines` (comma-separated) |
 | `psm list` | `skill` (`<config>/<skill>`: the source's alias, or the config's name; `<config>/*` for a whole repo), `status` (`ok`, `partial`, `missing`, `*`), `config`, `repo` |
 | `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
-| `wsm list` | `space` (the level: a source's ends in `/`), `status` (`stale`, `not in the source`), `level` (`source`, `workspace`, `space`), `dir` |
-| `wsm repo list` | `repository` (`<level>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`), `url`, `ahead` (`--json` only) |
+| `wsm list` | `space` (the id: `lgat`, `lgat/tech/web`), `status` (`ok`, `partial`, `not in the source`; null: not installed), `dir` (null: not installed), `note` (`2 missing, 1 leftover`), `missing`, `wrong`, `in_the_way`, `leftover` (counts, `--json` only); `wsm list <id> --json` adds `files` (`[{file, status}]`) |
+| `wsm repo list` | `repository` (`<space id>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`, `invalid`), `url`, `ahead`, `space`, `path`, `dir` (the clone's path; null while its space is not installed) (the last four `--json` only) |
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
 | `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
 | `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url`, `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
@@ -1037,7 +1081,7 @@ seam by which a package adds a command, and it is anfs's alone:
 tool's main object runs from, and `pmm image` is the reference for it: besides the shared verbs,
 `build`, `test` (boot it and run its test; `validate` only reads the definition), `export` and
 `prune`. pcm and pmm keep `up`/`down`/`ps`, the names of what
-they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image); wsm's `status` is a different question from `ps`.
+they wrap, with `stop`/`ssh` as aliases (pmm's `run` is its own command: a machine from an image).
 Options: `-y, --yes` does not ask, `-f, --force` replaces what is in the way, `-n, --dry-run`
 says what would happen. **Every command takes `-y`** (cli.sh adds it to each), so a script or the
 toolkit API's `yes` never has to know which commands ask; one with nothing to ask ignores it. A
@@ -1094,8 +1138,9 @@ cannot go stale.
   `complete_snapshot` lists the snapshots of the machine before it.
 - **`complete_<kind>` functions must be fast: file names only, no yq, no git, no list command.**
   A tab press starts the tool (25 to 40 ms) and runs one of these; the whole is under 100 ms, and
-  `registry.bats` holds the library to that. `wsm ls` takes 240 ms, which is why completion does
-  not call it.
+  `registry.bats` holds the library to that. `wsm ls` checks every link of every space, which
+  is why completion does not call it: wsm's completion is one `find` over the sources' `spaces/`
+  for `space.yml` (ids and prefixes), and a `-L` per space for the installed ones.
 - One tool may complete another's things by asking it: stack's ovm's `--to` runs
   `wsm __complete install ""`.
 
@@ -1149,6 +1194,7 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
 - `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, stowed files, `installed_deps`, `resources`)
 - `~/.local/state/ppm/installed/callbacks.yml` — packages registered for post-run callbacks (`ppm_register_callback`)
 - `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into the installer's skip list so they are never re-linked
+- `~/.local/state/wsm/backup/` — what `wsm install -f` moved aside; wsm's only state (what is installed is read off the links)
 - `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
@@ -1273,7 +1319,14 @@ directory into another, skipping a set, and says who a link points into.
   link into another directory of the sources: another layer's; detail is its owner) and
   `conflict` (a file, a directory, a link elsewhere). `anfs_link_apply` changes nothing unless
   the plan has no `other` or `conflict`; it returns 1 and the caller decides: ppm moves them
-  aside under `-f` (`stow_subdir`), wsm refuses. Every file in the way is reported, not the first.
+  aside under `-f` (`stow_subdir`), and so does wsm (`_backup`); without `-f` both refuse. Every
+  file in the way is reported, not the first.
+- **`anfs_link_check <from> <to> <files-file>`** is the read-only side: `<state>\t<file>` per file,
+  `ok` (the text apply writes, or any link that resolves to the file), `missing`, `wrong` (a link
+  to anything else), `in the way` (a file, a directory, or an obstacle on the way). A constant
+  number of forks however many files: tests in the shell, the expected text built as apply builds
+  it, every link's text read with one `readlink` (through `xargs -0`), and only a link whose text
+  differs resolved. wsm's whole state is this.
 - **Names are data**: spaces, `+`, `(`, `[`, a leading `-`. A name with a newline or a tab is
   refused (exit 2), once. Paths are compared canonical (macOS's `/var` is `/private/var`).
 - **`anfs_link_owner <path>`** is the one answer to "is this ours": `<source>/<path in it>` for a
@@ -1315,7 +1368,7 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 
 - `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and links them from there (`anfs_link_one`, that file only). The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
 - `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Directories are always real with a link per file, so files a tool creates there later stay local until added too.
-- **Never put a space in a package**: a space is `spaces/<ws>/<space>/` in a source, and wsm links it into its target and records it (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
+- **Never put a space in a package**: a space is a directory with a `space.yml` under a source's `spaces/`, and wsm links it into `WSM_SPACES_HOME` (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
 - Protected files are refused by `claim`/`add` (unprotect first): claim would link them again.
 - `ppm file reset <file...>` deletes the claimed copy, restores the owner's link, and removes the claimant package if it becomes empty.
 - `ppm file protect <file...>` turns a package-managed symlink into a plain local copy (preserving its content) and records it in `protected.yml`. ppm then never re-links or force-removes it — including under `-f` — so you can customize it without a repo. The file is also dropped from its package's tracker.
@@ -1356,7 +1409,7 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   bash.sh      # the bash floor (5.2): re-exec under a newer bash, or exit 69. Sourced first by
                # every entry point; bash 3.2, like link.sh
   link.sh      # the linker (bash 3.2, in the bootstrap set): anfs_link_plan / anfs_link_apply
-               # (<from> <to> <files-file> [skip-file]), anfs_unlink, anfs_unlink_tree,
+               # (<from> <to> <files-file> [skip-file]), anfs_link_check, anfs_unlink, anfs_unlink_tree,
                # anfs_link_one, anfs_link_owner, anfs_relpath. See "Linking" below
   log.sh       # anfs_info/warn/die/fail/debug, the log file (anfs log), ANFS_DEBUG, ANFS_TRACE
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
@@ -1382,7 +1435,9 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # check of the line (CLI_OPT), `__complete`, cli_call, anfs_confirm
   resolve.sh   # anfs_sources <dir>, anfs_find, anfs_list, anfs_resolve <dir> <deps_fn> (layered
                # topo sort with the same-or-lower-priority dependency rule; ANFS_RESOLVE_FIRST for
-               # kinds that don't layer, ANFS_NAME_PARTS=2 for names that nest: wsm's <ws>/<space>)
+               # kinds that don't layer; ANFS_NAME_NEST for names that nest to any depth, the
+               # first segment the source when it is one, and ANFS_RESOLVE_MARKER for the file a
+               # resource directory must hold: wsm's spaces, lgat/tech/web and the root lgat)
 packages/ppm/home/.local/lib/ppm/
   core.sh        # API for package hooks: os(), arch(), add_to_file(), remove_from_file(),
                  # debug(), user_message(), ppm_fail()
@@ -1461,7 +1516,8 @@ bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, link.sh, bash.s
 bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
-bats packages/wsm/tests      # wsm: install (links, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
+bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
+                             # repositories), the state (ls), path/remove/new/add/repo/implode, events
 bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
                              # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart

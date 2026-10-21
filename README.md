@@ -1,7 +1,7 @@
 # anfs — Agent Native Full Stack
 
 anfs makes a machine reproducible from git repositories you control — not just its dotfiles and
-tools, but its services, its agents' skills and its workspaces. It is a small toolkit of bash
+tools, but its services, its agents' skills and its working spaces. It is a small toolkit of bash
 tools that share one idea of where things come from:
 
 | Tool | Reads | Does |
@@ -9,11 +9,11 @@ tools that share one idea of where things come from:
 | `ppm` | `packages/` | software and dotfiles: a manifest of what a package needs, files symlinked into place, one relative link per file |
 | [`pcm`](packages/pcm/README.md) | `containers/` | podman compose services, with their configuration schema and dependencies |
 | `psm` | `skills/` | agent skills, synced to every AI agent installed |
-| `wsm` | `spaces/` | workspaces: where they live, what they depend on, the repos inside them |
+| [`wsm`](packages/wsm/README.md) | `spaces/` | spaces (any directory with a `space.yml`): linked into `~/spaces`, what they depend on, the repos inside them |
 | `anfs` | — | the sources every tool reads, and the commands that span them |
 
 A **source** is one repo that may hold any of those directories, so an organization can ship its
-whole stack — the toolchain, the database, the skills, the workspaces — as a single repo:
+whole stack — the toolchain, the database, the skills, the spaces — as a single repo:
 
 ```bash
 anfs src add git@github.com:lgat/lgat-anfs.git lgat
@@ -188,7 +188,7 @@ anfs implode            # your other stacks, every tool's implode, the system st
 anfs implode --all      # also the formulas install.sh brewed: yq and mise (and bash on macOS); stow on a machine installed before it was dropped
 ```
 
-wsm forgets its workspaces (their contents are kept), psm removes every skill, pcm deletes its
+wsm unlinks its spaces (their contents are kept), psm removes every skill, pcm deletes its
 containers, networks and data, and ppm removes every package it installed — the toolkit included —
 and the Homebrew formulas it installed for them. Homebrew itself is kept. Each tool's `implode`
 also works on its own.
