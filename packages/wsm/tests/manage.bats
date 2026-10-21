@@ -33,7 +33,7 @@ setup() {
   [ "$status" -eq 0 ]
   local json="$output"
   run yq -p json -r '.[0] | keys | join(" ")' <<< "$json"
-  [ "$output" = "space status dir missing wrong in_the_way leftover" ]
+  [ "$output" = "space status dir note missing wrong in_the_way leftover" ]
   run yq -p json -r '.[] | select(.space == "acme/main/tech") | .dir + " " + .status + " " + .missing' <<< "$json"
   [ "$output" = "$HOME/spaces/acme/main/tech ok 0" ]
   run yq -p json -r '.[] | select(.space == "acme/spikes/tech") | (.dir | tag) + " " + (.status | tag)' <<< "$json"

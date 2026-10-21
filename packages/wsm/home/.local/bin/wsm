@@ -1103,7 +1103,7 @@ cmd_path() {
 # `wsm ls [SPEC]`: every space the sources define (under SPEC), its state when installed, then the
 # spaces the tree still has that the sources no longer define. `wsm ls <id> --json` adds the files.
 cmd_list() {
-  local spec="${1:-}" id src rows="" json=false detail="" f note
+  local spec="${1:-}" id rows="" json=false detail="" f note
   [[ -z "$spec" ]] || _spec_ok "$spec"
   anfs_json_on && json=true
   _spaces_load
@@ -1118,39 +1118,30 @@ cmd_list() {
 
   for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match "$id" || continue
+    [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
     if [[ -z "${INSTALLED[$id]:-}" ]]; then
-      if $json; then rows+="$(anfs_row "$id" "" "" "" "" "" "")"$'\n'
-      else rows+="$(anfs_row "$id" "" "" "")"$'\n'; fi
+      rows+="$(anfs_row "$id" "" "" "" "" "" "" "")"$'\n'
       continue
     fi
     _space_counts "$id"
     note="$REPLY"
-    if $json; then
-      rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" \
-        "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT")"$'\n'
-    else
-      rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" "$note")"$'\n'
-    fi
-    [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
+    rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" "$note" \
+      "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT")"$'\n'
   done
   for id in ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match_path "${VANISHED_SRC[$id]}" "${VANISHED_PATH[$id]}" || continue
-    if $json; then rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "" "" "" "")"$'\n'
-    else rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "")"$'\n'; fi
+    rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "" "" "" "" "")"$'\n'
   done
   [[ -n "$rows" || -z "$spec" ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
 
-  # The lists other tools read: with --json (lib/anfs/table.sh), never by column
-  if ! $json; then
-    printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "space status dir note"
+  # The lists other tools read: with --json (lib/anfs/table.sh), never by column. The counts are
+  # --json only; NOTE is their summary.
+  local out keys="space status dir note missing wrong in_the_way leftover"
+  if ! $json || [[ -z "$detail" ]]; then
+    printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "$keys"
     return 0
   fi
-  local out
-  out=$(printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "space status dir missing wrong in_the_way leftover")
-  if [[ -z "$detail" ]]; then
-    printf '%s\n' "$out"
-    return 0
-  fi
+  out=$(printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "$keys")
   # One space by its id: its files and their states, relative to it
   local p="${SPACE_PATH[$detail]}" src="${SPACE_SRC[$detail]}" files="" sep=""
   while IFS= read -r f; do
