@@ -8,7 +8,8 @@ module Anfs
   #
   # A row's source is what comes before the / of its resource; a plain name (a machine run from
   # an image) has none, nor do the lists that are not of a source's resources (`sourced: false`).
-  # A source's own row is its source (`sourced: :self`).
+  # A source's own row is its source (`sourced: :self`). A resource whose id is a path that may be
+  # the source alone (wsm's root space `lgat`) has its first segment as the source (`sourced: :first`).
   #
   # `action` says what can be done to a row, as [verb, subject] or nil: the one command that
   # moves it out of the state it is in. The subject is the qualified resource.
@@ -27,6 +28,7 @@ module Anfs
       lambda do |row|
         value = row[id].to_s
         next value if sourced == :self
+        next value.split("/", 2).first if sourced == :first && !value.empty?
 
         value.split("/", 2).first if sourced && value.include?("/")
       end
@@ -67,14 +69,16 @@ module Anfs
     Kind.new(key: "machines", label: "Machines", tool: "pmm", args: %w[list], every: 5, id: "machine",
              columns: { "Machine" => "machine", "Image" => "image", "Address" => "address" },
              action: toggle["machine"]),
-    # status is stale or not in the source; null is fine, and installed when it has a dir.
+    # ok, partial (Note says what is missing, wrong, in the way or left over) or not in the source;
+    # null is not installed. An id is a path: the root space is its source's alias alone.
     Kind.new(key: "spaces", label: "Spaces", tool: "wsm", args: %w[list], every: 30, id: "space",
-             unset: ->(row) { row["dir"] ? "installed" : "not installed" },
-             columns: { "Space" => "space", "Level" => "level", "Directory" => "dir" },
+             unset: "not installed", sourced: :first,
+             columns: { "Space" => "space", "Directory" => "dir", "Note" => "note" },
              action: ->(row) { [row["dir"] ? "remove" : "install", row["space"]] }),
     # missing: its space is installed and it is not cloned. A space not installed is the
     # Spaces panel's install, which clones its repositories too.
     Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[repo list], every: 60, id: "repository",
+             sourced: :first,
              columns: { "Repository" => "repository", "URL" => "url" },
              action: ->(row) { ["install", row["repository"]] if row["status"] == "missing" }),
     Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], every: 300, id: "skill",
@@ -88,7 +92,7 @@ module Anfs
     warn: ["dirty", "unpushed", "no upstream", "dirty, unpushed", "dirty, no upstream", "outdated", "partial",
            "stale", "shadowed", "running, shadowed", "stopped, shadowed", "not in the source",
            "needs a terminal"],
-    bad: ["failed", "missing", "not a repo", "no path"]
+    bad: ["failed", "missing", "not a repo", "no path", "invalid"]
   }.flat_map { |tone, statuses| statuses.map { [it, tone] } }.to_h.freeze
 
   def self.tone(status) = TONES.fetch(status, :mute)

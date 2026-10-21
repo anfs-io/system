@@ -32,8 +32,8 @@ ROWS = {
     { "machine" => "web1", "status" => "stopped", "image" => "core/debian-13", "address" => nil }
   ],
   "spaces" => [
-    { "space" => "user/dev/gems", "status" => nil, "level" => "space", "dir" => "#{Dir.home}/spaces/user/dev/gems" },
-    { "space" => "user/dev/old", "status" => nil, "level" => "space", "dir" => nil }
+    { "space" => "user/dev/gems", "status" => "ok", "dir" => "#{Dir.home}/spaces/user/dev/gems", "note" => nil },
+    { "space" => "user/dev/old", "status" => nil, "dir" => nil, "note" => nil }
   ]
 }.freeze
 

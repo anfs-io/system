@@ -13,7 +13,8 @@ RSpec.describe Anfs::Kind do
 
   it "takes a row's source from before the / of its resource, and none from a plain name" do
     expect(kind("containers").source[{ "container" => "core/ui" }]).to eq("core")
-    expect(kind("spaces").source[{ "space" => "anfs-dev/" }]).to eq("anfs-dev")
+    expect(kind("spaces").source[{ "space" => "anfs-dev" }]).to eq("anfs-dev")
+    expect(kind("spaces").source[{ "space" => "lgat/tech/web" }]).to eq("lgat")
     expect(kind("repos").source[{ "repository" => "lgat/main/app" }]).to eq("lgat")
     expect(kind("machines").source[{ "machine" => "web1" }]).to be_nil
     expect(kind("sources").source[{ "source" => "core" }]).to eq("core")
@@ -23,8 +24,15 @@ RSpec.describe Anfs::Kind do
     expect(kind("packages").status[{ "status" => "outdated" }]).to eq("outdated")
     expect(kind("packages").status[{ "status" => nil }]).to eq("available")
     expect(kind("stacks").status[{ "status" => nil }]).to eq("not installed")
-    expect(kind("spaces").status[{ "status" => nil, "dir" => "/x" }]).to eq("installed")
-    expect(kind("spaces").status[{ "status" => "stale", "dir" => "/x" }]).to eq("stale")
+    expect(kind("spaces").status[{ "status" => nil, "dir" => nil }]).to eq("not installed")
+    expect(kind("spaces").status[{ "status" => "partial", "dir" => "/x" }]).to eq("partial")
+  end
+
+  it "shows a space's directory and what is wrong with it, and no level" do
+    expect(kind("spaces").columns).to eq("Space" => "space", "Directory" => "dir", "Note" => "note")
+    expect(%w[ok partial].map { Anfs.tone(it) }).to eq(%i[good warn])
+    expect(Anfs.tone("not in the source")).to eq(:warn)
+    expect(Anfs.tone("invalid")).to eq(:bad)
   end
 
   it "warns of a clone with work not on its remote" do
