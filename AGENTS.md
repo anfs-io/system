@@ -45,7 +45,6 @@ description: LGAT's rails app and what it runs on
 stacks: [lgat/base]                      # installed first
 packages: [stack/ruby, stack/rails]
 skills: [lgat/rails-conventions]
-vaults: [lgat/dev]
 spaces:
   - lgat/: { status: installed }         # installed|cloned
 containers:
@@ -54,7 +53,7 @@ machines: []                             # running|stopped
 ```
 
 - **Keys**: `version`, `description`, `stacks` and the resource directories (`packages skills
-  vaults spaces containers machines`). Anything else is 64, naming it (`show` and `install`).
+  spaces containers machines`). Anything else is 64, naming it (`show` and `install`).
 - **An entry** is a string (`source/name`, what the tool's list prints, or a bare name) or a
   one-key map whose value may hold `status:` and nothing else. `status:` is checked against the
   kind: `running|stopped` for containers and machines, `installed|cloned` for spaces; other kinds
@@ -62,7 +61,7 @@ machines: []                             # running|stopped
 - **`stacks:`** resolve recursively with ppm's layering rule (a stack depends on its own source or
   a lower-priority one); a cycle is 1, naming the chain. The order is depth-first, each stack
   once, dependencies first; then the kinds in anfs's order, not the manifest's: packages, skills,
-  vaults, spaces, containers, machines. Remove is the reverse.
+  spaces, containers, machines. Remove is the reverse.
 
 | Command | What |
 | --- | --- |
@@ -76,7 +75,7 @@ machines: []                             # running|stopped
 **`system`** (`stacks/system/stack.yml`) is the toolkit: `core/anfs`, `ppm`, `pcm`, `psm`, `wsm`
 and `podman`, `node`, `varlock`, and the dashboard `core/ui` (`status: running`: started on
 install; it reaches the tools through the toolkit API). `install.sh` ends with `anfs install system -y` (then any extra
-packages). pmm, qemu and pvm are not in it: `ppm install core/pmm`. `anfs implode`, in order:
+packages). pmm and qemu are not in it: `ppm install core/pmm`. `anfs implode`, in order:
 every other installed stack removed (last installed first, from the records' `installed_at`), each
 installed tool's implode but ppm's (wsm psm pmm pcm; a tool that is not installed is never
 called), `anfs remove system` with `core/ppm` and `core/anfs` kept (`STACK_REMOVE_KEEP`), then
@@ -91,10 +90,8 @@ removes it anyway). Tests: `packages/anfs/tests/system.bats`.
   one `wsm install <level>` each. A resource already there is not reinstalled.
 - A tool not installed for a kind the stack has is 69 (`ppm install core/<tool>`), checked with
   the plan, before anything runs.
-- **vaults** are declared and shown, but pvm installs nothing from sources yet: install says so
-  and records none.
-- `--build` installs only packages and skills (what belongs in an image), no `status:`, never a
-  vault; the record says `build: true`.
+- `--build` installs only packages and skills (what belongs in an image), no `status:`; the record
+  says `build: true`.
 - `-t/--target` takes only `host` for now; anything else is 64 (container: and machine: are plan
   `stacks/04-boxes`).
 - `anfs install <source>` with a source's name is 64: "did you mean anfs src install <source>".
@@ -547,7 +544,7 @@ the caller's `container.yml` (`toolkit: read|write`, pcm above).
 | `{"version":true}` | `{"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}`, the installed tools |
 | anything else | `{"error":"..."}`; the next line is still read |
 
-- **Only the toolkit's tools**: `run[0]` is `anfs`, one of `ANFS_TOOLS` or `pvm`, run from
+- **Only the toolkit's tools**: `run[0]` is `anfs` or one of `ANFS_TOOLS`, run from
   `$ANFS_BIN_DIR` (never `PATH`); the rest is an argv, never a shell string or `eval`. Refused:
   `anfs rpc`, any tool's `implode`.
 - **The grant**: a read is a tool's `list|ls`, `show`, `status`, `path`, `validate`, `--version`,
@@ -612,11 +609,11 @@ This repo (`core/`) contains:
   suites (Testing; the round trips are anfs-dev's).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
   integration (`~/.config/{sh,zsh,bash}/{ppm,mise}.*`)
-- `packages/{pcm,pmm,psm,wsm,pvm}` — the other tools, each its own package (deps, hooks, tests)
+- `packages/{pcm,pmm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
 - `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
   `packages/qemu` is pmm's, installed with it
 - `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
-  `core/wsm` and `podman`, `node`, `varlock`, and `core/ui` running. Not pmm, qemu or pvm
+  `core/wsm` and `podman`, `node`, `varlock`, and `core/ui` running. Not pmm or qemu
   (`ppm install core/pmm`)
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
@@ -844,10 +841,11 @@ anfs_callbacks_ls        [tool]                    # tool, name, ok|stale, handl
   for a space it installs, a re-install of what is installed emits nothing, `--dry-run` emits
   nothing, and `implode` emits `remove` for every level.
   psm, pcm and pmm emit nothing yet: add an emitter when there is a listener.
-- A package that listens to another tool registers from its own `install.sh`:
+- A package that listens to another tool registers from its own `install.sh` (stack's
+  `obsidian`, for `ovm`):
 
   ```bash
-  post_install() { anfs_callback_register wsm "$PPM_CURRENT_PACKAGE" "pvm link apply --event"; }
+  post_install() { anfs_callback_register wsm "$PPM_CURRENT_PACKAGE" "ovm link apply --event"; }
   post_remove()  { anfs_callback_unregister wsm "$PPM_CURRENT_PACKAGE"; }
   ```
 - `anfs callbacks [tool]` lists them. It does not fire events; run the emitting command with `-d`.
@@ -875,7 +873,7 @@ and names the columns, and the library picks the form.
 - `--json` is an option `cli.sh` gives every tool, taken anywhere on the line up to a `--`. It is
   not passed on to a tool this one runs. `anfs_result k v ...` is the `--json` answer of a command
   that changes something; `anfs_json_on` asks whether it was given.
-- **A tool reads another tool's list with `--json`, never by column.** pvm reads
+- **A tool reads another tool's list with `--json`, never by column.** stack's ovm reads
   `wsm ls --json`; anfs-dev's `anfs work` reads `wsm ls` and `wsm repo ls`, `ppm container` and
   `ppm vm` read `pcm list` and `pmm list`; the round trips read `ppm list --json`, `pmm list
   --json`, `pmm image list --json`, `pmm network list --json` and `psm ls --json`. Keys may be added to a list; renaming or
@@ -900,7 +898,7 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, onboard's, pvm's, `anfs work list`) take rule 2 only.
+   callbacks`, onboard's, stack's ovm's, `anfs work list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1002,14 +1000,13 @@ and all):
 | `anfs machine` | `anfs pmm` | `pmm` |
 | `anfs skill` | `anfs psm` | `psm` |
 | `anfs space` | `anfs wsm` | `wsm` |
-| `anfs vault` | `anfs pvm` | `pvm` |
 
 - `anfs machine image build debian-13` is `pmm image build debian-13`; `anfs help machine` is
   `pmm help`; `anfs __complete machine ...` is `pmm __complete ...`. They are listed under "Tools"
   in `anfs help`.
 - The tool is `~/.local/bin/<tool>`, as `anfs install` and `anfs src install` run it. One that is not there is
   `pmm is not installed (ppm install core/pmm)`, exit 69.
-- `sh/anfs.sh`'s `anfs` function sends each of the six through the tool's own shell function when
+- `sh/anfs.sh`'s `anfs` function sends each of the five through the tool's own shell function when
   it has one, so `anfs package cd` and the reload after an install work as `ppm`'s do, and `anfs
   space cd`, `anfs machine cd` as `wsm`'s and `pmm`'s. A global option first (`anfs -d package
   ...`) skips the function and goes to anfs, which still runs the tool.
@@ -1036,7 +1033,7 @@ seam by which a package adds a command, and it is anfs's alone:
 
 **The verbs are the same everywhere.** `list` (alias `ls`), `remove` (alias `rm`), `install`,
 `show`, `path`, `cd`, `validate`, `implode`, at the top level and in groups (`psm repo list`,
-`wsm repo install`, `pvm link remove`, `ppm container remove`, `pmm image list`). `image` is the group for what a
+`wsm repo install`, `anfs src remove`, `ppm container remove`, `pmm image list`). `image` is the group for what a
 tool's main object runs from, and `pmm image` is the reference for it: besides the shared verbs,
 `build`, `test` (boot it and run its test; `validate` only reads the definition), `export` and
 `prune`. pcm and pmm keep `up`/`down`/`ps`, the names of what
@@ -1099,7 +1096,7 @@ cannot go stale.
   A tab press starts the tool (25 to 40 ms) and runs one of these; the whole is under 100 ms, and
   `registry.bats` holds the library to that. `wsm ls` takes 240 ms, which is why completion does
   not call it.
-- One tool may complete another's things by asking it: pvm's `--to` runs
+- One tool may complete another's things by asking it: stack's ovm's `--to` runs
   `wsm __complete install ""`.
 
 **Shared helpers, used by every tool** (a tool's own `tilde`, `_display`, `confirm` are one-line
@@ -1420,7 +1417,7 @@ source "$HOME/.local/lib/anfs/bash.sh"
   linuxbrew's), or exits 69 saying how to get one. Never `command -v bash`: the reason the guard
   exists is that PATH puts `/bin` first in nested login shells and non-interactive ones (see Shell
   Integration), so `env bash` finds 3.2 on a machine that has 5.
-- An entry point is anything that starts its own bash process: the six tools, pcm's edge
+- An entry point is anything that starts its own bash process: the five tools, pcm's edge
   providers (`lib/pcm/edges/*`), pmm's provisioners (`lib/pmm/provisioners/*`), the `pre-commit`
   hook. A library a tool sources needs no guard,
   and neither does a package's `install.sh`: ppm sources it, so it runs under ppm's bash.

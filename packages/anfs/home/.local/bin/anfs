@@ -26,7 +26,7 @@
 #                                      install.sh added (Homebrew when it installed it)
 #
 # Tools: each tool by what it manages (`anfs machine ...` is `pmm ...`, exec'd), its name an alias:
-#   package (ppm)  container (pcm)  machine (pmm)  skill (psm)  space (wsm)  vault (pvm)
+#   package (ppm)  container (pcm)  machine (pmm)  skill (psm)  space (wsm)
 #
 # From packages: `anfs <name>`, when anfs declares no such command, execs ~/.local/bin/anfs-<name>
 # with the rest of the line (anfs-dev/dev's anfs work and anfs hooks). Nothing of a package is
@@ -86,7 +86,7 @@ cli_cmd list "Every stack in every source: STACK STATUS VERSION (installed, part
 cli_cmd show "A stack's resources through the stacks it depends on, in install
 order: declared and actual status, and the stack that brought each in" --arg "stack"
 cli_cmd install "Install stacks: the stacks they depend on, then packages, skills,
-vaults, spaces, containers and machines, each kind by its tool,
+spaces, containers and machines, each kind by its tool,
 then the status: entries. Recorded, for remove." \
   --opt "-y --yes: Do not ask before installing the plan" \
   --opt "-t --target TARGET: Where: host (the default; the only one for now)" \
@@ -147,7 +147,6 @@ _anfs_tool container pcm "Containers: podman compose services"
 _anfs_tool machine   pmm "Machines, their images and networks"
 _anfs_tool skill     psm "Agent skills"
 _anfs_tool space     wsm "Workspaces of spaces"
-_anfs_tool vault     pvm "Secrets"
 
 # Commands from packages: an executable anfs-<name> in ~/.local/bin, for a name anfs does not
 # declare. Read from the file names alone, so help and completion start no process.
@@ -615,7 +614,7 @@ _tilde() { anfs_display "$1"; }
 # A failed run is {"exit":N,"error":"<last stderr line>"}; 77 adds "needs":"terminal" and the
 # command. Anything else is {"error":"..."} and the next line is read.
 #
-# run[0] is anfs, one of ANFS_TOOLS or pvm, from $ANFS_BIN_DIR, never PATH; the rest is an argv,
+# run[0] is anfs or one of ANFS_TOOLS, from $ANFS_BIN_DIR, never PATH; the rest is an argv,
 # never a shell. Refused: anfs rpc, any implode. Read (allowed under --grant read): a tool's
 # list|ls, show, status, path, validate, --version, version (in a group too: pmm image list;
 # through anfs: anfs package list). A read gets --json and ANFS_LOG=off; every run has stdin
@@ -673,8 +672,8 @@ _rpc_verb() {
 _rpc_run() {
   local stream="$1" yes="$2" tool="${RPC_ARGV[0]:-}" bin read=false rc=0 i
   local -a args=("${RPC_ARGV[@]:1}")
-  [[ "$tool" =~ ^[a-z]+$ && " anfs $ANFS_TOOLS pvm " == *" $tool "* ]] ||
-    { _rpc_error "not a toolkit tool: $tool (anfs ${ANFS_TOOLS} pvm)"; return 0; }
+  [[ "$tool" =~ ^[a-z]+$ && " anfs $ANFS_TOOLS " == *" $tool "* ]] ||
+    { _rpc_error "not a toolkit tool: $tool (anfs ${ANFS_TOOLS})"; return 0; }
   bin="$ANFS_BIN_DIR/$tool"
   [[ -x "$bin" && ! -d "$bin" ]] || { _rpc_error "$tool is not installed"; return 0; }
   _rpc_verb "$tool" ${args[@]+"${args[@]}"}
@@ -784,7 +783,7 @@ _rpc_watch() {
 _rpc_version() {
   local t v out=""
   [[ -n "$CLI_VERSION" ]] || cli_package_version
-  for t in $ANFS_TOOLS pvm; do
+  for t in $ANFS_TOOLS; do
     [[ -x "$ANFS_BIN_DIR/$t" ]] || continue
     v=$(ANFS_LOG=off "$ANFS_BIN_DIR/$t" --version </dev/null 2>/dev/null) || continue
     _rpc_str "${v##* }"

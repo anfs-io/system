@@ -42,7 +42,6 @@ description: the app
 stacks: [core/base]
 packages: [stack/ruby]
 skills: [core/s1]
-vaults: [lgat/dev]
 spaces:
   - lgat/: { status: cloned }
 containers:
@@ -114,6 +113,15 @@ bogus: 1'
   [ ! -s "$LOG" ]
 }
 
+@test "vaults are not a kind: a stack.yml with vaults: is 64" {
+  stack lgat notes <<<'packages: [a/b]
+vaults: [x/y]'
+  run "$ANFS" show lgat/notes
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"unknown key 'vaults'"* ]]
+  [[ "$output" != *"vaults, "* ]]
+}
+
 @test "a status that is not the kind's is 64; a kind without status takes none" {
   stack lgat bad <<<'containers:
   - a/b: { status: installed }'
@@ -169,7 +177,6 @@ packages: [p/c]'
   run "$ANFS" install -y lgat/app </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == *"anfs install lgat/app (with core/base):"* ]]
-  [[ "$output" == *"pvm does not install vaults"* ]]
   run cat "$LOG"
   [ "${lines[0]}" = "ppm install -y stack/git stack/ruby" ]
   [ "${lines[1]}" = "psm install -y core/s1" ]
@@ -225,11 +232,10 @@ packages: [p/c]'
   [ ! -d "$RECORDS" ]
 }
 
-@test "install --build: only ppm and psm, no status, no vault; recorded" {
+@test "install --build: only ppm and psm, no status; recorded" {
   rm "$HOME/.local/bin/pmm" "$HOME/.local/bin/pcm"
   run "$ANFS" install -y --build lgat/app </dev/null
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--build: no vault is installed (lgat/dev)"* ]]
   run cat "$LOG"
   [ "${lines[0]}" = "ppm install -y stack/git stack/ruby" ]
   [ "${lines[1]}" = "psm install -y core/s1" ]

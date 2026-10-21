@@ -88,7 +88,7 @@ at() { grep -n -m1 -- "$1" "$LOG" | cut -d: -f1; }
   for p in anfs ppm pcm psm wsm podman node varlock; do [[ "$output" == *"core/$p"* ]]; done
   [[ "$output" == *core/ui* ]]
   [ "$(yq -r '.containers[0]["core/ui"].status' "$REPO/stacks/system/stack.yml")" = running ]
-  [[ "$output" != *pmm* && "$output" != *qemu* && "$output" != *pvm* ]]
+  [[ "$output" != *pmm* && "$output" != *qemu* ]]
 }
 
 @test "core/anfs depends on ppm and nothing else" {

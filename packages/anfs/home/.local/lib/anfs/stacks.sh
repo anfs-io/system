@@ -9,7 +9,6 @@
 #   stacks: [lgat/base]               # installed first; same or lower-priority source (ppm's rule)
 #   packages: [stack/ruby]            # each key a resource directory, its value a list of
 #   skills: [lgat/rails-conventions]  # source/name; an entry may be a one-key map with status:
-#   vaults: [lgat/dev]
 #   spaces:     [{ lgat/: { status: installed } }]    # installed|cloned
 #   containers: [{ core/anfs-ui: { status: running } }]  # running|stopped (machines too)
 #   machines: []
@@ -25,14 +24,14 @@
 
 # Lines of fields with empty ones in them are joined by this, not a tab (read folds tabs)
 _STACK_US=$'\x1f'
-STACK_KINDS="packages skills vaults spaces containers machines"
+STACK_KINDS="packages skills spaces containers machines"
 STACK_BUILD_KINDS="packages skills"
 ANFS_STACKS_STATE="$ANFS_STATE_HOME/stacks"
 
 # The tool that installs a kind
 stack_tool() {
   case "$1" in
-    packages) echo ppm ;; skills) echo psm ;; vaults) echo pvm ;;
+    packages) echo ppm ;; skills) echo psm ;;
     spaces) echo wsm ;; containers) echo pcm ;; machines) echo pmm ;;
     *) return 1 ;;
   esac
@@ -61,7 +60,7 @@ _stack_load() {
   for key in $(yq -r 'keys | .[]' "$file"); do
     case "$key" in
       version|description) continue ;;
-      stacks|packages|skills|vaults|spaces|containers|machines) ;;
+      stacks|packages|skills|spaces|containers|machines) ;;
       *) _stack_fail 64 "stack $q: unknown key '$key' (stack.yml takes version, description, stacks, $STACK_KINDS)" ;;
     esac
     t=$(K="$key" yq -r '.[strenv(K)] | tag' "$file")
@@ -301,10 +300,9 @@ stack_install() {
   mapfile -t rows < <(stack_resources "${STACK_TOP[@]}")
 
   # The tools the kinds need, before anything is installed
-  local -A need=() vaults=()
+  local -A need=()
   for line in "${rows[@]}"; do
     IFS="$_STACK_US" read -r k r s f <<< "$line"
-    if [[ "$k" == vaults ]]; then vaults[$r]=1; continue; fi
     [[ " $kinds " == *" $k "* ]] && need[$k]=1
   done
   for k in $STACK_KINDS; do
@@ -332,13 +330,6 @@ stack_install() {
     printf '  %-11s %s%s\n' "$k" "$(stack_tool "$k")" "$list"
   done
   [[ ${#there[@]} -eq 0 ]] || printf '  already installed: %s\n' "${there[*]}"
-  if [[ ${#vaults[@]} -gt 0 ]]; then
-    if $build; then
-      printf '  --build: no vault is installed (%s)\n' "${!vaults[*]}"
-    else
-      printf '  vaults: not installed, pvm does not install vaults from sources yet (%s)\n' "${!vaults[*]}"
-    fi
-  fi
   # A stack is a group: the plan above is more than the names typed
   $yes || anfs_confirm "install changes this machine" "Install?"
 

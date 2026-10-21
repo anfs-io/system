@@ -24,7 +24,7 @@
 #
 # A listener in another package registers from its install.sh, which ppm runs with this loaded:
 #
-#   post_install() { anfs_callback_register wsm "$PPM_CURRENT_PACKAGE" "pvm link apply --event"; }
+#   post_install() { anfs_callback_register wsm "$PPM_CURRENT_PACKAGE" "ovm link apply --event"; }
 #   post_remove()  { anfs_callback_unregister wsm "$PPM_CURRENT_PACKAGE"; }
 #
 # Requires log.sh. Functions only; written for the bash floor (5.2, see bash.sh).

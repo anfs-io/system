@@ -164,7 +164,7 @@ anfs_cmd() {
 @test "anfs callbacks: every registration; ppm's are ok while the package is installed" {
   run anfs_cmd callbacks
   [ "$output" = "no callbacks registered" ]
-  anfs_callback_register wsm user/pvm "listener x"
+  anfs_callback_register wsm stack/obsidian "listener x"
   anfs_callback_register ppm core/psm psm_ppm_changed
   anfs_callback_register ppm core/gone old_fn
   mkdir -p "$XDG_STATE_HOME/ppm/installed/core"
@@ -173,7 +173,7 @@ anfs_cmd() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"ppm"$'\t'"core/psm"$'\t'"ok"$'\t'"psm_ppm_changed"* ]]
   [[ "$output" == *"ppm"$'\t'"core/gone"$'\t'"stale"$'\t'"old_fn"* ]]
-  [[ "$output" == *"wsm"$'\t'"user/pvm"$'\t'"ok"$'\t'"listener x"* ]]
+  [[ "$output" == *"wsm"$'\t'"stack/obsidian"$'\t'"ok"$'\t'"listener x"* ]]
   run anfs_cmd callbacks wsm
   [ "${#lines[@]}" -eq 1 ]
 }

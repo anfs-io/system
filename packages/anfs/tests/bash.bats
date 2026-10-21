@@ -80,7 +80,7 @@ need_old_bash() {
   # core's own: the tools, anything a package of core runs as anfs <name> (anfs-*), pcm's edge
   # providers, pmm's provisioners. The dev package's (the hook, anfs-work, anfs-hooks) are checked
   # the same way in the anfs-dev source's tests.
-  for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm,pvm}/home/.local/bin/* \
+  for f in "$REPO"/packages/{anfs,ppm,pcm,pmm,psm,wsm}/home/.local/bin/* \
            "$REPO"/packages/*/home/.local/bin/anfs-* \
            "$REPO"/packages/pcm/home/.local/lib/pcm/edges/{local,cloudflare-tunnel} \
            "$REPO"/packages/pmm/home/.local/lib/pmm/provisioners/*; do

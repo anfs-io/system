@@ -464,9 +464,14 @@ SH
   run "$ANFS" machine list
   [ "$status" -eq 69 ]
   [[ "$output" == *"pmm is not installed (ppm install core/pmm)"* ]]
-  run "$ANFS" vault
-  [ "$status" -eq 69 ]
-  [[ "$output" == *"pvm is not installed"* ]]
+}
+
+@test "vault is not a resource: anfs vault is an unknown command" {
+  anfs_home
+  run "$ANFS" vault list
+  [ "$status" -eq 64 ]
+  run "$ANFS" pvm list
+  [ "$status" -eq 64 ]
 }
 
 @test "help lists the tools under Tools and the packages' commands under From packages" {
@@ -474,7 +479,8 @@ SH
   stub anfs-x
   run "$ANFS" help
   [ "$status" -eq 0 ]
-  [[ "$output" == *$'\nTools:\n'*"package, ppm"*"machine, pmm"*"vault, pvm"* ]]
+  [[ "$output" == *$'\nTools:\n'*"package, ppm"*"machine, pmm"*"skill, psm"*"space, wsm"* ]]
+  [[ "$output" != *vault* && "$output" != *pvm* ]]
   [[ "$output" == *$'\nFrom packages:\n  x '* ]]
   [[ "$output" != *$'Commands:\n'*"  package, ppm"*$'\nTools:'* ]]
   # without a package command there is no such section
@@ -525,7 +531,7 @@ SH
   local root="$BATS_TEST_DIRNAME/../.." line head bad=""
   local kinds=" PACKAGE CONTAINER MACHINE IMAGE NETWORK SKILL SPACE REPOSITORY SOURCE ISO STACK "
   # Lists that are not of a source's resources take only STATUS (AGENTS.md "Lists and --json")
-  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|NAME ID STATUS PATH|ID TYPE TITLE SPACE PATH VAULT|PATH FINDING|KIND RESOURCE DECLARED ACTUAL FROM|"
+  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|"
   while IFS= read -r line; do
     head="${line#*anfs_table \"}" head="${head%%\"*}"
     [[ " $head " != *" STATE "* ]] || bad+="$line"$'\n'

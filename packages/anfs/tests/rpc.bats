@@ -47,7 +47,7 @@ cmd_show() { printf '<%s>\n' "\$@"; }
 cmd_install() { printf '%s\n' "\$@" > "$ARGS"; echo installed; }
 cmd_remove() { anfs_confirm "remove deletes \$1" "Remove?"; echo "removed \$1"; }
 cmd_fail() { echo "first" >&2; echo "the last line" >&2; exit 3; }
-# A grandchild, as pvm's \$(yq ...) on a hung mount: the timeout must reach past the tool's children
+# A grandchild, as a tool's \$(yq ...) on a hung mount: the timeout must reach past the tool's children
 cmd_hang() { local x; x=\$(bash -c 'echo \$\$ > "\$1"; exec sleep 30' - "$BATS_TEST_TMPDIR/hang.pid"; true); }
 cmd_noisy() { echo one; echo two >&2; echo three; }
 cli_dispatch "\$@"
@@ -88,17 +88,18 @@ rpc() { "$ANFS" rpc "$@"; }
 {"run":["bash","-c","echo hi"]}
 {"run":["../x"]}
 {"run":["/usr/bin/env","ppm"]}
+{"run":["pvm","list"]}
 {"run":["anfs","implode","-y"]}
 {"run":["ppm","implode"]}
 {"run":["anfs","rpc"]}
 {"run":["ppm","path","ok"]}
 EOF
-  [ "${#lines[@]}" -eq 7 ]
-  for i in 0 1 2; do [[ "${lines[i]}" == '{"error":"not a toolkit tool: '* ]]; done
-  [ "${lines[3]}" = '{"error":"refused: implode"}' ]
+  [ "${#lines[@]}" -eq 8 ]
+  for i in 0 1 2 3; do [[ "${lines[i]}" == '{"error":"not a toolkit tool: '* ]]; done
   [ "${lines[4]}" = '{"error":"refused: implode"}' ]
-  [ "${lines[5]}" = '{"error":"refused: anfs rpc"}' ]
-  [ "${lines[6]}" = '{"exit":0,"out":"/x/ok"}' ]
+  [ "${lines[5]}" = '{"error":"refused: implode"}' ]
+  [ "${lines[6]}" = '{"error":"refused: anfs rpc"}' ]
+  [ "${lines[7]}" = '{"exit":0,"out":"/x/ok"}' ]
 }
 
 @test "a write under --grant read (the default) is refused; under write it runs" {

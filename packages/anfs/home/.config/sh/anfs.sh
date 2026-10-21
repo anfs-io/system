@@ -48,7 +48,6 @@ anfs() {
     machine|pmm) _anfs_tool=pmm ;;
     skill|psm) _anfs_tool=psm ;;
     space|wsm) _anfs_tool=wsm ;;
-    vault|pvm) _anfs_tool=pvm ;;
   esac
   if [ -n "$_anfs_tool" ] && command -v "$_anfs_tool" >/dev/null 2>&1; then
     shift
