@@ -7,8 +7,7 @@ RSpec.describe Anfs::Kind do
     expect(Anfs::KINDS.values.to_h { [it.key, it.command] }).to eq(
       "sources" => "anfs src list --json", "stacks" => "anfs list --json", "packages" => "ppm list --json",
       "containers" => "pcm list --json", "images" => "pmm image list --json", "machines" => "pmm list --json",
-      "spaces" => "wsm list --json", "repos" => "wsm repo list --json", "skills" => "psm list --json",
-      "vaults" => "pvm list --json", "links" => "pvm link list --json"
+      "spaces" => "wsm list --json", "repos" => "wsm repo list --json", "skills" => "psm list --json"
     )
   end
 
@@ -18,7 +17,6 @@ RSpec.describe Anfs::Kind do
     expect(kind("repos").source[{ "repository" => "lgat/main/app" }]).to eq("lgat")
     expect(kind("machines").source[{ "machine" => "web1" }]).to be_nil
     expect(kind("sources").source[{ "source" => "core" }]).to eq("core")
-    expect(kind("links").source[{ "source" => "spaces/anfs/products" }]).to be_nil
   end
 
   it "reads status, and names a null one" do
@@ -27,7 +25,6 @@ RSpec.describe Anfs::Kind do
     expect(kind("stacks").status[{ "status" => nil }]).to eq("not installed")
     expect(kind("spaces").status[{ "status" => nil, "dir" => "/x" }]).to eq("installed")
     expect(kind("spaces").status[{ "status" => "stale", "dir" => "/x" }]).to eq("stale")
-    expect(kind("vaults").status[{ "status" => "ok" }]).to eq("ok")
   end
 
   it "warns of a clone with work not on its remote" do

@@ -57,7 +57,7 @@ RSpec.describe "the toolkit API client" do
 
       expect(Anfs::CLI.new(rpc: rpc).run("wsm", "list"))
         .to have_attributes(ok?: false, error: "wsm: no such source", exit_code: 3)
-      expect(Anfs::CLI.new(rpc: rpc).run("pvm", "list")).to have_attributes(error: "refused: x", exit_code: nil)
+      expect(Anfs::CLI.new(rpc: rpc).run("psm", "list")).to have_attributes(error: "refused: x", exit_code: nil)
     end
 
     it "keeps the command of a 77 for a person to run" do

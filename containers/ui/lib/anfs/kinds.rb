@@ -80,20 +80,15 @@ module Anfs
     Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], every: 300, id: "skill",
              columns: { "Skill" => "skill", "Config" => "config", "Repo" => "repo" },
              # psm syncs a whole config, so every row of one shares the subject and the job.
-             action: ->(row) { ["sync", row["config"]] unless row["status"] == "ok" }),
-    Kind.new(key: "vaults", label: "Vaults", tool: "pvm", args: %w[list], every: 60, id: "name", sourced: false,
-             columns: { "Vault" => "name", "Id" => "id", "Path" => "path" }),
-    Kind.new(key: "links", label: "Vault links", tool: "pvm", args: %w[link list], every: 60, id: "source",
-             sourced: false,
-             columns: { "Source" => "source", "Target" => "target", "As" => "as", "Vault" => "vault" })
+             action: ->(row) { ["sync", row["config"]] unless row["status"] == "ok" })
   ].to_h { [it.key, it] }.freeze
 
   TONES = {
     good: %w[running clean ok installed built],
     warn: ["dirty", "unpushed", "no upstream", "dirty, unpushed", "dirty, no upstream", "outdated", "partial",
-           "stale", "pending", "unknown", "shadowed", "running, shadowed", "stopped, shadowed", "not in the source",
+           "stale", "shadowed", "running, shadowed", "stopped, shadowed", "not in the source",
            "needs a terminal"],
-    bad: ["failed", "missing", "conflict", "dangling", "not a repo", "no path"]
+    bad: ["failed", "missing", "not a repo", "no path"]
   }.flat_map { |tone, statuses| statuses.map { [it, tone] } }.to_h.freeze
 
   def self.tone(status) = TONES.fetch(status, :mute)
