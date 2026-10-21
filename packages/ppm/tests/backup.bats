@@ -5,6 +5,8 @@
 # temp dir.
 # Run: bats packages/ppm/tests/
 
+teardown() { rm -f "${PPM_MSG_FILE:-}" "${PPM_SKIP_FILE:-}"; }
+
 setup() {
   local lib="$BATS_TEST_DIRNAME/../home/.local/lib/ppm"
   local anfs="$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs"
@@ -24,7 +26,12 @@ setup() {
   source "$anfs/log.sh"
   source "$anfs/callbacks.sh"
   source "$anfs/link.sh"
+  # core.sh sets an EXIT trap of its own (its message file); bats needs its trap back to report a
+  # skip, and teardown does the cleanup instead
+  local bats_exit
+  bats_exit=$(trap -p EXIT)
   source "$lib/core.sh"
+  eval "$bats_exit"
   source "$lib/packages.sh"
   source "$lib/file.sh"
   source "$lib/installer.sh"
