@@ -4,17 +4,17 @@
 # BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
 # 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
 #
-# `ppm file claim` copies a stowed file into your own repo/package and stows it from there.
+# `ppm file claim` copies a linked file into your own repo/package and links it from there.
 # `ppm file add` is claim for files no package owns yet, with the target named up front.
 # `ppm file reset` removes the copy and restores the original package's link.
-# `ppm file protect` turns a file into a plain local copy that ppm's stow will never touch
+# `ppm file protect` turns a file into a plain local copy that ppm will never link or touch
 #   again (no repo needed; machine-specific). `ppm file unprotect` hands it back to ppm.
 # Claims are recorded in $PPM_INSTALLED_DIR/claims.yml:
 #   .config/git/ignore:
 #     claimant: user/git
 #     owner: stack/git       # empty if the file was not managed by ppm
 # Protected paths (relative to $HOME) are recorded in $PPM_INSTALLED_DIR/protected.yml as a
-# plain list; the installer seeds them into stow's ignore list so they are left alone.
+# plain list; the installer seeds its skip list with them so they are left alone.
 
 PPM_CLAIMS_FILE="$PPM_INSTALLED_DIR/claims.yml"
 PPM_PROTECTED_FILE="$PPM_INSTALLED_DIR/protected.yml"
@@ -27,7 +27,7 @@ _file_usage() {
   echo "                                                  (default: \$PPM_DEFAULT_REPO/<owning package>;"
   echo "                                                  --package also accepts repo/package)"
   echo "  reset <file...>                                 Remove claimed files and restore the original links"
-  echo "  protect <file...>                               Detach files from ppm; keep a local copy stow won't touch"
+  echo "  protect <file...>                               Detach files from ppm; keep a local copy ppm won't touch"
   echo "  unprotect <file...>                             Let ppm manage the files again"
 }
 
@@ -143,7 +143,7 @@ _file_claim() {
 
   [[ -e "$src" ]] || { ppm_fail "File not found: ~/$rel"; return 1; }
   [[ -d "$src" ]] && { ppm_fail "Directories are not supported: ~/$rel (use ~/$rel/*)"; return 1; }
-  # claim's stow does not use the protected ignore list, so it would re-link a protected file
+  # a protected file is the user's; claim would link it again
   _protected_has "$rel" && { ppm_fail "~/$rel is protected; run 'ppm file unprotect' first"; return 1; }
 
   local existing
@@ -197,14 +197,14 @@ _file_claim() {
   local old_link=""
   [[ -L "$src" ]] && old_link=$(readlink "$src")
   rm -f "$src"
-  if ! stow --no-folding -d "$pkg_dir" -t "$HOME" home; then
+  if ! anfs_link_one "$dest" "$src"; then
     rm -f "$dest"
     if [[ -n "$old_link" ]]; then
       ln -s "$old_link" "$src"
     else
       cp -p "$dest" "$src" 2>/dev/null || true
     fi
-    ppm_fail "Failed to stow $target_repo/$target_pkg; ~/$rel restored"
+    ppm_fail "Failed to link ~/$rel from $target_repo/$target_pkg; ~/$rel restored"
     return 1
   fi
 
@@ -247,17 +247,9 @@ _file_reset() {
   local o_repo="${owner%%/*}" o_pkg="${owner#*/}"
   local o_dir="$ANFS_SOURCES_HOME/$o_repo/packages/$o_pkg"
   if [[ -n "$owner" && -f "$o_dir/home/$rel" ]]; then
-    # Restow only this file from the owner; everything else in the package is left as-is
-    PPM_IGNORE_ARGS=()
-    local other
-    while IFS= read -r other; do
-      if [[ -n "$other" && "$other" != "$rel" ]]; then
-        PPM_IGNORE_ARGS+=("$(_stow_ignore_arg "$other")")
-      fi
-    done < <(package_links "$o_dir/home")
-
-    if ! stow --no-folding ${PPM_IGNORE_ARGS[@]+"${PPM_IGNORE_ARGS[@]}"} -d "$o_dir" -t "$HOME" home; then
-      stow --no-folding -d "$c_dir" -t "$HOME" home 2>/dev/null || true
+    # Link only this file from the owner; everything else in the package is left as-is
+    if ! anfs_link_one "$o_dir/home/$rel" "$link"; then
+      anfs_link_one "$repo_file" "$link" 2>/dev/null || true
       ppm_fail "Failed to restore ~/$rel from $owner"
       return 1
     fi
@@ -290,7 +282,7 @@ _file_reset() {
   user_message "Reset ~/$rel. Remember to commit the changes in $ANFS_SOURCES_HOME/$c_repo"
 }
 
-# Protect a single file: detach it from ppm and keep a plain local copy stow won't touch
+# Protect a single file: detach it from ppm and keep a plain local copy ppm won't touch
 # Usage: _file_protect <path>
 _file_protect() {
   local arg="$1" rel

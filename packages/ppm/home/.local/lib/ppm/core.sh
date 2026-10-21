@@ -92,7 +92,8 @@ debug() {
 
 # User message aggregation — packages call user_message() during install
 PPM_MSG_FILE=$(mktemp /tmp/ppm-messages.XXXXXX)
-trap 'rm -f "$PPM_MSG_FILE"' EXIT
+# (and the installer's skip list, installer.sh)
+trap 'rm -f "$PPM_MSG_FILE" ${PPM_SKIP_FILE:+"$PPM_SKIP_FILE"}' EXIT
 
 # Set by installer() before sourcing each package's install.sh
 PPM_CURRENT_PACKAGE=""

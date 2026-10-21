@@ -126,7 +126,7 @@ expand_packages() {
     if [[ "$verb" == install ]]; then
       echo "About to $verb all packages (${#PACKAGES[@]}) from $label:"
       printf '  %s\n' "${PACKAGES[@]}"
-      anfs_confirm "install $arg installs ${#PACKAGES[@]} packages" "Install them?"
+      ${dry_run:-false} || anfs_confirm "install $arg installs ${#PACKAGES[@]} packages" "Install them?"
     fi
     EXPANDED_PACKAGES+=("${PACKAGES[@]}")
   done

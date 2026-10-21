@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Installing and removing packages: the install/remove commands, the hook lifecycle, and stow
+# Installing and removing packages: the install/remove commands, the hook lifecycle, and linking
+# a package's files into $HOME (lib/anfs/link.sh)
 #
 # BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
 # 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
 
-# Shared stow ignore list. Layers of the same package name (e.g. user/git, stack/git)
-# accumulate into one list so lower-priority layers skip files stowed by higher ones.
-# install() resets it when moving on to a different package name.
-PPM_IGNORE_ARGS=()
+# The files to skip, one per line (a temp file, for lib/anfs/link.sh). Layers of the same package
+# name (e.g. user/git, stack/git) add to one list so lower-priority layers skip files linked by
+# higher ones. cmd_install starts it again when moving on to a different package name.
+PPM_SKIP_FILE=""
 
 # Brew formulas and casks installed by the current run (newline-separated), for the trackers
 PPM_NEW_BREW=""
@@ -20,11 +21,13 @@ PPM_REMOVED=()
 
 # Install one or more packages as requested by the user
 cmd_install() {
-  update_ppm_if_needed
-  update_brew_if_needed
+  # -n: the plan, and nothing else (no pull, no brew, no hooks, no links, no tracker)
+  local dry=${dry_run:-false}
+  $dry || update_ppm_if_needed
+  $dry || update_brew_if_needed
   expand_packages "install" "$@"
   # Reinstall only re-stows files: bypass pre_remove guards, and keep trackers and dependencies
-  $reinstall && force=true keep_tracker=true remover "${EXPANDED_PACKAGES[@]}"
+  if ! $dry && $reinstall; then force=true keep_tracker=true remover "${EXPANDED_PACKAGES[@]}"; fi
 
   collect_repos
 
@@ -55,6 +58,11 @@ cmd_install() {
     exit 1
   fi
 
+  if $dry; then
+    _install_plan
+    return
+  fi
+
   echo "Installing ${#RESOLVE_ORDER[@]} package(s):"
   for pkg in "${RESOLVE_ORDER[@]}"; do
     echo "  $pkg"
@@ -71,9 +79,9 @@ cmd_install() {
   for qualified in "${RESOLVE_ORDER[@]}"; do
     local package_name="${qualified##*/}"
 
-    # Layers of the same package name share one stow ignore list
+    # Layers of the same package name share one skip list
     if [[ "$package_name" != "$prev_name" ]]; then
-      _reset_ignore_args
+      _reset_skip_file
       prev_name="$package_name"
     fi
 
@@ -84,6 +92,29 @@ cmd_install() {
   ${config:-false} || _mise_install_declared
   _run_callbacks install ${RESOLVE_ORDER[@]+"${RESOLVE_ORDER[@]}"}
   flush_user_messages
+}
+
+# `ppm install -n`: each resolved layer's plan, as an install would carry it out (lib/anfs/link.sh),
+# changing nothing. Exits 1 when the install would stop on something in the way.
+_install_plan() {
+  local idx=0 prev_name="" qualified package_name subdir failed=false
+  echo "Plan for ${#RESOLVE_ORDER[@]} package(s); nothing is changed (-n):"
+  for qualified in "${RESOLVE_ORDER[@]}"; do
+    package_name="${qualified##*/}"
+    if [[ "$package_name" != "$prev_name" ]]; then
+      _reset_skip_file
+      prev_name="$package_name"
+    fi
+    echo "Install $qualified"
+    for subdir in home ${PPM_GROUP_ID:-}; do
+      plan_subdir "${RESOLVE_DIRS[$idx]}" "$subdir" || failed=true
+    done
+    idx=$((idx + 1))
+  done
+  if $failed; then
+    echo "The install would stop: something is in the way (-f moves what it can aside)"
+    exit 1
+  fi
 }
 
 # Remove one or more packages as requested by the user
@@ -454,56 +485,32 @@ _dep_needed_elsewhere() {
   return 1
 }
 
-# Remove stale files left over from a previous install
-# Compares old tracked files against new file list,
-# only removes symlinks that point into the given package dir
+# Remove the links a previous install of this layer made that it no longer ships: the tracker's
+# files that are not in the new list, when they still point into the package (lib/anfs/link.sh)
 # Usage: meta_cleanup_stale <repo_name> <package_name> <package_dir> <new_files>
 meta_cleanup_stale() {
-  local repo_name="$1" pkg_name="$2" pkg_dir="$3" new_files="$4"
-
-  local old_files
+  local repo_name="$1" pkg_name="$2" pkg_dir="$3" new_files="$4" old_files
   old_files=$(meta_installed_files "$repo_name" "$pkg_name")
-  [[ -z "$old_files" ]] && return 0
-
-  while IFS= read -r old_file; do
-    [[ -z "$old_file" ]] && continue
-
-    # Skip if file is in the new set
-    if echo "$new_files" | grep -qxF "$old_file"; then
-      continue
-    fi
-
-    local target="$HOME/$old_file"
-
-    # Only remove if it's a symlink pointing into this package's directory
-    if [[ -L "$target" ]]; then
-      if _link_points_into "$target" "$pkg_dir"; then
-        debug "Removing stale file: $old_file"
-        rm -f "$target"
-      else
-        debug "Skipping stale file (owned by another source): $old_file"
-      fi
-    else
-      debug "Skipping stale file (not a symlink): $old_file"
-    fi
-  done <<< "$old_files"
+  [[ -n "$old_files" ]] || return 0
+  anfs_unlink "$pkg_dir" "$HOME" <(printf '%s\n' "$old_files" | grep -vxF -f <(printf '%s\n' "$new_files") || true)
 }
 
-# --- Stow ---
+# --- Linking (lib/anfs/link.sh) ---
 
-# Stow a package's home/ and $PPM_GROUP_ID subdirs into $HOME
-# Files already in PPM_IGNORE_ARGS (owned by a higher-priority layer) are skipped
-# Sets STOWED_FILES to the newline-separated files this layer stows
-# (a global, not stdout: stow_subdir must update PPM_IGNORE_ARGS in this shell)
+# Link a package's home/ and $PPM_GROUP_ID subdirs into $HOME
+# Files in PPM_SKIP_FILE (a higher-priority layer's, or protected) are skipped
+# Sets STOWED_FILES to the newline-separated files this layer links
+# (a global, not stdout: stow_subdir must add to PPM_SKIP_FILE in this shell)
 stow_package() {
   local pkg_dir="$1" subdir file
   STOWED_FILES=""
+  [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
 
   for subdir in home ${PPM_GROUP_ID:-}; do
     [[ -d "$pkg_dir/$subdir" ]] || continue
 
     while IFS= read -r file; do
-      if [[ -n "$file" ]] && ! is_stow_ignored "$file"; then
+      if [[ -n "$file" ]] && ! grep -qxF -- "$file" "$PPM_SKIP_FILE"; then
         STOWED_FILES="${STOWED_FILES:+${STOWED_FILES}$'\n'}${file}"
       fi
     done < <(package_links "$pkg_dir/$subdir")
@@ -512,124 +519,109 @@ stow_package() {
   done
 }
 
-# Unstow a package's home/ and $PPM_GROUP_ID subdirs from $HOME
+# Unlink a package's home/ and $PPM_GROUP_ID subdirs from $HOME: the tracker's files when there is
+# one, else every file the package has. Only links into the package go.
 unstow_package() {
-  local pkg_dir="$1" subdir
+  local pkg_dir="$1" subdir files="" repo pkg
+  pkg="${pkg_dir##*/}"
+  repo="${pkg_dir%/packages/*}"
+  repo="${repo##*/}"
+  meta_is_installed "$repo" "$pkg" 2>/dev/null && files=$(meta_installed_files "$repo" "$pkg")
 
   for subdir in home ${PPM_GROUP_ID:-}; do
-    [[ -d "$pkg_dir/$subdir" ]] && stow -D -d "$pkg_dir" -t "$HOME" "$subdir"
+    [[ -d "$pkg_dir/$subdir" ]] || continue
+    if [[ -n "$files" ]]; then
+      anfs_unlink "$pkg_dir/$subdir" "$HOME" <(printf '%s\n' "$files")
+    else
+      anfs_unlink_tree "$pkg_dir/$subdir" "$HOME"
+    fi
   done
   return 0
 }
 
-# Reset PPM_IGNORE_ARGS to the user-protected baseline (files `ppm file protect` detached).
-# stow_subdir and force_remove_conflicts both honor PPM_IGNORE_ARGS, so seeding it here keeps
-# protected files untouched on every install, including under -f.
-_reset_ignore_args() {
-  PPM_IGNORE_ARGS=()
-  local rel
-  while IFS= read -r rel; do
-    [[ -n "$rel" ]] && PPM_IGNORE_ARGS+=("$(_stow_ignore_arg "$rel")")
-  done < <(_protected_list)
+# Start PPM_SKIP_FILE again from the user-protected baseline (files `ppm file protect` detached).
+# stow_subdir skips what it lists, under -f too, so protected files are never touched. Each layer
+# adds its files, so a lower layer of the same name skips what a higher one linked.
+_reset_skip_file() {
+  if [[ -z "${PPM_SKIP_FILE:-}" ]]; then
+    PPM_SKIP_FILE=$(mktemp "${TMPDIR:-/tmp}/ppm-skip.XXXXXX")
+  fi
+  _protected_list > "$PPM_SKIP_FILE"
 }
 
-# Build the stow --ignore argument for a file path relative to the stow dir
-_stow_ignore_arg() {
-  local escaped="${1//./\\.}"
-  echo "--ignore=^${escaped}\$"
-}
-
-# Check whether a file path is already in PPM_IGNORE_ARGS
-is_stow_ignored() {
-  local escaped="${1//./\\.}" arg
-  for arg in ${PPM_IGNORE_ARGS[@]+"${PPM_IGNORE_ARGS[@]}"}; do
-    [[ "$arg" == "--ignore=^${escaped}\$" ]] && return 0
-  done
-  return 1
-}
-
-# Stow a package subdirectory and add its files to PPM_IGNORE_ARGS
+# Link a package subdirectory into $HOME and add its files to PPM_SKIP_FILE. The plan comes first
+# (lib/anfs/link.sh): what is ours is kept or replaced, and with -f what is in the way is cleared
+# (a link into the sources deleted, anything else moved to the backup dir). Without -f anything in
+# the way stops the install, every file named.
 stow_subdir() {
   local pkg_dir="$1" subdir="$2"
-  local full_path="$pkg_dir/$subdir"
+  local full_path="$pkg_dir/$subdir" list plan rc=0 class rest rel why bad=""
 
   [[ -d "$full_path" ]] || return 0
-  debug "Stowing $subdir from $pkg_dir"
+  [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
+  debug "Linking $subdir from $pkg_dir"
 
-  # If force mode, remove conflicting files first
-  $force && force_remove_conflicts "$full_path"
-  remove_dangling_links "$full_path"
+  list=$(package_links "$full_path")
+  plan=$(anfs_link_plan "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE") || rc=$?
+  [[ $rc -ne 2 ]] || return 1
 
-  stow --no-folding ${PPM_IGNORE_ARGS[@]+"${PPM_IGNORE_ARGS[@]}"} -d "$pkg_dir" -t "$HOME" "$subdir"
-
-  while IFS= read -r file; do
-    if [[ -n "$file" ]] && ! is_stow_ignored "$file"; then
-      PPM_IGNORE_ARGS+=("$(_stow_ignore_arg "$file")")
+  if [[ $rc -ne 0 ]]; then
+    while IFS=$'\t' read -r class rest; do
+      rel="${rest%%$'\t'*}" why="${rest#*$'\t'}"
+      # what is in the way on the path (a file, a link out of $HOME) is never cleared, -f or not
+      case "$why" in *" on the way: "*|*"where a directory goes: "*) class=blocked ;; esac
+      case "$class" in
+        blocked) bad="$bad  * $why: $rel"$'\n' ;;
+        other)
+          if ${force:-false}; then rm -f -- "$HOME/$rel"; else bad="$bad  * existing target is stowed to a different package: $rel => $why"$'\n'; fi
+          ;;
+        conflict)
+          if ${force:-false}; then _backup_file "$rel"; else bad="$bad  * existing target is in the way ($why): $rel"$'\n'; fi
+          ;;
+      esac
+    done <<< "$plan"
+    if [[ -n "$bad" ]]; then
+      printf 'WARNING! stowing %s would cause conflicts:\n%sAll operations aborted. (ppm install -f moves them aside)\n' \
+        "${PPM_CURRENT_PACKAGE:-$pkg_dir}" "$bad" >&2
+      return 1
     fi
-  done < <(package_links "$full_path")
+  fi
+
+  anfs_link_apply "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE" >/dev/null || return 1
+  printf '%s\n' "$list" | grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
 }
 
-# List files in a directory, relative to it
+# The plan stow_subdir would carry out, for `ppm install -n`: one line per file, and what -f would
+# do with what is in the way. Adds the files to PPM_SKIP_FILE as an install would. Returns 1 when
+# the install would stop on a conflict.
+plan_subdir() {
+  local pkg_dir="$1" subdir="$2"
+  local full_path="$pkg_dir/$subdir" list plan rc=0 class rest rel why
+
+  [[ -d "$full_path" ]] || return 0
+  [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
+  list=$(package_links "$full_path")
+  plan=$(anfs_link_plan "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE") || rc=$?
+  [[ $rc -ne 2 ]] || return 1
+  while IFS=$'\t' read -r class rest; do
+    [[ -n "$class" ]] || continue
+    rel="${rest%%$'\t'*}" why=""
+    [[ "$rest" != *$'\t'* ]] || why="${rest#*$'\t'}"
+    case "$class:$why" in
+      *" on the way: "*|*"where a directory goes: "*) ;;
+      other:*) why="$why; -f removes the link" ;;
+      conflict:*) why="$why; -f moves it aside" ;;
+    esac
+    printf '  %-9s %s%s\n' "$class" "~/$rel" "${why:+  ($why)}"
+  done <<< "$plan"
+  printf '%s\n' "$list" | grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
+  [[ $rc -eq 0 ]] || ${force:-false}
+}
+
+# List the files of a package directory, relative to it (.DS_Store is never linked)
 package_links() {
   local path="$1"
-  find "$path" -type f | while read -r file; do
-    echo "${file#$path/}"
-  done
-}
-
-# Remove links in $HOME that would conflict with stow but point at a file ppm no longer has
-# stow reports a dangling link into another package as "not owned by stow" and aborts, which is
-# what happens when a file moves between packages (stack/zsh's .inputrc to stack/cli): the old
-# package's link outlives its source. A dangling link into $ANFS_SOURCES_HOME is unambiguously ppm's
-# own leftover, so it is removed without -f. Anything else (a real file, a live link, a link
-# elsewhere) is left for stow to report.
-remove_dangling_links() {
-  local full_path="$1" file target
-
-  while IFS= read -r file; do
-    [[ -z "$file" ]] && continue
-    target="$HOME/$file"
-    [[ -L "$target" && ! -e "$target" ]] || continue
-    is_stow_ignored "$file" && continue
-
-    if _link_points_into "$target" "$ANFS_SOURCES_HOME"; then
-      debug "Removing dangling link: ~/$file -> $(readlink "$target")"
-      rm -f "$target"
-    fi
-  done < <(package_links "$full_path")
-}
-
-# True if the symlink <target> (under $HOME) points into the absolute directory <dir>
-# stow writes relative links: ~/.config/zsh/x -> ../../.local/share/ppm/..., climbing back to
-# exactly $HOME. So with the leading ../ stripped, the link text is $HOME-relative and compares
-# against <dir> made $HOME-relative. Works for a dangling link, which realpath cannot resolve.
-_link_points_into() {
-  local target="$1" dir="$2" dest
-  dest=$(readlink "$target") || return 1
-  [[ "$dest" == "$dir/"* ]] && return 0
-  while [[ "$dest" == ../* ]]; do dest="${dest#../}"; done
-  [[ "$dest" == "${dir#$HOME/}/"* ]]
-}
-
-# Clear what in $HOME would conflict with stow (-f)
-# Files in PPM_IGNORE_ARGS (stowed by a previous subdir or higher-priority layer) are kept.
-# A link into the sources is ppm's own and is deleted; anything else is the user's and is moved
-# to the backup dir, from where removing the package (or imploding) puts it back.
-force_remove_conflicts() {
-  local full_path="$1" target
-
-  while IFS= read -r file; do
-    [[ -z "$file" ]] && continue
-    target="$HOME/$file"
-    is_stow_ignored "$file" && continue
-    [[ -e "$target" || -L "$target" ]] || continue
-
-    if [[ -L "$target" ]] && _link_points_into "$target" "$ANFS_SOURCES_HOME"; then
-      rm -f "$target"
-    else
-      _backup_file "$file"
-    fi
-  done < <(package_links "$full_path")
+  (cd "$path" && find . \( -type f -o -type l \) ! -name .DS_Store | sed 's|^\./||')
 }
 
 # Move ~/<rel> into $PPM_STATE_HOME/backup/files, recorded in the manifest ("repo/pkg<TAB>rel")

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # The implode command: remove everything ppm has put on this machine
 #
-# Removes every installed package the way `ppm remove` would (hooks, unstow, the brew formulas and
+# Removes every installed package the way `ppm remove` would (hooks, unlinking, the brew formulas and
 # casks ppm installed, declared resources), dependents before their dependencies. core/anfs
 # depends on ppm, so it goes first; ppm keeps running from what it already loaded.
 # Then deletes ppm's own directories. Left alone:
-#   - the bootstrap software install.sh brews untracked (Homebrew, stow, yq, mise, bash)
+#   - the bootstrap software install.sh brews untracked (Homebrew, yq, mise, bash)
 #   - system packages (apt/dnf), which ppm never removes
 #   - what other tools manage (pcm containers, psm skills, wsm spaces); run their implode first,
 #     or `anfs implode`, which does. A pcm with running containers refuses removal in its
@@ -32,7 +32,7 @@ cmd_implode() {
   for dir in "$PPM_STATE_HOME" "$PPM_DATA_HOME" "$PPM_CONFIG_HOME" "$PPM_CACHE_HOME" "$PPM_LIB_DIR"; do
     [[ -e "$dir" ]] && echo "  directory    ${dir/#$HOME/~}"
   done
-  echo "Kept: Homebrew, stow, yq, mise and system packages"
+  echo "Kept: Homebrew, yq, mise and system packages"
 
   $yes || anfs_confirm "implode deletes everything ppm installed" "Implode ppm?"
 
@@ -44,8 +44,8 @@ cmd_implode() {
   # (pcm with containers running) stops the run instead of being overridden
   local force=false keep_tracker=false
   local qualified rel tracked_dirs=""
-  # Every directory a tracked file sits in: stow --no-folding made them real, and unstowing
-  # leaves them behind empty
+  # Every directory a tracked file sits in: linking made them real, and unlinking leaves them
+  # behind empty
   for qualified in ${order[@]+"${order[@]}"}; do
     while IFS= read -r rel; do
       [[ "$rel" == */* ]] && tracked_dirs="$tracked_dirs${rel%/*}"$'\n'
@@ -123,7 +123,7 @@ _implode_orphan() {
   meta_mark_removed "$repo" "$pkg"
 }
 
-# Remove the directories stow created that are now empty, deepest first, up to $HOME
+# Remove the directories linking created that are now empty, deepest first, up to $HOME
 _implode_prune_dirs() {
   local rel dir
   while IFS= read -r rel; do
@@ -136,16 +136,17 @@ _implode_prune_dirs() {
   done < <(printf '%s' "$1" | sort -ru)
 }
 
-# Remove every symlink under $HOME that points into $ANFS_SOURCES_HOME. stow writes relative
-# links, so match on the sources dir's $HOME-relative path rather than resolving each link
+# Remove every symlink under $HOME that points into $ANFS_SOURCES_HOME (anfs_link_owner, live or
+# dangling). find narrows to the links whose text names the sources dir's last two parts
+# (anfs/sources), which every relative link into it has, however deep it sits
 _implode_sweep_links() {
-  local rel="${ANFS_SOURCES_HOME#$HOME/}" link
-  [[ "$rel" != "$ANFS_SOURCES_HOME" ]] || return 0
+  local tail="${ANFS_SOURCES_HOME%/}" link
+  tail="${tail#"${tail%/*/*}"/}"
   while IFS= read -r link; do
     [[ -n "$link" ]] || continue
-    _link_points_into "$link" "$ANFS_SOURCES_HOME" || continue
+    anfs_link_owner "$link" >/dev/null || continue
     echo "Removing leftover link ${link/#$HOME/~}"
     rm -f "$link"
   done < <(find "$HOME" \( -name .git -o -name node_modules -o -name Library -o -path "$ANFS_DATA_HOME" \) -prune \
-             -o -type l -lname "*$rel/*" -print 2>/dev/null)
+             -o -type l -lname "*$tail/*" -print 2>/dev/null)
 }

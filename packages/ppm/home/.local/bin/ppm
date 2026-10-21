@@ -34,6 +34,13 @@ PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
 BIN_DIR="$ANFS_BIN_DIR"
 # The anfs repo's clone; ppm itself is its core/ppm package
 PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
+# The linker. A pull that brings a new lib/anfs file has it in the clone before an install links
+# it, so until core/anfs is installed again ppm reads the clone's copy
+if [[ -f "$HOME/.local/lib/anfs/link.sh" ]]; then
+  source "$HOME/.local/lib/anfs/link.sh"
+else
+  source "$PPM_REPO_DIR/packages/anfs/home/.local/lib/anfs/link.sh"
+fi
 
 # The command line: commands are cmd_<name> functions, registered here (and by extensions as they
 # are sourced) so help and completion are generated from what exists
@@ -45,6 +52,7 @@ cli_cmd list "Available packages, and the version installed (a filter narrows it
 cli_cmd install "Install packages and their dependencies" \
   --opt "-c --config: Config only: no hooks, no declared software" \
   --opt "-f --force: Replace conflicting files" \
+  --opt "-n --dry-run: Print what would be linked, kept or in the way; change nothing" \
   --opt "-r --reinstall: Re-stow what is installed" \
   --opt "-s --skip-deps: Skip dependencies" \
   --opt "-y --yes: Do not ask before installing a whole repo/ or @category" --arg "package-spec..."
@@ -131,7 +139,7 @@ main() {
   # The options a command was given, as the variables the commands' helpers read by name
   # through bash's dynamic scoping (install.sh, which sources the same helpers under bash 3.2,
   # sets them the same way). cli_before_command fills them in once the line is read.
-  local config=false force=false reinstall=false skip_deps=false yes=false
+  local config=false force=false reinstall=false skip_deps=false yes=false dry_run=false
 
   # cmd_ functions only: a command never shadows a system binary in package hooks (install,
   # file), and ppm's internals are not reachable from its command line
@@ -140,7 +148,7 @@ main() {
 
 cli_before_command() {
   config=${CLI_OPT[config]:-false} force=${CLI_OPT[force]:-false} reinstall=${CLI_OPT[reinstall]:-false}
-  skip_deps=${CLI_OPT[skip-deps]:-false} yes=${CLI_OPT[yes]:-false}
+  skip_deps=${CLI_OPT[skip-deps]:-false} yes=${CLI_OPT[yes]:-false} dry_run=${CLI_OPT[dry-run]:-false}
 }
 
 # The options every tool takes before its command (-d/--debug, --trace: lib/anfs/cli.sh)
