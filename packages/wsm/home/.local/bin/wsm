@@ -13,11 +13,11 @@
 # the source level's are what is not inside one of their workspaces or spaces. Hidden directories
 # are content, never a level.
 #
-# `wsm install` stows each level into <target>/<source>/<ws>/<space>/ with GNU Stow, as ppm stows a
-# package's home/ into $HOME, then clones the repositories of every space.yml under the spec. The
+# `wsm install` links each level into <target>/<source>/<ws>/<space>/ (lib/anfs/link.sh), as ppm
+# links a package's home/ into $HOME, then clones the repositories of every space.yml under the spec. The
 # target is the DIR argument, else $WSM_SPACES_HOME (anfs.conf; default ~/spaces), and a source
 # lives in one target. `wsm new` and `wsm add` go the other way: what you create in that tree is
-# moved into the source and stowed back, so the source holds everything but the clones.
+# moved into the source and linked back, so the source holds everything but the clones.
 #
 # What is installed is recorded in one tracker per level, $WSM_STATE_HOME/installed/<id>.yml
 # (id: source, source/ws or source/ws/space), which is wsm's only state.
@@ -43,6 +43,14 @@ source "$ANFS_LIB/bash.sh"
 source "$ANFS_LIB/paths.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/log.sh"
+# The linker. A pull that brings a new lib/anfs file has it in the clone before an install links
+# it, so until core/anfs is installed again wsm reads the clone's copy
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/link.sh" ]]; then
+  source "$ANFS_LIB/link.sh"
+else
+  source "$ANFS_SOURCES_HOME/core/packages/anfs/home/.local/lib/anfs/link.sh"
+fi
 # shellcheck source=/dev/null
 source "$ANFS_LIB/callbacks.sh"
 # shellcheck source=/dev/null
@@ -57,8 +65,6 @@ anfs_gitsrc_env
 anfs_tool_paths wsm
 
 WSM_INSTALLED="$WSM_STATE_HOME/installed"
-# Where stow finds wsm's ignore list (stow reads $HOME/.stow-global-ignore)
-WSM_STOW_HOME="$WSM_STATE_HOME/stow"
 
 # $HOME itself may contain a symlink (macOS /var -> /private/var); stored paths are canonical
 WSM_HOME=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || WSM_HOME="$HOME"
@@ -89,26 +95,26 @@ CLI_TOOL=wsm
 CLI_EX_USAGE=64
 CLI_VERSION="$WSM_VERSION"
 cli_cmd list "The sources' workspaces and spaces, and where each is installed" --alias ls --arg "[spec]"
-cli_cmd install "Stow levels into DIR/<source>/<ws>/<space> and clone their
+cli_cmd install "Link levels into DIR/<source>/<ws>/<space> and clone their
 repositories, dependencies first. SPEC is source/, source/ws,
 source/ws/space, ws or ws/space; none is the level at ." \
   --opt "-n --dry-run: Say what would be done" \
   --opt "-y --yes: Do not ask before installing a whole source/" --arg "[spec]" --arg "[dir]"
-cli_cmd remove "Unstow installed spaces (and a named ws or source); clones and your files stay" \
-  --alias rm --opt "-y --yes: Do not ask before unstowing" --arg "level..."
+cli_cmd remove "Unlink installed spaces (and a named ws or source); clones and your files stay" \
+  --alias rm --opt "-y --yes: Do not ask before unlinking" --arg "level..."
 cli_cmd new "Create a space in a source ([[SOURCE/]WS/]SPACE); the parts left out
 come from where you are. Installed too when its workspace is" --arg "space"
-cli_cmd add "Move files from an installed tree into the source and stow them back" --arg "file..."
+cli_cmd add "Move files from an installed tree into the source and link them back" --arg "file..."
 cli_cmd status "What in the installed trees differs from the sources" --arg "[source...]"
 cli_cmd cd "Change to an installed space or workspace (requires the wsm shell function)" \
   --opt "-s --source: Its directory in the source" --arg "[query]"
 cli_cmd path "Print that path; no QUERY means the level containing ." \
   --opt "-s --source: Its directory in the source" --arg "[query]"
-cli_cmd implode "Unstow every installed level and delete wsm's state" --opt "-y --yes: Do not ask before imploding"
+cli_cmd implode "Unlink every installed level and delete wsm's state" --opt "-y --yes: Do not ask before imploding"
 cli_group repo "The repositories the levels' space.yml files declare"
 cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls --arg "[spec]"
 cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing, or
-the one REPOSITORY (as repo list names it); nothing is stowed, nothing is pulled" \
+the one REPOSITORY (as repo list names it); nothing is linked, nothing is pulled" \
   --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
 cli_standard
 
@@ -132,10 +138,10 @@ is one; each level may hold files and a space.yml:
       path: repos/thing
       ref: main               # optional
 
-install stows each level into <target>/<source>/<ws>/<space>/ (stow --no-folding, so directories
-stay real), then clones the repositories of every space.yml under SPEC, and of the spaces it
-depends on. A source lives in one target: DIR the first time, else $WSM_SPACES_HOME. Re-running
-install restows and clones what is missing; it never pulls.
+install links each level into <target>/<source>/<ws>/<space>/ (a relative link per file, so
+directories stay real), then clones the repositories of every space.yml under SPEC, and of the
+spaces it depends on. A source lives in one target: DIR the first time, else $WSM_SPACES_HOME.
+Re-running install links and clones what is missing; it never pulls.
 
 QUERY (cd, path) is space, ws/space or source/ws/space; failing those, ws or source/ws names
 the workspace directory, and source/ the source's. An ambiguous query exits 2.
@@ -196,16 +202,6 @@ _link_target() {
   _canon_file "$t"
 }
 
-# <to> relative to directory <from>, both absolute and canonical: how stow writes its links
-_relpath() {
-  local from="$1" to="$2" up=""
-  while [[ "$to" != "$from"/* ]]; do
-    from=$(dirname -- "$from") up="../$up"
-    [[ "$from" != / ]] || { printf '%s\n' "$up${to#/}"; return 0; }
-  done
-  printf '%s\n' "$up${to#"$from"/}"
-}
-
 # The default target: $WSM_SPACES_HOME, read from anfs.conf unexpanded, so ~ and $HOME are ours
 _spaces_home() {
   local d="${WSM_SPACES_HOME:-$HOME/spaces}"
@@ -241,41 +237,6 @@ _valid_name() {
 }
 
 _parts() { local s="${1//[^\/]/}"; echo $(( ${#s} + 1 )); }
-
-# --- Stow ---------------------------------------------------------------------------------
-#
-# wsm stows with its own ignore list. stow reads $HOME/.stow-global-ignore, and without one
-# falls back to a built-in list that drops README.*, LICENSE.* and .gitignore: right for a
-# package's sources, wrong for a space, whose README is the point. So stow runs with HOME set to
-# a directory holding wsm's list, which leaves the user's own HOME (and ppm's stow) alone.
-
-WSM_STOW_IGNORE='# wsm stows with this list (stow reads $HOME/.stow-global-ignore, and wsm runs it with
-# HOME here), so stow'"'"'s built-in one, which drops README.* and LICENSE.*, never applies
-\.DS_Store'
-
-_stow() {
-  command -v stow >/dev/null 2>&1 || fail "$EX_UNAVAIL" "wsm needs GNU stow"
-  local f="$WSM_STOW_HOME/.stow-global-ignore"
-  if [[ ! -f "$f" || "$(cat "$f")" != "$WSM_STOW_IGNORE" ]]; then
-    mkdir -p "$WSM_STOW_HOME"
-    printf '%s\n' "$WSM_STOW_IGNORE" > "$f"
-  fi
-  HOME="$WSM_STOW_HOME" stow "$@"
-}
-
-# The --ignore arguments that keep a level's stow out of the levels below it: every directory
-# that is a workspace (source level) or a space (workspace level). Sets STOW_IGN.
-STOW_IGN=()
-_stow_ignores() {
-  local from="$1" level="$2" d n
-  STOW_IGN=()
-  [[ "$level" != space ]] || return 0
-  for d in "$from"/*/; do
-    [[ -d "$d" ]] || continue
-    d="${d%/}" n="${d##*/}"
-    STOW_IGN+=("--ignore=^${n//./\\.}\$")
-  done
-}
 
 # --- Sources ------------------------------------------------------------------------------
 
@@ -421,10 +382,9 @@ _rmdir_empty_up() {
   done
 }
 
-# Unstow the level a tracker recorded, then remove what stow could not reach (links into a
-# directory the source no longer has) — only links still pointing at the source's file, so
-# anything the user replaced stays — then the directories that leaves empty, up to the target,
-# and the tracker. Cloned repos and the user's own files keep a directory alive.
+# Unlink the level a tracker recorded: each recorded link still pointing at the source's file
+# (live or not), so anything the user replaced stays, then the directories that leaves empty, up
+# to the target, and the tracker. Cloned repos and the user's own files keep a directory alive.
 _unlink_unit() {
   local file="$1" src ws space target dir rel from level=source f dest
   {
@@ -436,11 +396,6 @@ _unlink_unit() {
   [[ -n "$ws" ]] && level=ws
   [[ -n "$space" ]] && level=space
   from="$(_src_dir "$src")/spaces${rel:+/$rel}"
-  if [[ -d "$from" && -d "$dir" ]]; then
-    _stow_ignores "$from" "$level"
-    _stow -D --no-folding -d "$(dirname -- "$from")" -t "$dir" \
-      ${STOW_IGN[@]+"${STOW_IGN[@]}"} "$(basename -- "$from")" >/dev/null 2>&1 || true
-  fi
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
     dest="$dir/$f"
@@ -464,7 +419,7 @@ _has_spaces() {
   return 1
 }
 
-# After spaces are removed: unstow the workspace and source levels no space is left under, unless
+# After spaces are removed: unlink the workspace and source levels no space is left under, unless
 # they were installed by name. A source stays while one of its workspaces does.
 # Usage: _unlink_orphans <src/ws>...
 _unlink_orphans() {
@@ -489,7 +444,7 @@ _unlink_orphans() {
   return 0
 }
 
-# --- Stowing ------------------------------------------------------------------------------
+# --- Linking ------------------------------------------------------------------------------
 
 # The files of one level of spaces/, relative, sorted: a space is everything below it; a workspace
 # or the source level what is not inside one of the (non-hidden) directories below it.
@@ -510,17 +465,18 @@ _unit_files() {
   )
 }
 
-# Stow one level (<from>, at <level>) into <root>: stow --no-folding, so every directory is real
-# and what install clones lands in the target, never in the source. All or nothing: anything in
-# the way fails the level before stow runs (stow would refuse it too, less legibly). A link the
-# previous install recorded (OLD_FILES) is ours to replace, and one whose file left the source is
-# removed. A space always reports; the source and workspace levels only when they have files.
+# Link one level (<from>, at <level>) into <root> (lib/anfs/link.sh): a relative link per file, so
+# every directory is real and what install clones lands in the target, never in the source. All
+# or nothing: anything in the way fails the level before anything is linked. A link the previous
+# install recorded (OLD_FILES) is ours to replace wherever it points, and one whose file left the
+# source is removed. A space always reports; the source and workspace levels only when they have
+# files.
 # Usage: _link_unit <from> <root> <level> <dry> <header>   (sets LINKED to the files)
 OLD_FILES=() LINKED=()
 _link_unit() {
-  local from="$1" root="$2" level="$3" dry="$4" header="$5" f dest t cfrom out
+  local from="$1" root="$2" level="$3" dry="$4" header="$5" f plan class rest why rc=0
   local conflicts=0 made=0 gone
-  local -a gone_files=() stale=()
+  local -a gone_files=() clear=()
   LINKED=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && LINKED+=("$f")
@@ -534,38 +490,32 @@ _link_unit() {
   [[ "$level" == space || ${#LINKED[@]} -gt 0 || $gone -gt 0 ]] || return 0
   echo "$header"
 
-  cfrom=$(_canon "$from")
-  for f in ${LINKED[@]+"${LINKED[@]}"}; do
-    dest="$root/$f"
-    if [[ -L "$dest" ]]; then
-      t=$(_link_target "$dest" 2>/dev/null) || t=""
-      if [[ "$t" == "$cfrom/$f" && "$(readlink -- "$dest")" != /* ]]; then
-        continue   # stowed already
-      elif [[ "$t" == "$cfrom/$f" || "$t" == "$cfrom"/* ]] || _in_list "$f" ${OLD_FILES[@]+"${OLD_FILES[@]}"}; then
-        stale+=("$f")   # ours, but not as stow would have it (an absolute link from wsm 0.3)
-      else
-        warn "in the way: $(_display "$dest")"
-        conflicts=$((conflicts + 1))
-      fi
-    elif [[ -e "$dest" ]]; then
-      warn "in the way: $(_display "$dest")"
-      conflicts=$((conflicts + 1))
-    fi
-    made=$((made + 1))
-  done
+  plan=$(anfs_link_plan "$from" "$root" <(printf '%s\n' ${LINKED[@]+"${LINKED[@]}"})) || rc=$?
+  [[ $rc -ne 2 ]] || return 1
+  while IFS=$'\t' read -r class rest; do
+    f="${rest%%$'\t'*}" why="${rest#*$'\t'}"
+    case "$class" in
+      link|replace) made=$((made + 1)) ;;
+      other|conflict)
+        if [[ "$why" != *" on the way: "* && "$why" != *"where a directory goes: "* && -L "$root/$f" ]] &&
+           _in_list "$f" ${OLD_FILES[@]+"${OLD_FILES[@]}"}; then
+          clear+=("$f")
+          made=$((made + 1))
+        else
+          warn "in the way: $(_display "$root/$f")"
+          conflicts=$((conflicts + 1))
+        fi
+        ;;
+    esac
+  done <<< "$plan"
   [[ $conflicts -eq 0 ]] || return 1
 
   if ! $dry; then
-    for f in ${stale[@]+"${stale[@]}"}; do rm -f -- "$root/$f"; done
-    if [[ $made -gt 0 ]]; then
-      mkdir -p -- "$root"
-      _stow_ignores "$from" "$level"
-      if ! out=$(_stow --no-folding -d "$(dirname -- "$from")" -t "$root" \
-                   ${STOW_IGN[@]+"${STOW_IGN[@]}"} "$(basename -- "$from")" 2>&1); then
-        warn "stow failed for $(_display "$root"):"
-        printf '%s\n' "$out" >&2
-        return 1
-      fi
+    for f in ${clear[@]+"${clear[@]}"}; do rm -f -- "$root/$f"; done
+    if [[ $made -gt 0 ]] &&
+       ! anfs_link_apply "$from" "$root" <(printf '%s\n' "${LINKED[@]}") >/dev/null; then
+      warn "linking failed for $(_display "$root")"
+      return 1
     fi
     for f in ${gone_files[@]+"${gone_files[@]}"}; do
       rm -f -- "$root/$f"
@@ -580,7 +530,7 @@ _link_unit() {
   printf '\n'
 }
 
-# Stow one level of <src>'s spaces/ (the source itself, a workspace or a space) into <target>
+# Link one level of <src>'s spaces/ (the source itself, a workspace or a space) into <target>
 # and record it. A level installed by name stays named on later installs.
 # Usage: _install_unit <src> <ws> <space> <target> <dry> [named]   (ws, space may be empty)
 _install_unit() {
@@ -1047,7 +997,7 @@ cmd_remove() {
   local what=""
   for j in ${drop[@]+"${drop[@]}"}; do what+=" ${INST_ID[$j]}"; done
   for id in ${levels[@]+"${levels[@]}"}; do what+=" $id"; done
-  [[ -z "$what" ]] || anfs_confirm "remove unstows$what (clones and your files stay)" "Remove?"
+  [[ -z "$what" ]] || anfs_confirm "remove unlinks$what (clones and your files stay)" "Remove?"
   for j in ${drop[@]+"${drop[@]}"}; do
     _unlink_unit "${INST_FILE[$j]}"
     _in_list "${INST_SRC[$j]}/${INST_WS[$j]}" ${sws[@]+"${sws[@]}"} || sws+=("${INST_SRC[$j]}/${INST_WS[$j]}")
@@ -1458,8 +1408,8 @@ _in_repository() {
   return 1
 }
 
-# Move one file of an installed tree into its source and link it back as stow would (relative,
-# to the canonical file), so the next install sees it as stowed. <explicit> is false when it was
+# Move one file of an installed tree into its source and link it back (relative, to the canonical
+# file: anfs_relpath), so the next install sees it as linked. <explicit> is false when it was
 # found under a directory given to add, which skips quietly what an explicit file would be refused
 # for, and leaves a changed copy of a linked file alone.
 # Usage: _add_one <canonical path> <explicit:true|false>
@@ -1518,7 +1468,7 @@ _add_one() {
     # explicitly, the copy goes back to the source, where git shows what changed
     if $tracked && $explicit; then
       mv -f -- "$path" "$dest"
-      ln -s -- "$(_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
+      ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
       printf 'updated %s (git diff in %s)\n' "$src/$rel" "$(_display "$srcdir")"
       _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
       return 0
@@ -1527,13 +1477,13 @@ _add_one() {
       warn "a linked file was replaced by a copy: wsm add $(_display "$path") puts it back in the source"
       return 0
     fi
-    warn "$src already has $rel: wsm install $U_ID stows it (move yours aside first)"
+    warn "$src already has $rel: wsm install $U_ID links it (move yours aside first)"
     return 1
   fi
 
   mkdir -p -- "$(dirname -- "$dest")"
   mv -- "$path" "$dest"
-  ln -s -- "$(_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
+  ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
   _tracker_add_file "$tracker" "$U_FILE"
   printf 'added %s\n' "$src/$rel"
   _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
@@ -1646,7 +1596,7 @@ cmd_status() {
   done
   $any || { [[ ${#want[@]} -eq 0 ]] && echo "Nothing installed" || fail "$EX_NOTFOUND" "not installed: ${want[*]}"; }
   $hint_add && echo "wsm add FILE... moves local files (and changed copies) into the source"
-  $hint_install && echo "wsm install SPEC restows what the source has"
+  $hint_install && echo "wsm install SPEC links again what the source has"
   return 0
 }
 
@@ -1692,8 +1642,9 @@ complete_source() {
   done
 }
 
-# `wsm implode [-y]`: unstow every installed level and delete wsm's state. What the spaces hold
-# besides the links (cloned repos, your files) is never touched.
+# `wsm implode [-y]`: unlink every installed level and delete wsm's state, which takes the stow/
+# directory an older wsm kept there too. What the spaces hold besides the links (cloned repos, your
+# files) is never touched.
 cmd_implode() {
   local yes=${CLI_OPT[yes]:-false} j f
 
@@ -1710,7 +1661,7 @@ cmd_implode() {
     echo "Kept: everything else in the spaces (cloned repos, your files)"
   } >&2
 
-  $yes || anfs_confirm "implode unstows every space" "Implode wsm?"
+  $yes || anfs_confirm "implode unlinks every space" "Implode wsm?"
 
   anfs_sources spaces
   # Spaces, then the workspace and source levels above them

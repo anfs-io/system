@@ -208,7 +208,7 @@ YML
   wsm install acme/main >/dev/null
   echo mine > "$HOME/spaces/acme/main/tech/TODO"
 
-  # it asks: no terminal and no -y is 77, and nothing is unstowed
+  # it asks: no terminal and no -y is 77, and nothing is unlinked
   run wsm remove acme/main/tech </dev/null
   [ "$status" -eq 77 ]
   [ -L "$HOME/spaces/acme/main/tech/space.yml" ]
@@ -355,7 +355,7 @@ YML
   yq -r '.files[]' "$TRACKERS/acme/main/tech.yml" | grep -qx 'docs/n.md'
   run wsm status
   [[ "$output" == *"clean"* ]]
-  # add links as stow does, so the next install finds them stowed
+  # add links as install does, so the next install finds them linked
   run wsm install acme/main/tech
   [ "$status" -eq 0 ]
   [[ "$output" == *"space acme/main/tech"*"linked 0 of 2 file(s)"* ]]

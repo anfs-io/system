@@ -20,7 +20,7 @@ YML
   [ "$status" -eq 0 ]
   [[ "$output" == *"space acme/main/tech -> ~/spaces/acme/main/tech"* ]]
   [[ "$output" == *"linked 3 of 3 file(s)"* ]]
-  # stow's default ignore list would have dropped README.md
+  # README.md is linked like any file (stow's default ignore list used to drop it)
   [ -L "$HOME/spaces/acme/main/tech/README.md" ]
   [ -L "$HOME/spaces/acme/main/tech/space.yml" ]
   # A link per file: the directories are real, never a link folded into the source
@@ -322,7 +322,7 @@ YML
   [ -L "$HOME/spaces/acme/main/finance/space.yml" ]
 }
 
-@test "stow links: relative, README kept, and a re-run finds them stowed" {
+@test "links: relative, README and LICENSE kept, and a re-run finds them linked" {
   space_def acme main/tech <<<'repositories: []'
   space_file acme main/tech/README.md
   space_file acme main/tech/LICENSE.txt
@@ -332,8 +332,6 @@ YML
   run wsm install acme/main/tech
   [ "$status" -eq 0 ]
   [[ "$output" == *"linked 0 of 3 file(s)"* ]]
-  # the user's HOME is not where stow found its ignore list
-  [ ! -e "$HOME/.stow-global-ignore" ]
 }
 
 @test "a repository path that escapes its level is refused, and a failed clone leaves nothing" {
@@ -368,7 +366,7 @@ YML
   [ "$(installed)" -eq 0 ]
 }
 
-@test "absolute links from wsm 0.3 are replaced by stow's on a re-run" {
+@test "absolute links from wsm 0.3 are replaced (the plan's replace) on a re-run" {
   space_def acme main/tech <<<'repositories: []'
   wsm install acme/main/tech >/dev/null
   rm "$HOME/spaces/acme/main/tech/space.yml"

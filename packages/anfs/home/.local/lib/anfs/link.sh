@@ -304,7 +304,10 @@ anfs_link_apply() {
   [ -n "$_ANFS_DO_F" ] || return 0
   while IFS= read -r f <&3 && IFS= read -r t <&4 && IFS= read -r r <&5; do
     [ -n "$f" ] || continue
-    case "$f" in */*) mkdir -p -- "$to/${f%/*}" || return 1 ;; esac
+    case "$f" in
+      */*) mkdir -p -- "$to/${f%/*}" || return 1 ;;
+      *) mkdir -p -- "$to" || return 1 ;;
+    esac
     [ "$r" != true ] || rm -f -- "$to/$f"
     ln -s -- "$t" "$to/$f" || return 1
   done 3<<EOF3 4<<EOF4 5<<EOF5
