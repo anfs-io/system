@@ -4,7 +4,7 @@
 command -v wsm >/dev/null 2>&1 || return 0
 
 # Wrapper to handle `wsm cd` through _anfs_cd (anfs.sh). No argument: what `wsm path` says, the
-# root of the workspace containing the current directory. Exit 3 (stale entry) still cds.
+# deepest installed space containing the current directory.
 wsm() {
   if [ "${1:-}" = "cd" ]; then
     shift

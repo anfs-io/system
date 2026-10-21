@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
 # wsm — work space manager
 #
-# A source's spaces/ directory holds workspaces, and each workspace holds spaces. The levels are
-# fixed by depth, so every directory at the workspace and space depths is one:
+# A space is any directory of a source's spaces/ that holds a space.yml, at any depth. Its id is
+# its path, qualified by the source: spaces/space.yml is the space <source>, spaces/tech/web/
+# space.yml the space <source>/tech/web. Directories without a space.yml are only directories.
 #
-#   <source>/spaces/                  the source level
-#   <source>/spaces/<ws>/             a workspace
-#   <source>/spaces/<ws>/<space>/     a space
+#   <source>/spaces/space.yml              the space <source>
+#   <source>/spaces/a/b/c/space.yml        the space <source>/a/b/c (a and a/b are directories)
 #
-# Each level may hold files of its own and an optional space.yml (the repositories to clone into
-# it; a space's also its dependencies). A space's files are everything below it; a workspace's and
-# the source level's are what is not inside one of their workspaces or spaces. Hidden directories
-# are content, never a level.
+# A file belongs to the nearest enclosing space: the closest directory above it with a space.yml.
+# A file under no space is not linked, and is warned about once per run.
 #
-# `wsm install` links each level into <target>/<source>/<ws>/<space>/ (lib/anfs/link.sh), as ppm
-# links a package's home/ into $HOME, then clones the repositories of every space.yml under the spec. The
-# target is the DIR argument, else $WSM_SPACES_HOME (anfs.conf; default ~/spaces), and a source
-# lives in one target. `wsm new` and `wsm add` go the other way: what you create in that tree is
-# moved into the source and linked back, so the source holds everything but the clones.
+# `wsm install` links each space's files into $WSM_SPACES_HOME/<source>/<path>/ (lib/anfs/link.sh),
+# as ppm links a package's home/ into $HOME, then clones the repositories its space.yml declares.
+# `wsm new` and `wsm add` go the other way: what you create in that tree is moved into the source
+# and linked back, so the source holds everything but the clones.
 #
-# What is installed is recorded in one tracker per level, $WSM_STATE_HOME/installed/<id>.yml
-# (id: source, source/ws or source/ws/space), which is wsm's only state.
+# Nothing is recorded. The sources' spaces/ say what exists; the links say what is installed: a
+# space is installed when <root>/<source>/<path>/space.yml is a link to its space.yml. Each file's
+# state is its link checked against the source (anfs_link_check), and the links a source no longer
+# has a file for (leftovers) are found by walking only the directories of <root>/<source>/ that
+# mirror a directory of the source's spaces/, plus one level for a space that vanished. Nothing
+# else under the root is ever walked, so a clone of any size costs one directory entry.
 #
-# Runs on the bash floor (5.2; lib/anfs/bash.sh gets it there from macOS's 3.2). Most of this file
-# predates the floor and still avoids associative arrays and mapfile; new code need not.
+# Runs on the bash floor (5.2; lib/anfs/bash.sh gets it there from macOS's 3.2).
 set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.4.0
+WSM_VERSION=0.5.0
 
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
@@ -64,16 +64,11 @@ source "$ANFS_LIB/table.sh"
 anfs_gitsrc_env
 anfs_tool_paths wsm
 
-WSM_INSTALLED="$WSM_STATE_HOME/installed"
-
-# $HOME itself may contain a symlink (macOS /var -> /private/var); stored paths are canonical
-WSM_HOME=$(cd -P -- "$HOME" 2>/dev/null && pwd -P) || WSM_HOME="$HOME"
-
 # Exit codes
-EX_NOTFOUND=1 EX_AMBIGUOUS=2 EX_STALE=3
+EX_NOTFOUND=1 EX_AMBIGUOUS=2 EX_USAGE=64 EX_UNAVAIL=69 EX_EXISTS=73
 
-# Events (lib/anfs/callbacks.sh): the levels this run installed that were not installed before,
-# and the ones it removed, as ids (source, source/ws, source/ws/space). _wsm_emit tells whoever
+# Events (lib/anfs/callbacks.sh): the spaces this run installed that were not installed before,
+# and the ones it removed, as ids (<source> for a source's root space). _wsm_emit tells whoever
 # registered with wsm, once, when the command is over; wsm does not know who that is.
 WSM_EV_INSTALLED=() WSM_EV_REMOVED=()
 _wsm_emit() {
@@ -82,38 +77,39 @@ _wsm_emit() {
   [[ ${#removed[@]} -eq 0 ]] || anfs_callbacks_run wsm remove "${removed[@]}"
   [[ ${#installed[@]} -eq 0 ]] || anfs_callbacks_run wsm install "${installed[@]}"
 }
-# On EXIT, so a run that installed some levels and then failed still reports those
+# On EXIT, so a run that installed some spaces and then failed still reports those
 trap _wsm_emit EXIT
-EX_USAGE=64 EX_UNAVAIL=69 EX_EXISTS=73
 
-# Names are <ws>/<space> (lib/anfs resolve.sh): a spec is source-qualified with three segments
-ANFS_NAME_PARTS=2
+# Names are paths of any depth (lib/anfs resolve.sh): the first segment is the source when it is
+# one, and a resource is a directory holding a space.yml
+ANFS_NAME_NEST=true
+ANFS_RESOLVE_MARKER=space.yml
 # A space is one directory, the highest-priority one: spaces do not layer like packages
 ANFS_RESOLVE_FIRST=true
 
 CLI_TOOL=wsm
 CLI_EX_USAGE=64
 CLI_VERSION="$WSM_VERSION"
-cli_cmd list "The sources' workspaces and spaces, and where each is installed" --alias ls --arg "[spec]"
-cli_cmd install "Link levels into DIR/<source>/<ws>/<space> and clone their
-repositories, dependencies first. SPEC is source/, source/ws,
-source/ws/space, ws or ws/space; none is the level at ." \
+cli_cmd list "The spaces the sources define, and the state of each installed one" --alias ls --arg "[spec]"
+cli_cmd install "Link spaces into \$WSM_SPACES_HOME/<id> and clone their repositories,
+dependencies first. SPEC is an id (source, source/path, or a path) or a
+prefix ending in / (source/, source/path/); none is the space at ." \
   --opt "-n --dry-run: Say what would be done" \
-  --opt "-y --yes: Do not ask before installing a whole source/" --arg "[spec]" --arg "[dir]"
-cli_cmd remove "Unlink installed spaces (and a named ws or source); clones and your files stay" \
-  --alias rm --opt "-y --yes: Do not ask before unlinking" --arg "level..."
-cli_cmd new "Create a space in a source ([[SOURCE/]WS/]SPACE); the parts left out
-come from where you are. Installed too when its workspace is" --arg "space"
-cli_cmd add "Move files from an installed tree into the source and link them back" --arg "file..."
-cli_cmd status "What in the installed trees differs from the sources" --arg "[source...]"
-cli_cmd cd "Change to an installed space or workspace (requires the wsm shell function)" \
+  --opt "-f --force: Move what is in the way aside (\$WSM_STATE_HOME/backup) and link" \
+  --opt "-y --yes: Do not ask before installing a prefix" --arg "[spec...]"
+cli_cmd remove "Unlink installed spaces; clones and your files stay" \
+  --alias rm --opt "-y --yes: Do not ask before unlinking" --arg "space..."
+cli_cmd new "Create a space in a source: SOURCE/PATH anywhere, or a PATH below
+where you are. Installed too when the space around it is" --arg "space"
+cli_cmd add "Move files from the spaces tree into the source and link them back" --arg "file..."
+cli_cmd cd "Change to an installed space (requires the wsm shell function)" \
   --opt "-s --source: Its directory in the source" --arg "[query]"
-cli_cmd path "Print that path; no QUERY means the level containing ." \
+cli_cmd path "Print that path; no QUERY means the installed space containing ." \
   --opt "-s --source: Its directory in the source" --arg "[query]"
-cli_cmd implode "Unlink every installed level and delete wsm's state" --opt "-y --yes: Do not ask before imploding"
-cli_group repo "The repositories the levels' space.yml files declare"
+cli_cmd implode "Unlink every installed space and delete wsm's state" --opt "-y --yes: Do not ask before imploding"
+cli_group repo "The repositories the spaces' space.yml files declare"
 cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls --arg "[spec]"
-cli_cmd "repo install" "Clone what the installed levels under SPEC declare and is missing, or
+cli_cmd "repo install" "Clone what the installed spaces under SPEC declare and is missing, or
 the one REPOSITORY (as repo list names it); nothing is linked, nothing is pulled" \
   --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
 cli_standard
@@ -125,26 +121,27 @@ cmd_cd() {
 
 cli_help_epilogue() {
   cat <<'EOF'
-A source's spaces/ holds workspaces, each a directory of spaces. Every directory at those depths
-is one; each level may hold files and a space.yml:
+A space is any directory of a source's spaces/ with a space.yml, at any depth; its id is the
+source and its path (spaces/space.yml is the space <source>). A file belongs to the nearest
+space above it; a file under no space is not linked.
 
-  spaces/space.yml                  the source level: an org-wide mise.toml, ...
-  spaces/<ws>/space.yml             a workspace: an opm.yml, ...
-  spaces/<ws>/<space>/space.yml     a space: README, CLAUDE.md, ...
-
-  depends: [org, infra/net]   # a space's: installed first, a sibling or <ws>/<space>
-  repositories:               # cloned into the level's directory
+  depends: [lgat/tech, org]   # installed first: an id, or a path in this source (or a lower one)
+  repositories:               # cloned into the space's directory
     - url: git@github.com:you/thing
-      path: repos/thing
+      path: repos/thing       # optional: git's name for it
       ref: main               # optional
 
-install links each level into <target>/<source>/<ws>/<space>/ (a relative link per file, so
-directories stay real), then clones the repositories of every space.yml under SPEC, and of the
-spaces it depends on. A source lives in one target: DIR the first time, else $WSM_SPACES_HOME.
-Re-running install links and clones what is missing; it never pulls.
+install links each space into $WSM_SPACES_HOME/<source>/<path>/ (a relative link per file, so
+directories stay real), then clones its repositories. A prefix (lgat/, lgat/tech/) is every space
+at or under it; installing a space does not install the spaces above it. Re-running install links
+what is missing and removes the links whose file left the source; it never pulls. Anything in the
+way fails the space; -f moves it aside, and remove never puts it back.
 
-QUERY (cd, path) is space, ws/space or source/ws/space; failing those, ws or source/ws names
-the workspace directory, and source/ the source's. An ambiguous query exits 2.
+Nothing is recorded: list reads the state off the links (ok, partial with what is missing, wrong,
+in the way or left over, or not in the source).
+
+QUERY (cd, path) is an installed id, or the end of one (web, tech/web); failing those, a source
+names its directory. An ambiguous query exits 2.
 EOF
   printf '\nSpaces home: %s\n' "$(_display "$(_spaces_home)")"
 }
@@ -157,9 +154,7 @@ die()  { anfs_die "$@"; }
 fail() { anfs_fail "$@"; }
 usage_err() { cli_usage "$@"; }
 
-_now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-
-# Shorten a leading $HOME for display only; the stored value is always absolute
+# Shorten a leading $HOME for display only
 _display() { anfs_display "$1"; }
 
 # Absolute, symlinks resolved, no trailing slash
@@ -194,15 +189,7 @@ _canon_file() {
   printf '%s/%s\n' "${d%/}" "$(basename -- "$1")"
 }
 
-# The canonical path a link points at (the directory it lands in must exist)
-_link_target() {
-  local t
-  t=$(readlink -- "$1")
-  [[ "$t" == /* ]] || t="$(dirname -- "$1")/$t"
-  _canon_file "$t"
-}
-
-# The default target: $WSM_SPACES_HOME, read from anfs.conf unexpanded, so ~ and $HOME are ours
+# $WSM_SPACES_HOME, read from anfs.conf unexpanded, so ~ and $HOME are ours
 _spaces_home() {
   local d="${WSM_SPACES_HOME:-$HOME/spaces}"
   case "$d" in
@@ -221,11 +208,11 @@ _in_list() {
   return 1
 }
 
-# A name of up to three parts: none empty, none . or .., no glob characters or whitespace, and
-# nothing that reads as a path (a leading / or ~)
-_valid_name() {
-  local rest="$1" p
-  [[ -n "$rest" ]] || return 1
+# A spec: path segments, none empty, . or .., no glob characters or whitespace, nothing that reads
+# as a path (a leading / or ~); a trailing / makes it a prefix
+_valid_spec() {
+  local rest="${1%/}" p
+  [[ -n "$rest" && "$1" != *// ]] || return 1
   while :; do
     p="${rest%%/*}"
     case "$p" in
@@ -236,22 +223,24 @@ _valid_name() {
   done
 }
 
-_parts() { local s="${1//[^\/]/}"; echo $(( ${#s} + 1 )); }
+# Refuse a spec that is not one (64), saying so when it reads as a directory: install has no DIR
+_spec_ok() {
+  _valid_spec "$1" && return 0
+  case "$1" in
+    .|..|/*|./*|../*|"~"*) warn "'$1' is a directory, not a space: the spaces go in \$WSM_SPACES_HOME ($(_display "$(_spaces_home)"))" ;;
+  esac
+  cli_usage_err "'$1' is not a space or a prefix"
+}
+
+_rmdir_empty_up() {
+  local dir="$1" stop="$2"
+  while [[ "$dir" == "$stop"/* ]]; do
+    rmdir -- "$dir" 2>/dev/null || return 0
+    dir="${dir%/*}"
+  done
+}
 
 # --- Sources ------------------------------------------------------------------------------
-
-# A workspace or space: any directory at that depth that is not hidden
-_is_level() { [[ -d "$1" && "${1##*/}" != .* ]]; }
-
-# The directory of source <name>: among the sources with spaces/ when they are loaded, else
-# wherever anfs keeps it
-_src_dir() {
-  local i
-  for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
-    [[ "${ANFS_SRC_NAMES[$i]}" == "$1" ]] && { printf '%s\n' "${ANFS_SRC_DIRS[$i]}"; return 0; }
-  done
-  gitsrc_dir "$1"
-}
 
 _is_registered() {
   [[ -n "${GITSRC_NAMES[*]+x}" ]] || gitsrc_collect
@@ -269,301 +258,478 @@ _source_holding() {
   return 1
 }
 
-# --- Installed (the trackers) -------------------------------------------------------------
+# The root every source is installed in: $WSM_SPACES_HOME, canonical (it may not exist yet)
+ROOT=""
+_root_load() {
+  [[ -n "$ROOT" ]] || ROOT=$(_canon_maybe "$(_abs "$(_spaces_home)")")
+}
+
+# --- The spaces, from the sources ---------------------------------------------------------
 #
-# One tracker per level installed: <src>.yml, <src>/<ws>.yml, <src>/<ws>/<space>.yml, each with
-# the target, the directory it was stowed into and the files. INST_* are parallel arrays over the
-# space trackers, ISRC_* over the source ones; each read with one yq call.
+# Once per run: one find per source's spaces/. From it, in bash:
+#   SPACE_IDS             every space, the sources' priority order, then by path
+#   SPACE_SRC[id]         its source; SPACE_PATH[id] its path below spaces/ (empty: the root space)
+#   SPACE_DIR[id]         its directory in the source
+#   SPACE_FILES[id]       its own files, relative to it, one per line (not a child space's)
+#   SRC_SD[src]           <source dir>/spaces
+#   SRC_DIRS[src]         the source's directories below spaces/, one per line (the first, empty,
+#                         is spaces/ itself); SRC_DIRSET["src|dir"] the same as a set
+#   SRC_OWNER["src|rel"]  the space a file below spaces/ belongs to
 
-INST_ID=() INST_SRC=() INST_WS=() INST_SPACE=() INST_TARGET=() INST_DIR=() INST_FILE=()
-ISRC_NAME=() ISRC_TARGET=() IWS_ID=() IWS_DIR=()
+SPACE_IDS=()
+declare -A SPACE_SRC=() SPACE_PATH=() SPACE_DIR=() SPACE_FILES=() SRC_SD=() SRC_DIRS=() SRC_DIRSET=() SRC_OWNER=()
+SPACES_LOADED=false UNOWNED_WARNED=false
 
-_installed_load() {
-  INST_ID=() INST_SRC=() INST_WS=() INST_SPACE=() INST_TARGET=() INST_DIR=() INST_FILE=()
-  ISRC_NAME=() ISRC_TARGET=() IWS_ID=() IWS_DIR=()
-  local -a files=()
-  local f s w p t d i=0
-  for f in "$WSM_INSTALLED"/*/*/*.yml; do
-    [[ -f "$f" ]] && files+=("$f")
-  done
-  if [[ ${#files[@]} -gt 0 ]]; then
-    _require_yq
-    # One field per line: never empty, but a path may hold a tab. A tracker without a dir is from
-    # 0.2, which put a space at <target>/<ws>/<space>.
-    while IFS= read -r s && IFS= read -r w && IFS= read -r p && IFS= read -r t && IFS= read -r d; do
-      INST_ID+=("$s/$w/$p") INST_SRC+=("$s") INST_WS+=("$w") INST_SPACE+=("$p")
-      INST_TARGET+=("$t") INST_DIR+=("$d") INST_FILE+=("${files[$i]}")
-      i=$((i + 1))
-    done < <(yq -N -r '.source, .workspace, .space, .target,
-                       (.dir // (.target + "/" + .workspace + "/" + .space))' "${files[@]}")
-  fi
-
-  # The workspace levels (<src>/<ws>)
-  files=()
-  for f in "$WSM_INSTALLED"/*/*.yml; do
-    [[ -f "$f" ]] && files+=("$f")
-  done
-  if [[ ${#files[@]} -gt 0 ]]; then
-    _require_yq
-    i=0
-    while IFS= read -r d; do
-      f="${files[$i]#"$WSM_INSTALLED"/}"
-      IWS_ID+=("${f%.yml}") IWS_DIR+=("$d")
-      i=$((i + 1))
-    done < <(yq -N -r '.dir' "${files[@]}")
-  fi
-
-  files=()
-  for f in "$WSM_INSTALLED"/*.yml; do
-    [[ -f "$f" ]] && files+=("$f")
-  done
-  [[ ${#files[@]} -gt 0 ]] || return 0
-  _require_yq
-  i=0
-  while IFS= read -r t; do
-    s=$(basename -- "${files[$i]}" .yml)
-    ISRC_NAME+=("$s") ISRC_TARGET+=("$t")
-    i=$((i + 1))
-  done < <(yq -N -r '.target' "${files[@]}")
-}
-
-# The target source <src> is installed in, or nothing
-_src_target() {
-  local j
-  for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-    [[ "${ISRC_NAME[$j]}" == "$1" ]] && { printf '%s\n' "${ISRC_TARGET[$j]}"; return 0; }
-  done
-  # A space installed by 0.2, which kept no source tracker
-  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-    [[ "${INST_SRC[$j]}" == "$1" ]] && { printf '%s\n' "${INST_TARGET[$j]}"; return 0; }
-  done
-  return 0
-}
-
-_tracker_path() { printf '%s\n' "$WSM_INSTALLED/$1.yml"; }
-
-# The files a tracker records, one per line
-_tracker_files() { yq -r '.files[]?' "$1"; }
-
-# Where level <id> is installed, or nothing
-_installed_dir() {
-  local f
-  f=$(_tracker_path "$1")
-  [[ -f "$f" ]] && yq -r '.dir // ""' "$f"
-  return 0
-}
-
-# Whether a source or workspace level was installed by name (named: true in its tracker): it then
-# stays when its last space is removed
-_is_named() { [[ -f "$1" && "$(yq -r '.named // false' "$1")" == true ]]; }
-
-# Usage: _tracker_write <tracker> <src> <ws> <space> <target> <dir> <named> <file>...
-_tracker_write() {
-  local file="$1"
-  mkdir -p "$(dirname "$file")"
-  S="$2" W="$3" P="$4" T="$5" D="$6" N="$7" A="$(_now)" F="$(shift 7; printf '%s\n' "$@")" \
-    yq -n '.source = strenv(S) | .workspace = strenv(W) | .space = strenv(P) |
-           .target = strenv(T) | .dir = strenv(D) | .installed_at = strenv(A) |
-           (select(strenv(N) == "true") | .named) = true |
-           .files = (strenv(F) | split("\n") | map(select(. != "")))' > "$file.tmp"
-  mv -- "$file.tmp" "$file"
-}
-
-# Add one file to a tracker's list
-_tracker_add_file() {
-  F="$2" yq -i '.files = ((.files // []) + [strenv(F)] | unique)' "$1"
-}
-
-_rmdir_empty_up() {
-  local dir="$1" stop="$2"
-  while [[ "$dir" == "$stop"/* ]]; do
-    rmdir -- "$dir" 2>/dev/null || return 0
-    dir=$(dirname -- "$dir")
-  done
-}
-
-# Unlink the level a tracker recorded: each recorded link still pointing at the source's file
-# (live or not), so anything the user replaced stays, then the directories that leaves empty, up
-# to the target, and the tracker. Cloned repos and the user's own files keep a directory alive.
-_unlink_unit() {
-  local file="$1" src ws space target dir rel from level=source f dest
-  {
-    IFS= read -r src; IFS= read -r ws; IFS= read -r space; IFS= read -r target; IFS= read -r dir
-  } < <(yq -N -r '.source, (.workspace // ""), (.space // ""), .target,
-                  (.dir // (.target + "/" + .workspace + "/" + .space))' "$file")
-  rel="$ws${space:+/$space}"
-  WSM_EV_REMOVED+=("$src${rel:+/$rel}")
-  [[ -n "$ws" ]] && level=ws
-  [[ -n "$space" ]] && level=space
-  from="$(_src_dir "$src")/spaces${rel:+/$rel}"
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    dest="$dir/$f"
-    if [[ -L "$dest" ]]; then
-      case "$(readlink -- "$dest")" in
-        */spaces/"${rel:+$rel/}$f") rm -f -- "$dest" ;;
-        *) continue ;;
-      esac
+_spaces_load() {
+  $SPACES_LOADED && return 0
+  SPACES_LOADED=true
+  anfs_sources spaces
+  local i src sd rel d p id f found nown=0 first=""
+  local -a files rels paths
+  local -A here
+  for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
+    src="${ANFS_SRC_NAMES[$i]}" sd="${ANFS_SRC_DIRS[$i]}/spaces"
+    SRC_SD[$src]="$sd"
+    # The trailing / follows a local-path source's link; BSD find then prints <sd>//<rel>
+    mapfile -t files < <(find "$sd/" \( -type f -o -type l \) ! -name .DS_Store -print 2>/dev/null | LC_ALL=C sort)
+    here=() rels=() paths=()
+    for f in ${files[@]+"${files[@]}"}; do
+      rel="${f#"$sd"/}" rel="${rel#/}"
+      [[ -n "$rel" ]] || continue
+      rels+=("$rel")
+      [[ "${rel##*/}" == space.yml ]] || continue
+      p=""
+      [[ "$rel" != */* ]] || p="${rel%/*}"
+      here["/$p"]=1 paths+=("$p")
+    done
+    if [[ ${#paths[@]} -gt 1 ]]; then
+      mapfile -t paths < <(printf '%s\n' "${paths[@]}" | LC_ALL=C sort)
     fi
-    _rmdir_empty_up "$(dirname -- "$dest")" "$dir"
-  done < <(_tracker_files "$file")
-  _rmdir_empty_up "$dir" "$target"
-  rm -f -- "$file"
-  _rmdir_empty_up "$(dirname -- "$file")" "$WSM_INSTALLED"
+    for p in ${paths[@]+"${paths[@]}"}; do
+      id="$src${p:+/$p}"
+      SPACE_IDS+=("$id")
+      SPACE_SRC[$id]="$src" SPACE_PATH[$id]="$p" SPACE_DIR[$id]="$sd${p:+/$p}" SPACE_FILES[$id]=""
+    done
+
+    SRC_DIRSET["$src|"]=1 SRC_DIRS[$src]=$'\n'
+    for rel in ${rels[@]+"${rels[@]}"}; do
+      d=""
+      [[ "$rel" != */* ]] || d="${rel%/*}"
+      p="$d"
+      while [[ -z "${SRC_DIRSET["$src|$p"]:-}" ]]; do
+        SRC_DIRSET["$src|$p"]=1 SRC_DIRS[$src]+="$p"$'\n'
+        if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
+      done
+      # The nearest enclosing space: the longest space path that holds the file's directory
+      p="$d" found=false
+      while :; do
+        if [[ -n "${here["/$p"]:-}" ]]; then found=true; break; fi
+        [[ -n "$p" ]] || break
+        if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
+      done
+      if $found; then
+        id="$src${p:+/$p}"
+        if [[ -n "$p" ]]; then f="${rel#"$p"/}"; else f="$rel"; fi
+        SPACE_FILES[$id]+="$f"$'\n'
+        SRC_OWNER["$src|$rel"]="$id"
+      else
+        nown=$((nown + 1))
+        [[ -n "$first" ]] || first="$src/$rel"
+      fi
+    done
+  done
+  if [[ $nown -gt 0 ]] && ! $UNOWNED_WARNED; then
+    UNOWNED_WARNED=true
+    warn "not in any space, not linked: $first$([[ $nown -eq 1 ]] || echo " (and $((nown - 1)) more)")"
+  fi
 }
 
-# Whether any space of <src> (or of <src>/<ws>) is still installed
-_has_spaces() {
-  local f
-  for f in "$WSM_INSTALLED/$1"/${2:-*}/*.yml; do [[ -f "$f" ]] && return 0; done
+# Forget what was loaded (wsm new, after it creates a space)
+_spaces_reset() {
+  SPACES_LOADED=false SPACE_IDS=()
+  SPACE_SRC=() SPACE_PATH=() SPACE_DIR=() SPACE_FILES=() SRC_SD=() SRC_DIRS=() SRC_DIRSET=() SRC_OWNER=()
+  INSTALLED=() FSTATE=() STATE_DONE=() SRC_LEFT=() VANISHED_IDS=() VANISHED_SRC=() VANISHED_PATH=()
+}
+
+# The nearest space enclosing directory <dir> (below <src>'s spaces/), itself included, into
+# REPLY; 1 when there is none. With <installed>, only an installed one (or <extra>).
+_space_of() {
+  local src="$1" p="$2" installed="${3:-false}" extra="${4:-}" id
+  while :; do
+    id="$src${p:+/$p}"
+    if [[ -n "${SPACE_DIR[$id]:-}" ]] &&
+       { ! $installed || [[ -n "${INSTALLED[$id]:-}" || "$id" == "$extra" ]]; }; then
+      REPLY="$id"
+      return 0
+    fi
+    [[ -n "$p" ]] || break
+    if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
+  done
+  REPLY=""
   return 1
 }
 
-# After spaces are removed: unlink the workspace and source levels no space is left under, unless
-# they were installed by name. A source stays while one of its workspaces does.
-# Usage: _unlink_orphans <src/ws>...
-_unlink_orphans() {
-  local sw src ws f
-  local -a srcs=()
-  for sw in "$@"; do
-    src="${sw%%/*}" ws="${sw#*/}"
-    _in_list "$src" ${srcs[@]+"${srcs[@]}"} || srcs+=("$src")
-    [[ -n "$ws" && "$ws" != "$sw" ]] || continue
-    _has_spaces "$src" "$ws" && continue
-    f=$(_tracker_path "$src/$ws")
-    [[ -f "$f" ]] && ! _is_named "$f" && _unlink_unit "$f"
-  done
-  for src in ${srcs[@]+"${srcs[@]}"}; do
-    _has_spaces "$src" && continue
-    for f in "$WSM_INSTALLED/$src"/*.yml; do
-      [[ -f "$f" ]] && continue 2
-    done
-    f=$(_tracker_path "$src")
-    [[ -f "$f" ]] && ! _is_named "$f" && _unlink_unit "$f"
+# The spaces below <id> (its children at any depth), one per line
+_children_of() {
+  local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" c
+  for c in "${SPACE_IDS[@]}"; do
+    [[ "$c" != "$id" && "${SPACE_SRC[$c]}" == "$src" ]] || continue
+    [[ -z "$p" || "${SPACE_PATH[$c]}" == "$p"/* ]] && printf '%s\n' "$c"
   done
   return 0
+}
+
+# --- Specs --------------------------------------------------------------------------------
+#
+# A spec is an id or a prefix ending in /. Its first segment is the source when that is the alias
+# of a source with spaces/; otherwise it is a path, in the highest-priority source that has a
+# space at it (a prefix: at or under it). _spec_parse sets SP_SRC (empty: no source has it),
+# SP_PATH and SP_PREFIX; _spec_match <id> says whether a space is one the spec names.
+
+SP_SRC="" SP_PATH="" SP_PREFIX=false
+_spec_parse() {
+  local spec="$1" first id p
+  SP_PREFIX=false
+  [[ "$spec" != */ ]] || { SP_PREFIX=true; spec="${spec%/}"; }
+  first="${spec%%/*}"
+  if anfs_is_source "$first"; then
+    SP_SRC="$first" SP_PATH=""
+    [[ "$spec" != */* ]] || SP_PATH="${spec#*/}"
+    return 0
+  fi
+  SP_SRC="" SP_PATH="$spec"
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    p="${SPACE_PATH[$id]}"
+    if [[ "$p" == "$SP_PATH" ]] || { $SP_PREFIX && [[ "$p" == "$SP_PATH"/* ]]; }; then
+      SP_SRC="${SPACE_SRC[$id]}"
+      return 0
+    fi
+  done
+}
+
+# Whether <src> <path> is what the parsed spec names
+_spec_match_path() {
+  [[ -n "$SP_SRC" && "$1" == "$SP_SRC" ]] || return 1
+  [[ "$2" == "$SP_PATH" ]] && return 0
+  $SP_PREFIX && [[ -z "$SP_PATH" || "$2" == "$SP_PATH"/* ]]
+}
+_spec_match() { _spec_match_path "${SPACE_SRC[$1]}" "${SPACE_PATH[$1]}"; }
+
+# The ids the specs name, into EXPANDED (each once, the sources' order then the path order).
+# A spec that names no space fails (1) before anything is touched.
+EXPANDED=()
+_specs_expand() {
+  local spec id any
+  local -A seen=()
+  EXPANDED=()
+  for spec in "$@"; do
+    _spec_parse "$spec"
+    any=false
+    for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+      _spec_match "$id" || continue
+      any=true
+      [[ -z "${seen[$id]:-}" ]] || continue
+      seen[$id]=1
+      EXPANDED+=("$id")
+    done
+    $any && continue
+    if [[ "$spec" != */* ]] && anfs_is_source "$spec"; then
+      fail "$EX_NOTFOUND" "$spec has no space.yml at spaces/, so no space $spec: $spec/ is every space in it"
+    fi
+    fail "$EX_NOTFOUND" "no space matches '$spec' (wsm ls)"
+  done
+}
+
+# --- The state, from the links ------------------------------------------------------------
+#
+# Nothing is stored. _state_load reads, per source, the links under <root>/<source>/:
+#   INSTALLED[id]          set when the space's space.yml is a link to it (anfs_link_check ok)
+#   FSTATE["src|rel"]      every file's state (full only): ok, missing, wrong, in the way
+#   SRC_LEFT[src]          the leftover links (full only): dangling links into the source's
+#                          spaces/ that no file of the source owns, one per line, below spaces/
+#   VANISHED_IDS           a leftover space.yml where the source has no space: "not in the source"
+# Light (false) checks only the space.yml links, for path, cd, new, add and repo; full (true) every
+# file and the leftovers, for list, install and remove.
+
+declare -A INSTALLED=() FSTATE=() STATE_DONE=() SRC_LEFT=() VANISHED_SRC=() VANISHED_PATH=()
+VANISHED_IDS=()
+
+# Usage: _state_load <full:true|false> [source...]   (after _spaces_load and _root_load)
+_state_load() {
+  local full="$1" src id p r out state f rc
+  shift
+  local -a srcs=("$@")
+  [[ ${#srcs[@]} -gt 0 ]] || srcs=(${ANFS_SRC_NAMES[@]+"${ANFS_SRC_NAMES[@]}"})
+  for src in ${srcs[@]+"${srcs[@]}"}; do
+    [[ -n "${SRC_SD[$src]:-}" ]] || continue
+    [[ "${STATE_DONE[$src]:-}" != full ]] || continue
+    ! [[ "$full" == false && -n "${STATE_DONE[$src]:-}" ]] || continue
+    STATE_DONE[$src]=$([[ "$full" == true ]] && echo full || echo light)
+    r="$ROOT/$src"
+    [[ -d "$r" ]] || continue
+    rc=0
+    out=$(anfs_link_check "${SRC_SD[$src]}" "$r" <(
+      for id in "${SPACE_IDS[@]}"; do
+        [[ "${SPACE_SRC[$id]}" == "$src" ]] || continue
+        p="${SPACE_PATH[$id]}"
+        if [[ "$full" == true ]]; then
+          while IFS= read -r f; do
+            [[ -n "$f" ]] && printf '%s\n' "${p:+$p/}$f"
+          done <<< "${SPACE_FILES[$id]}"
+        else
+          printf '%s\n' "${p:+$p/}space.yml"
+        fi
+      done)) || rc=$?
+    [[ $rc -eq 0 ]] || { warn "cannot read what is installed of $src"; continue; }
+    while IFS=$'\t' read -r state f; do
+      [[ -n "$f" ]] && FSTATE["$src|$f"]="$state"
+    done <<< "$out"
+    for id in "${SPACE_IDS[@]}"; do
+      [[ "${SPACE_SRC[$id]}" == "$src" ]] || continue
+      p="${SPACE_PATH[$id]}"
+      [[ "${FSTATE["$src|${p:+$p/}space.yml"]:-}" != ok ]] || INSTALLED[$id]=1
+    done
+    [[ "$full" != true ]] || _leftovers_scan "$src"
+  done
+}
+
+# The leftovers of <src> (SRC_LEFT, VANISHED_*): for every directory of the source's spaces/ whose
+# mirror under <root>/<src> is a real directory, its entries (bash globs, no find): a dangling link
+# there that is no file's of the source, and for an entry that is a real directory and no mirror,
+# only <entry>/space.yml. The links' texts are read with one readlink.
+_leftovers_scan() {
+  local src="$1" r="$ROOT/$1" sd csd d m e rel t i n=0 id vp
+  local -a cand=() crel=() texts=()
+  sd="${SRC_SD[$src]}"
+  csd=$(_canon "$sd") || return 0
+  SRC_LEFT[$src]=""
+  while IFS= read -r d; do
+    m="$r${d:+/$d}"
+    [[ -d "$m" && ! -L "$m" ]] || continue
+    for e in "$m"/* "$m"/.[!.]* "$m"/..?*; do
+      rel="${d:+$d/}${e##*/}"
+      if [[ -L "$e" ]]; then
+        [[ -z "${SRC_OWNER["$src|$rel"]:-}" && ! -e "$e" ]] || continue
+        cand+=("$e") crel+=("$rel")
+      elif [[ -d "$e" && -z "${SRC_DIRSET["$src|$rel"]:-}" ]]; then
+        [[ -L "$e/space.yml" && ! -e "$e/space.yml" ]] || continue
+        cand+=("$e/space.yml") crel+=("$rel/space.yml")
+      fi
+    done
+  done <<< "${SRC_DIRS[$src]}"
+  [[ ${#cand[@]} -gt 0 ]] || return 0
+
+  while IFS= read -r t; do texts[$n]="$t"; n=$((n + 1)); done < <(printf '%s\0' "${cand[@]}" | xargs -0 readlink -- 2>/dev/null)
+  [[ $n -eq ${#cand[@]} ]] || { texts=(); for i in "${!cand[@]}"; do texts[$i]=$(readlink -- "${cand[$i]}" 2>/dev/null) || texts[$i]=""; done; }
+  for i in "${!cand[@]}"; do
+    t="${texts[$i]}"
+    [[ -n "$t" ]] || continue
+    [[ "$t" == /* ]] || t="${cand[$i]%/*}/$t"
+    # Dangling: its deepest existing directory resolved, the rest as written
+    _anfs_link_canon "$t"
+    [[ "$_ANFS_P" == "$csd"/* ]] || continue
+    rel="${crel[$i]}"
+    if [[ "${rel##*/}" == space.yml ]]; then
+      vp=""
+      [[ "$rel" != */* ]] || vp="${rel%/*}"
+      id="$src${vp:+/$vp}"
+      if [[ -z "${SPACE_DIR[$id]:-}" ]]; then
+        _in_list "$id" ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"} || VANISHED_IDS+=("$id")
+        VANISHED_SRC[$id]="$src" VANISHED_PATH[$id]="$vp"
+        continue
+      fi
+    fi
+    SRC_LEFT[$src]+="$rel"$'\n'
+  done
+}
+
+# The leftovers that count against <id>: those whose nearest installed space (or <id>, as it is
+# being installed) it is, one per line, below the source's spaces/
+_leftovers_of() {
+  local id="$1" src="${SPACE_SRC[$1]}" rel d
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    d=""
+    [[ "$rel" != */* ]] || d="${rel%/*}"
+    _space_of "$src" "$d" true "$id" && [[ "$REPLY" == "$id" ]] && printf '%s\n' "$rel"
+  done <<< "${SRC_LEFT[$src]:-}"
+  return 0
+}
+
+# The directory of space <id> under the root
+_space_home() {
+  local src="${SPACE_SRC[$1]:-${VANISHED_SRC[$1]:-}}" p="${SPACE_PATH[$1]:-${VANISHED_PATH[$1]:-}}"
+  printf '%s\n' "$ROOT/$src${p:+/$p}"
+}
+
+# The counts of an installed space: C_MISSING C_WRONG C_WAY C_LEFT; and the NOTE in REPLY
+C_MISSING=0 C_WRONG=0 C_WAY=0 C_LEFT=0
+_space_counts() {
+  local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" f note=""
+  C_MISSING=0 C_WRONG=0 C_WAY=0 C_LEFT=0
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    case "${FSTATE["$src|${p:+$p/}$f"]:-missing}" in
+      missing) C_MISSING=$((C_MISSING + 1)) ;;
+      wrong) C_WRONG=$((C_WRONG + 1)) ;;
+      "in the way") C_WAY=$((C_WAY + 1)) ;;
+    esac
+  done <<< "${SPACE_FILES[$id]}"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] && C_LEFT=$((C_LEFT + 1))
+  done < <(_leftovers_of "$id")
+  [[ $C_MISSING -eq 0 ]] || note+="${note:+, }$C_MISSING missing"
+  [[ $C_WRONG -eq 0 ]] || note+="${note:+, }$C_WRONG wrong"
+  [[ $C_WAY -eq 0 ]] || note+="${note:+, }$C_WAY in the way"
+  [[ $C_LEFT -eq 0 ]] || note+="${note:+, }$C_LEFT leftover$([[ $C_LEFT -eq 1 ]] || echo s)"
+  REPLY="$note"
 }
 
 # --- Linking ------------------------------------------------------------------------------
 
-# The files of one level of spaces/, relative, sorted: a space is everything below it; a workspace
-# or the source level what is not inside one of the (non-hidden) directories below it.
-# Usage: _unit_files <dir> <source|ws|space>
-_unit_files() {
-  local dir="$1" level="$2" d
-  local -a prune=()
-  [[ -d "$dir" ]] || return 0
-  if [[ "$level" != space ]]; then
-    for d in "$dir"/*/; do
-      [[ -d "$d" ]] && prune+=(-path "./$(basename -- "$d")" -o)
-    done
-  fi
-  (
-    cd "$dir"
-    find . \( "${prune[@]+"${prune[@]}"}" -false \) -prune -o \
-      \( -type f -o -type l \) ! -name .DS_Store -print | sed 's|^\./||' | LC_ALL=C sort
-  )
+# Move what is in the way at <root>/<src>/<rel> aside, as ppm does: to
+# $WSM_STATE_HOME/backup/<src>/<rel>, or .1, .2 when that is taken. Nothing restores it.
+_backup() {
+  local src="$1" rel="$2" dest n=1
+  dest="$WSM_STATE_HOME/backup/$src/$rel"
+  while [[ -e "$dest" || -L "$dest" ]]; do
+    dest="$WSM_STATE_HOME/backup/$src/$rel.$n"
+    n=$((n + 1))
+  done
+  mkdir -p -- "${dest%/*}"
+  mv -- "$ROOT/$src/$rel" "$dest"
+  echo "  moved aside $(_display "$ROOT/$src/$rel") -> $(_display "$dest")"
 }
 
-# Link one level (<from>, at <level>) into <root> (lib/anfs/link.sh): a relative link per file, so
-# every directory is real and what install clones lands in the target, never in the source. All
-# or nothing: anything in the way fails the level before anything is linked. A link the previous
-# install recorded (OLD_FILES) is ours to replace wherever it points, and one whose file left the
-# source is removed. A space always reports; the source and workspace levels only when they have
-# files.
-# Usage: _link_unit <from> <root> <level> <dry> <header>   (sets LINKED to the files)
-OLD_FILES=() LINKED=()
-_link_unit() {
-  local from="$1" root="$2" level="$3" dry="$4" header="$5" f plan class rest why rc=0
-  local conflicts=0 made=0 gone
-  local -a gone_files=() clear=()
-  LINKED=()
-  while IFS= read -r f; do
-    [[ -n "$f" ]] && LINKED+=("$f")
-  done < <(_unit_files "$from" "$level")
-  for f in ${OLD_FILES[@]+"${OLD_FILES[@]}"}; do
-    _in_list "$f" ${LINKED[@]+"${LINKED[@]}"} && continue
-    [[ -L "$root/$f" ]] && gone_files+=("$f")
-  done
-  gone=${#gone_files[@]}
+# Link one space's files into <root>/<source>/<path> (lib/anfs/link.sh): a relative link per file,
+# so every directory is real and what install clones lands in the root, never in the source. All
+# or nothing: anything in the way fails the space before anything is linked, unless -f moves it
+# aside. Then its leftovers go.
+# Usage: _install_space <id> <dry> <force>
+_install_space() {
+  local id="$1" dry="$2" force="$3" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" sd r dir
+  local plan class rest f why rc=0 made=0 total=0 conflicts=0 list
+  local -a aside=() left=()
+  sd="${SRC_SD[$src]}" r="$ROOT/$src" dir=$(_space_home "$id")
+  list=$(while IFS= read -r f; do [[ -n "$f" ]] && printf '%s\n' "${p:+$p/}$f"; done <<< "${SPACE_FILES[$id]}")
+  echo "space $id -> $(_display "$dir")"
 
-  [[ "$level" == space || ${#LINKED[@]} -gt 0 || $gone -gt 0 ]] || return 0
-  echo "$header"
-
-  plan=$(anfs_link_plan "$from" "$root" <(printf '%s\n' ${LINKED[@]+"${LINKED[@]}"})) || rc=$?
+  plan=$(anfs_link_plan "$sd" "$r" <(printf '%s\n' "$list")) || rc=$?
   [[ $rc -ne 2 ]] || return 1
   while IFS=$'\t' read -r class rest; do
-    f="${rest%%$'\t'*}" why="${rest#*$'\t'}"
+    [[ -n "$class" ]] || continue
+    f="${rest%%$'\t'*}" why=""
+    [[ "$rest" != *$'\t'* ]] || why="${rest#*$'\t'}"
+    total=$((total + 1))
     case "$class" in
       link|replace) made=$((made + 1)) ;;
       other|conflict)
-        if [[ "$why" != *" on the way: "* && "$why" != *"where a directory goes: "* && -L "$root/$f" ]] &&
-           _in_list "$f" ${OLD_FILES[@]+"${OLD_FILES[@]}"}; then
-          clear+=("$f")
+        # What is on the way to it is not the file's to move: -f never clears that
+        if $force && [[ "$why" != *" on the way: "* && "$why" != "a file where a directory goes: "* ]]; then
+          aside+=("$f")
           made=$((made + 1))
         else
-          warn "in the way: $(_display "$root/$f")"
+          warn "in the way: $(_display "$r/$f")${why:+ ($why)}"
           conflicts=$((conflicts + 1))
         fi
         ;;
     esac
   done <<< "$plan"
-  [[ $conflicts -eq 0 ]] || return 1
+  if [[ $conflicts -gt 0 ]]; then
+    $force || warn "wsm install -f $id moves them aside"
+    return 1
+  fi
+  mapfile -t left < <(_leftovers_of "$id")
 
   if ! $dry; then
-    for f in ${clear[@]+"${clear[@]}"}; do rm -f -- "$root/$f"; done
-    if [[ $made -gt 0 ]] &&
-       ! anfs_link_apply "$from" "$root" <(printf '%s\n' "${LINKED[@]}") >/dev/null; then
-      warn "linking failed for $(_display "$root")"
+    for f in ${aside[@]+"${aside[@]}"}; do _backup "$src" "$f"; done
+    if [[ $made -gt 0 ]] && ! anfs_link_apply "$sd" "$r" <(printf '%s\n' "$list") >/dev/null; then
+      warn "linking failed for $(_display "$dir")"
       return 1
     fi
-    for f in ${gone_files[@]+"${gone_files[@]}"}; do
-      rm -f -- "$root/$f"
-      _rmdir_empty_up "$(dirname -- "$root/$f")" "$root"
+    for f in ${left[@]+"${left[@]}"}; do
+      rm -f -- "$r/$f"
+      _rmdir_empty_up "$(dirname -- "$r/$f")" "$r"
     done
+  else
+    for f in ${aside[@]+"${aside[@]}"}; do echo "  would move aside $(_display "$r/$f")"; done
   fi
 
-  local verb=linked
-  $dry && verb="would link"
-  printf '  %s %d of %d file(s)' "$verb" "$made" "${#LINKED[@]}"
-  [[ $gone -eq 0 ]] || printf ', %s %d gone from the source' "$($dry && echo would unlink || echo unlinked)" "$gone"
+  printf '  %s %d of %d file(s)' "$($dry && echo "would link" || echo linked)" "$made" "$total"
+  [[ ${#left[@]} -eq 0 ]] || printf ', %s %d leftover(s)' "$($dry && echo "would unlink" || echo unlinked)" "${#left[@]}"
   printf '\n'
 }
 
-# Link one level of <src>'s spaces/ (the source itself, a workspace or a space) into <target>
-# and record it. A level installed by name stays named on later installs.
-# Usage: _install_unit <src> <ws> <space> <target> <dry> [named]   (ws, space may be empty)
-_install_unit() {
-  local src="$1" ws="$2" space="$3" target="$4" dry="$5" named="${6:-false}" id rel level from root tracker f
-  rel="$ws${space:+/$space}"
-  id="$src${rel:+/$rel}"
-  level=source
-  [[ -n "$ws" ]] && level=ws
-  [[ -n "$space" ]] && level=space
-  from="$(_src_dir "$src")/spaces${rel:+/$rel}"
-  root="$target/$src${rel:+/$rel}"
-  tracker=$(_tracker_path "$id")
+# Unlink an installed space: its files that still point at their source file, its leftovers, then
+# its space.yml last (an interrupted remove leaves it partial, not invisible), then the directories
+# that leaves empty, up to <root>/<source>. Clones, the user's files and a child space's links keep
+# a directory alive.
+_remove_space() {
+  local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" r dir f
+  local -a dirs=()
+  r="$ROOT/$src" dir=$(_space_home "$id")
+  while IFS= read -r f; do
+    [[ -n "$f" && "$f" != space.yml ]] || continue
+    [[ "${FSTATE["$src|${p:+$p/}$f"]:-}" == ok ]] || continue
+    rm -f -- "$dir/$f"
+    dirs+=("$(dirname -- "$dir/$f")")
+  done <<< "${SPACE_FILES[$id]}"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    rm -f -- "$r/$f"
+    dirs+=("$(dirname -- "$r/$f")")
+  done < <(_leftovers_of "$id")
+  rm -f -- "$dir/space.yml"
+  unset "INSTALLED[$id]"
+  for f in ${dirs[@]+"${dirs[@]}"}; do _rmdir_empty_up "$f" "$ROOT"; done
+  _rmdir_empty_up "$dir" "$ROOT"
+}
 
-  OLD_FILES=()
-  _is_named "$tracker" && named=true
-  local was_installed=false
-  [[ ! -f "$tracker" ]] || was_installed=true
-  if [[ -f "$tracker" ]]; then
-    while IFS= read -r f; do [[ -n "$f" ]] && OLD_FILES+=("$f"); done < <(_tracker_files "$tracker")
-  fi
-  local label="$level"
-  [[ "$level" == ws ]] && label=workspace
-  _link_unit "$from" "$root" "$level" "$dry" "$label $id -> $(_display "$root")" || return 1
-  $dry || _tracker_write "$tracker" "$src" "$ws" "$space" "$target" "$root" "$named" ${LINKED[@]+"${LINKED[@]}"}
-  $dry || $was_installed || WSM_EV_INSTALLED+=("$id")
+# Whether link <path> points into canonical <dir> (live or dangling)
+_points_into() {
+  local t
+  t=$(readlink -- "$1") || return 1
+  [[ "$t" == /* ]] || t="${1%/*}/$t"
+  _anfs_link_canon "$t"
+  [[ "$_ANFS_P" == "$2"/* ]]
+}
+
+# The links a space that left the source still has under <dir>, dangling into the source's
+# spaces/: every directory walked (it was named), but not a clone, nor a live space's directory
+_remove_vanished_walk() {
+  local dir="$1" src="$2" csd="$3" e rel
+  for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    if [[ -L "$e" ]]; then
+      [[ "$e" != "$4" ]] || continue
+      [[ ! -e "$e" ]] && _points_into "$e" "$csd" && rm -f -- "$e"
+    elif [[ -d "$e" ]]; then
+      [[ ! -e "$e/.git" ]] || continue
+      rel="${e#"$ROOT/$src"/}"
+      [[ -z "${SPACE_DIR["$src/$rel"]:-}" ]] || continue
+      _remove_vanished_walk "$e" "$src" "$csd" "$4"
+      rmdir -- "$e" 2>/dev/null || true
+    fi
+  done
+  return 0
+}
+
+_remove_vanished() {
+  local id="$1" src="${VANISHED_SRC[$1]}" dir csd
+  dir=$(_space_home "$id")
+  csd=$(_canon "${SRC_SD[$src]}") || csd="${SRC_SD[$src]}"
+  _remove_vanished_walk "$dir" "$src" "$csd" "$dir/space.yml"
+  rm -f -- "$dir/space.yml"
+  _rmdir_empty_up "$dir" "$ROOT"
 }
 
 # --- Repositories -------------------------------------------------------------------------
 #
-# A space.yml at any level lists the repositories to clone into that level's directory:
-#   repositories: [{url, path, ref?}]
+# A space's space.yml lists the repositories to clone into its directory:
+#   repositories: [{url, path?, ref?}]
+# A repository's id is <space id>/<path>. A path may not lie inside a child space or contain one,
+# so the longest prefix of an id that is a space is its space.
 
-# A path from space.yml must stay inside its level
+# A path from space.yml must stay inside its space
 _repo_path_ok() {
   case "$1" in
     "") return 1 ;;
@@ -596,27 +762,40 @@ _repo_entries() {
   done < <(yq -r '.repositories[]? | [(.url // ""), (.path // ""), (.ref // "")] | .[]' "$1" 2>/dev/null)
 }
 
-# The repository paths a space.yml declares, one per line
-_repo_paths() {
-  local url path ref
-  while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
-    [[ -n "$path" ]] && printf '%s\n' "$path"
-  done < <(_repo_entries "$1")
-  return 0
+# Why repository <path> of space <id> cannot be, or nothing: a path that leaves the space, or one
+# inside a child space or holding one
+_repo_invalid() {
+  local id="$1" path="$2" c cp full
+  _repo_path_ok "$path" || { echo "a path inside the space is needed"; return 0; }
+  full="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$path"
+  while IFS= read -r c; do
+    [[ -n "$c" ]] || continue
+    cp="${SPACE_PATH[$c]}"
+    if [[ "$full" == "$cp" || "$full" == "$cp"/* ]]; then echo "inside the space $c"; return 0; fi
+    if [[ "$cp" == "$full"/* ]]; then echo "holds the space $c"; return 0; fi
+  done < <(_children_of "$id")
 }
 
-# Clone the repositories <file> declares into the level at <root>, or only the one at <only>
-# Usage: _repositories <root> <file> <dry:true|false> [only]
-_repositories() {
-  local root="$1" file="$2" dry="$3" only="${4:-}"
+# Clone the repositories space <id> declares into its directory, or only the one at <only>
+# Usage: _space_repositories <id> <dry:true|false> [only]
+_space_repositories() {
+  local id="$1" dry="$2" only="${3:-}" root file why
+  root=$(_space_home "$id") file="${SPACE_DIR[$id]}/space.yml"
   command -v git >/dev/null 2>&1 || fail "$EX_UNAVAIL" "install needs git"
 
   # One field per line rather than @tsv: tab is IFS whitespace, so `IFS=$TAB read` collapses
   # adjacent tabs and an entry with a field left out would slide the rest along by one.
   local url path ref target cloned=0 present=0 failed=0 seen=$'\n'
   while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
-    if [[ -z "$url" ]] || ! _repo_path_ok "$path"; then
-      warn "a repository needs a url, and a path inside its level (git's name for it when left out): url='$url' path='$path'"
+    [[ -z "$only" || "$path" == "$only" ]] || continue
+    if [[ -z "$url" || -z "$path" ]]; then
+      warn "a repository needs a url, and a path (git's name for it when left out): url='$url' path='$path'"
+      failed=$((failed + 1))
+      continue
+    fi
+    why=$(_repo_invalid "$id" "$path")
+    if [[ -n "$why" ]]; then
+      warn "invalid repository $id/$path: $why"
       failed=$((failed + 1))
       continue
     fi
@@ -627,7 +806,6 @@ _repositories() {
       continue
     fi
     seen="$seen$path"$'\n'
-    [[ -z "$only" || "$path" == "$only" ]] || continue
 
     target="$root/$path"
     if [[ -d "$target/.git" ]]; then
@@ -669,272 +847,71 @@ _repositories() {
   [[ $failed -eq 0 ]]
 }
 
-# Clone the repositories of the space.yml at one installed level, if it has one: the stowed
-# link in the tree, or the source's file on a dry run
-# Usage: _level_repositories <root> <from> <dry>
-_level_repositories() {
-  local root="$1" from="$2" dry="$3" file="$1/space.yml"
-  [[ -f "$file" ]] || file="$from/space.yml"
-  [[ -f "$file" ]] || return 0
-  _repositories "$root" "$file" "$dry"
+# A repository id split at the longest prefix that is a space: REPO_SPACE and REPO_PATH, or 1
+REPO_SPACE="" REPO_PATH=""
+_repo_split() {
+  local id="$1" pre rest=""
+  pre="$id"
+  while [[ "$pre" == */* ]]; do
+    rest="${pre##*/}${rest:+/$rest}" pre="${pre%/*}"
+    if [[ -n "${SPACE_DIR[$pre]:-}" ]]; then
+      REPO_SPACE="$pre" REPO_PATH="$rest"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Whether <rel> (below space <id>) is inside one of the space's repositories
+_in_repository() {
+  local id="$1" rel="$2" url path ref
+  while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+    [[ -n "$path" ]] || continue
+    [[ "$rel" == "$path" || "$rel" == "$path"/* ]] && return 0
+  done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
+  return 1
 }
 
 # --- install ------------------------------------------------------------------------------
 
-# The spaces a space depends on, as <ws>/<space> (anfs_resolve's deps callback). A bare name is a
-# sibling in the same workspace.
+# The spaces a space depends on (anfs_resolve's deps callback): ids, or paths that resolve from
+# the declaring source down. A trailing / is dropped: a dependency is one space.
 _space_deps() {
-  local file="$1/space.yml" ws dep
+  local file="$1/space.yml" dep
   [[ -f "$file" ]] || return 0
-  ws=$(basename -- "$(dirname -- "$1")")
   while IFS= read -r dep; do
-    [[ -n "$dep" ]] || continue
-    case "$dep" in
-      */*) printf '%s\n' "$dep" ;;
-      *)   printf '%s/%s\n' "$ws" "$dep" ;;
-    esac
+    [[ -n "$dep" ]] && printf '%s\n' "${dep%/}"
   done < <(yq -r '.depends[]? // ""' "$file" 2>/dev/null)
 }
 
-# Append source/ws/space to WANTED for every space of <src>'s workspace <ws> (all of them: *).
-# A level with no spaces is still installed: the spec names it.
-_want_workspace() {
-  local src="$1" ws="$2" d
-  for d in "$(_src_dir "$src")/spaces"/$ws/*/; do
-    [[ -d "$d" ]] || continue
-    d="${d%/}"
-    _is_level "$d" && _is_level "$(dirname -- "$d")" || continue
-    WANTED+=("$src/$(basename -- "$(dirname -- "$d")")/$(basename -- "$d")")
-  done
-}
-
-# Turn the install spec into source/ws/space entries (WANTED), and note the level it names
-# (SPEC_LEVEL: source, ws or space; SPEC_SRC, SPEC_WS): the source and workspace levels' own
-# repositories are cloned only when the spec names them or a level above. Or return 1.
-WANTED=() SPEC_LEVEL="" SPEC_SRC="" SPEC_WS=""
-_expand_spec() {
-  local spec="$1" a b i
-  SPEC_LEVEL=space SPEC_SRC="" SPEC_WS=""
-  case "$spec" in
-    */)
-      a="${spec%/}"
-      anfs_is_source "$a" || { warn "'$a' is not an anfs source with spaces (anfs src list)"; return 1; }
-      SPEC_LEVEL=source SPEC_SRC="$a"
-      _want_workspace "$a" '*'
-      ;;
-    */*/*)
-      WANTED+=("$spec")
-      ;;
-    */*)
-      a="${spec%%/*}" b="${spec#*/}"
-      # source/ws when that names one, else a bare ws/space for the resolver
-      if anfs_is_source "$a" && _is_level "$(_src_dir "$a")/spaces/$b"; then
-        SPEC_LEVEL=ws SPEC_SRC="$a" SPEC_WS="$b"
-        _want_workspace "$a" "$b"
-      else
-        WANTED+=("$spec")
-      fi
-      ;;
-    *)
-      # A bare workspace: the highest-priority source that has it; failing that, a source
-      for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
-        if _is_level "${ANFS_SRC_DIRS[$i]}/spaces/$spec"; then
-          SPEC_LEVEL=ws SPEC_SRC="${ANFS_SRC_NAMES[$i]}" SPEC_WS="$spec"
-          _want_workspace "${ANFS_SRC_NAMES[$i]}" "$spec"
-          return 0
-        fi
-      done
-      if anfs_is_source "$spec"; then
-        SPEC_LEVEL=source SPEC_SRC="$spec"
-        _want_workspace "$spec" '*'
-        return 0
-      fi
-      warn "no workspace or source named '$spec'"
-      return 1
-      ;;
-  esac
-}
-
-# Refuse a target inside a source checkout (the source would be stowed into itself, and what
-# install clones would land in it) or inside another source's installed tree
+# Refuse a root inside a source checkout: the source would be linked into itself, and what
+# install clones would land in it
 _target_check() {
-  local target="$1" s j
-  if s=$(_source_holding "$target"); then
-    warn "$(_display "$target") is inside the source $s: install somewhere else"
+  local s
+  if s=$(_source_holding "$ROOT"); then
+    warn "$(_display "$ROOT") (WSM_SPACES_HOME) is inside the source $s: set it somewhere else"
     return 1
   fi
-  for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-    s="${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}"
-    if [[ "$target" == "$s" || "$target" == "$s"/* ]]; then
-      warn "$(_display "$target") is inside $(_display "$s"), where ${ISRC_NAME[$j]} is installed"
-      return 1
-    fi
-  done
 }
 
-# The spec for the level at the current directory, which must hold a space.yml: in an installed
-# tree or in a source's spaces/
-_spec_here() {
-  local here
-  [[ -f space.yml ]] || usage_err "wsm install SPEC [DIR] (no space.yml in the current directory)"
-  _installed_load
-  here=$(_canon "$PWD") || here="$PWD"
-  if ! _context "$here" || ! $CTX_SPACES; then
-    fail "$EX_NOTFOUND" "not inside a source's spaces/ or an installed tree: wsm install SPEC"
-  fi
-  case $([[ -z "$CTX_REL" ]] && echo 0 || _parts "$CTX_REL") in
-    0) printf '%s/\n' "$CTX_SRC" ;;
-    1|2) printf '%s/%s\n' "$CTX_SRC" "$CTX_REL" ;;
-    *) fail "$EX_NOTFOUND" "not a source, workspace or space directory: $(_display "$here")" ;;
-  esac
-}
-
-cmd_install() {
-  local dry=${CLI_OPT[dry-run]:-false} spec="${1:-}" dir="${2:-}" u="wsm install [SPEC [DIR]] [-n]"
-  if [[ -z "$spec" ]]; then
-    spec=$(_spec_here)
-    echo "install $spec"
-  fi
-  if ! _valid_name "${spec%/}" || [[ "$spec" == */ && "${spec%/}" == */* ]] || [[ $(_parts "${spec%/}") -gt 3 ]]; then
-    case "$spec" in
-      .|..|/*|./*|../*|"~"*) warn "'$spec' is a directory, not a space: wsm install SPEC $spec" ;;
-    esac
-    usage_err "$u"
-  fi
-  _require_yq
-  [[ "$spec" != */ ]] || $dry || anfs_confirm "install $spec installs every space ${spec%/} has" "Install them?"
-
-  anfs_sources spaces
-  WANTED=()
-  _expand_spec "$spec" || exit "$EX_NOTFOUND"
-
-  # Dependency order; a missing space or a cycle exits here, before anything is stowed
-  ANFS_ORDER=() ANFS_ORDER_DIRS=()
-  if [[ ${#WANTED[@]} -gt 0 ]]; then
-    ( anfs_resolve spaces _space_deps "${WANTED[@]}" ) >/dev/null || exit "$EX_NOTFOUND"
-    anfs_resolve spaces _space_deps "${WANTED[@]}"
-  fi
-  _installed_load
-
-  # A source lives in one target: where it is installed, else DIR, else the spaces home. DIR is
-  # held to that only for the sources the spec names; a dependency from another source goes
-  # wherever that source already is.
-  local want i id src w t
-  local -a srcs=() targets=() named=() all=()
-  [[ -z "$SPEC_SRC" ]] || named+=("$SPEC_SRC")
-  for w in ${WANTED[@]+"${WANTED[@]}"}; do
-    _in_list "${w%%/*}" ${named[@]+"${named[@]}"} || named+=("${w%%/*}")
-  done
-  all=(${named[@]+"${named[@]}"})
-  for w in ${ANFS_ORDER[@]+"${ANFS_ORDER[@]}"}; do all+=("${w%%/*}"); done
-  want=$(_canon_maybe "$(_abs "${dir:-$(_spaces_home)}")")
-  for src in ${all[@]+"${all[@]}"}; do
-    _in_list "$src" ${srcs[@]+"${srcs[@]}"} && continue
-    t=$(_src_target "$src")
-    if [[ -n "$t" && -n "$dir" && "$t" != "$want" ]] && _in_list "$src" "${named[@]}"; then
-      fail "$EX_NOTFOUND" "$src is installed in $(_display "$t"), and a source lives in one target: wsm remove $src/ first, or leave out DIR"
-    fi
-    [[ -n "$t" ]] || { _target_check "$want" || exit "$EX_NOTFOUND"; t="$want"; }
-    srcs+=("$src") targets+=("$t")
-  done
-
-  local rest ws space sdir done_units=" " failed=0 j d
-  # The level the spec names, and for a source every workspace in it, whether or not it has
-  # spaces: installed by name, with their repositories
-  if [[ -n "$SPEC_SRC" ]]; then
-    src="$SPEC_SRC" sdir=$(_src_dir "$SPEC_SRC")/spaces
-    for j in "${!srcs[@]}"; do [[ "${srcs[$j]}" == "$src" ]] && t="${targets[$j]}"; done
-    $dry || mkdir -p -- "$t" || die "cannot create $t"
-    done_units="$done_units$src "
-    if _install_unit "$src" "" "" "$t" "$dry" "$([[ "$SPEC_LEVEL" == source ]] && echo true || echo false)"; then
-      if [[ "$SPEC_LEVEL" == source ]]; then
-        _level_repositories "$t/$src" "$sdir" "$dry" || failed=$((failed + 1))
-      fi
-    else
-      failed=$((failed + 1))
-    fi
-    for d in "$sdir"/*/; do
-      d="${d%/}"
-      _is_level "$d" || continue
-      ws="${d##*/}"
-      [[ "$SPEC_LEVEL" == source || "$ws" == "$SPEC_WS" ]] || continue
-      done_units="$done_units$src/$ws "
-      if _install_unit "$src" "$ws" "" "$t" "$dry" true; then
-        _level_repositories "$t/$src/$ws" "$sdir/$ws" "$dry" || failed=$((failed + 1))
-      else
-        failed=$((failed + 1))
-      fi
-    done
-  fi
-
-  for i in ${ANFS_ORDER[@]+"${!ANFS_ORDER[@]}"}; do
-    id="${ANFS_ORDER[$i]}"
-    src="${id%%/*}" rest="${id#*/}"
-    ws="${rest%%/*}" space="${rest#*/}"
-    sdir=$(_src_dir "$src")/spaces
-    for j in "${!srcs[@]}"; do [[ "${srcs[$j]}" == "$src" ]] && t="${targets[$j]}"; done
-    if ! $dry; then
-      mkdir -p -- "$t" || die "cannot create $t"
-    fi
-
-    # The levels above the space, once each (their repositories only when named, above)
-    if [[ "$done_units" != *" $src "* ]]; then
-      done_units="$done_units$src "
-      _install_unit "$src" "" "" "$t" "$dry" || failed=$((failed + 1))
-    fi
-    if [[ "$done_units" != *" $src/$ws "* ]]; then
-      done_units="$done_units$src/$ws "
-      _install_unit "$src" "$ws" "" "$t" "$dry" || failed=$((failed + 1))
-    fi
-
-    _install_unit "$src" "$ws" "$space" "$t" "$dry" || { failed=$((failed + 1)); continue; }
-    _level_repositories "$t/$id" "${ANFS_ORDER_DIRS[$i]}" "$dry" || failed=$((failed + 1))
-  done
-  [[ $failed -eq 0 ]]
-}
-
-# --- Matching installed spaces ------------------------------------------------------------
-
-# Indexes of the installed spaces <spec> names, into MATCHES: source/, source/ws/space,
-# ws/space or source/ws, and space or ws
-MATCHES=()
-_match_installed() {
-  local spec="$1" j s w p
-  MATCHES=()
-  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-    s="${INST_SRC[$j]}" w="${INST_WS[$j]}" p="${INST_SPACE[$j]}"
-    case "$spec" in
-      */)    [[ "$s/" == "$spec" ]] ;;
-      */*/*) [[ "$s/$w/$p" == "$spec" ]] ;;
-      */*)   [[ "$w/$p" == "$spec" || "$s/$w" == "$spec" ]] ;;
-      *)     [[ "$p" == "$spec" || "$w" == "$spec" ]] ;;
-    esac && MATCHES+=("$j")
-  done
-  [[ ${#MATCHES[@]} -gt 0 ]]
-}
-
-# --- Where you are ------------------------------------------------------------------------
-#
-# new, add and install work out the source (and workspace) from a path: inside an installed tree,
-# <target>/<src>/..., or inside a source checkout, <source>/spaces/... CTX_REL is the path below
-# the source's spaces/ (empty at its top, or outside spaces/ in a checkout: CTX_SPACES=false).
-
-CTX_SRC="" CTX_REL="" CTX_KIND="" CTX_ROOT="" CTX_SPACES=true
+# Where you are: inside the tree, <root>/<src>/..., or inside a source checkout,
+# <source>/spaces/... CTX_REL is the path below the source's spaces/ (empty at its top, or outside
+# spaces/ in a checkout: CTX_SPACES=false).
+CTX_SRC="" CTX_REL="" CTX_KIND="" CTX_SPACES=true
 _context() {
-  local p="$1" j root d
-  CTX_SRC="" CTX_REL="" CTX_KIND="" CTX_ROOT="" CTX_SPACES=true
-  for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-    root="${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}"
-    if [[ "$p" == "$root" || "$p" == "$root"/* ]]; then
-      CTX_SRC="${ISRC_NAME[$j]}" CTX_KIND=installed CTX_ROOT="$root"
-      CTX_REL="${p#"$root"}" CTX_REL="${CTX_REL#/}"
+  local p="$1" s d
+  CTX_SRC="" CTX_REL="" CTX_KIND="" CTX_SPACES=true
+  if [[ "$p" == "$ROOT"/* ]]; then
+    s="${p#"$ROOT"/}" s="${s%%/*}"
+    if _is_registered "$s"; then
+      CTX_SRC="$s" CTX_KIND=tree
+      CTX_REL="${p#"$ROOT/$s"}" CTX_REL="${CTX_REL#/}"
       return 0
     fi
-  done
+  fi
   CTX_SRC=$(_source_holding "$p") || { CTX_SRC=""; return 1; }
   CTX_KIND=source
   d=$(_canon "$(gitsrc_dir "$CTX_SRC")")
-  CTX_ROOT="$d/spaces"
   if [[ "$p" == "$d/spaces" || "$p" == "$d/spaces"/* ]]; then
     CTX_REL="${p#"$d/spaces"}" CTX_REL="${CTX_REL#/}"
   else
@@ -942,172 +919,154 @@ _context() {
   fi
 }
 
+# The space at the current directory, which must hold a space.yml: in the tree or in a source's
+# spaces/
+_spec_here() {
+  local here
+  [[ -f space.yml ]] || usage_err "wsm install SPEC... (no space.yml in the current directory)"
+  here=$(_canon "$PWD") || here="$PWD"
+  if ! _context "$here" || ! $CTX_SPACES; then
+    fail "$EX_NOTFOUND" "not inside a source's spaces/ or the spaces tree: wsm install SPEC"
+  fi
+  printf '%s\n' "$CTX_SRC${CTX_REL:+/$CTX_REL}"
+}
+
+cmd_install() {
+  local dry=${CLI_OPT[dry-run]:-false} force=${CLI_OPT[force]:-false} spec id i failed=0 prefix=false
+  local -a specs=("$@") srcs=()
+  _root_load
+  if [[ ${#specs[@]} -eq 0 ]]; then
+    specs=("$(_spec_here)")
+    echo "install ${specs[0]}"
+  fi
+  for spec in "${specs[@]}"; do
+    _spec_ok "$spec"
+    [[ "$spec" != */ ]] || prefix=true
+  done
+  _require_yq
+  _spaces_load
+  _specs_expand "${specs[@]}"
+  ! $prefix || $dry || anfs_confirm "install ${specs[*]} installs every space under a prefix: ${EXPANDED[*]}" "Install them?"
+
+  # Dependency order; a missing space or a cycle exits here, before anything is linked
+  ANFS_ORDER=() ANFS_ORDER_DIRS=()
+  ( anfs_resolve spaces _space_deps "${EXPANDED[@]}" ) >/dev/null || exit "$EX_NOTFOUND"
+  anfs_resolve spaces _space_deps "${EXPANDED[@]}"
+  for id in "${ANFS_ORDER[@]}"; do
+    [[ -n "${SPACE_DIR[$id]:-}" ]] || fail "$EX_NOTFOUND" "no space $id (a dependency's name is an id or a path: wsm ls)"
+    _in_list "${SPACE_SRC[$id]}" ${srcs[@]+"${srcs[@]}"} || srcs+=("${SPACE_SRC[$id]}")
+  done
+
+  _target_check || exit "$EX_NOTFOUND"
+  _state_load true "${srcs[@]}"
+  local -A was=()
+  for id in "${ANFS_ORDER[@]}"; do [[ -z "${INSTALLED[$id]:-}" ]] || was[$id]=1; done
+  $dry || mkdir -p -- "$ROOT" || die "cannot create $ROOT"
+
+  for i in "${!ANFS_ORDER[@]}"; do
+    id="${ANFS_ORDER[$i]}"
+    if ! _install_space "$id" "$dry" "$force"; then
+      failed=$((failed + 1))
+      continue
+    fi
+    if ! $dry; then
+      INSTALLED[$id]=1
+      [[ -n "${was[$id]:-}" ]] || WSM_EV_INSTALLED+=("$id")
+    fi
+    _space_repositories "$id" "$dry" || failed=$((failed + 1))
+  done
+  [[ $failed -eq 0 ]]
+}
+
 # --- Commands -----------------------------------------------------------------------------
 
-cmd_remove() {
-  local spec j rc=0 f
-  local -a specs=("$@") drop=() sws=()
+# The installed spaces and the ones not in the source that <spec> names, into MATCHES
+MATCHES=()
+_match_installed() {
+  local id
+  MATCHES=()
+  _spec_parse "$1"
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -n "${INSTALLED[$id]:-}" ]] && _spec_match "$id" && MATCHES+=("$id")
+  done
+  for id in ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"}; do
+    _spec_match_path "${VANISHED_SRC[$id]}" "${VANISHED_PATH[$id]}" && MATCHES+=("$id")
+  done
+  [[ ${#MATCHES[@]} -gt 0 ]]
+}
 
-  _installed_load
-  anfs_sources spaces
-  local found id
-  local -a levels=()
-  for spec in "${specs[@]}"; do
-    found=false
-    if _match_installed "$spec"; then
-      found=true
-      for j in "${MATCHES[@]}"; do
-        _in_list "$j" ${drop[@]+"${drop[@]}"} || drop+=("$j")
-      done
-    fi
-    # A workspace the spec names goes too, even one installed by name: source/ws or a bare ws
-    for j in ${IWS_ID[@]+"${!IWS_ID[@]}"}; do
-      id="${IWS_ID[$j]}"
-      case "$spec" in
-        */|*/*/*) false ;;
-        */*)   [[ "$id" == "$spec" ]] ;;
-        *)     [[ "${id#*/}" == "$spec" ]] ;;
-      esac || continue
-      found=true
-      _in_list "$id" ${levels[@]+"${levels[@]}"} || levels+=("$id")
-    done
-    # And a source: source/, or a bare name that matched nothing else
-    local whole=false
-    case "$spec" in */) whole=true ;; */*) ;; *) $found || whole=true ;; esac
-    for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-      $whole && [[ "${ISRC_NAME[$j]}" == "${spec%/}" ]] || continue
-      found=true
-      if _match_installed "${spec%/}/"; then
-        for f in "${MATCHES[@]}"; do
-          _in_list "$f" ${drop[@]+"${drop[@]}"} || drop+=("$f")
-        done
-      fi
-      for f in ${IWS_ID[@]+"${IWS_ID[@]}"}; do
-        [[ "${f%%/*}" == "${spec%/}" ]] || continue
-        _in_list "$f" ${levels[@]+"${levels[@]}"} || levels+=("$f")
-      done
-      _in_list "${ISRC_NAME[$j]}" ${levels[@]+"${levels[@]}"} || levels+=("${ISRC_NAME[$j]}")
-    done
-    if ! $found; then
+cmd_remove() {
+  local spec id rc=0
+  local -a drop=() order=()
+  for spec in "$@"; do _spec_ok "$spec"; done
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load true
+  for spec in "$@"; do
+    if ! _match_installed "$spec"; then
       warn "not installed: $spec"
       rc=$EX_NOTFOUND
+      continue
     fi
+    for id in "${MATCHES[@]}"; do
+      _in_list "$id" ${drop[@]+"${drop[@]}"} || drop+=("$id")
+    done
   done
-
-  local what=""
-  for j in ${drop[@]+"${drop[@]}"}; do what+=" ${INST_ID[$j]}"; done
-  for id in ${levels[@]+"${levels[@]}"}; do what+=" $id"; done
-  [[ -z "$what" ]] || anfs_confirm "remove unlinks$what (clones and your files stay)" "Remove?"
-  for j in ${drop[@]+"${drop[@]}"}; do
-    _unlink_unit "${INST_FILE[$j]}"
-    _in_list "${INST_SRC[$j]}/${INST_WS[$j]}" ${sws[@]+"${sws[@]}"} || sws+=("${INST_SRC[$j]}/${INST_WS[$j]}")
-    printf 'removed %s %s\n' "${INST_ID[$j]}" "$(_display "${INST_DIR[$j]}")"
+  [[ ${#drop[@]} -gt 0 ]] || return "$rc"
+  anfs_confirm "remove unlinks ${drop[*]} (clones and your files stay)" "Remove?"
+  # The deepest first, so a parent's directories are left empty for it to take
+  mapfile -t order < <(for id in "${drop[@]}"; do printf '%s\t%s\n' "${#id}" "$id"; done | sort -rn | cut -f2-)
+  for id in "${order[@]}"; do
+    if [[ -n "${VANISHED_SRC[$id]:-}" ]]; then _remove_vanished "$id"; else _remove_space "$id"; fi
+    printf 'removed %s %s\n' "$id" "$(_display "$(_space_home "$id")")"
+    WSM_EV_REMOVED+=("$id")
   done
-  # Workspaces before sources: a source's tree is gone only once nothing below it is installed
-  for id in ${levels[@]+"${levels[@]}"}; do
-    [[ "$id" == */* ]] || continue
-    _has_spaces "${id%%/*}" "${id#*/}" && continue
-    f=$(_tracker_path "$id")
-    [[ -f "$f" ]] || continue
-    printf 'removed %s %s\n' "$id" "$(_display "$(yq -r '.dir' "$f")")"
-    _unlink_unit "$f"
-    _in_list "$id" ${sws[@]+"${sws[@]}"} || sws+=("$id")
-  done
-  for id in ${levels[@]+"${levels[@]}"}; do
-    [[ "$id" != */* ]] || continue
-    _has_spaces "$id" && continue
-    local -a left=()
-    for f in "$WSM_INSTALLED/$id"/*.yml; do [[ -f "$f" ]] && left+=("$f"); done
-    [[ ${#left[@]} -eq 0 ]] || continue
-    f=$(_tracker_path "$id")
-    [[ -f "$f" ]] || continue
-    printf 'removed %s/ %s\n' "$id" "$(_display "$(yq -r '.dir' "$f")")"
-    _unlink_unit "$f"
-  done
-  _unlink_orphans ${sws[@]+"${sws[@]}"}
   return "$rc"
 }
 
-# Resolve a cd/path query into one LABEL and DIR: a space first (source/ws/space, ws/space,
-# space), then a workspace (source/ws, ws), then a source (source/, source). Exits 1 on no match
-# and 2 on several, so it must be called directly, never in $(...).
-Q_LABEL="" Q_DIR=""
+# Resolve a cd/path query into Q_DIR: an installed id; the installed ids that end in /<QUERY>; a
+# source (<source>/ or <source>) names <root>/<source>. Exits 1 on no match and 2 on several, so
+# it must be called directly, never in $(...).
+Q_ID="" Q_DIR=""
 _resolve_query() {
-  local q="$1" j s w p
-  local -a labels=() dirs=()
-  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-    s="${INST_SRC[$j]}" w="${INST_WS[$j]}" p="${INST_SPACE[$j]}"
-    case "$q" in
-      */) false ;;
-      */*/*) [[ "$s/$w/$p" == "$q" ]] ;;
-      */*)   [[ "$w/$p" == "$q" ]] ;;
-      *)     [[ "$p" == "$q" ]] ;;
-    esac || continue
-    labels+=("$s/$w/$p") dirs+=("${INST_DIR[$j]}")
-  done
-  if [[ ${#labels[@]} -eq 0 ]]; then
-    for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-      s="${INST_SRC[$j]}" w="${INST_WS[$j]}"
-      case "$q" in
-        */|*/*/*) false ;;
-        */*)   [[ "$s/$w" == "$q" ]] ;;
-        *)     [[ "$w" == "$q" ]] ;;
-      esac || continue
-      _in_list "$s/$w" ${labels[@]+"${labels[@]}"} && continue
-      labels+=("$s/$w") dirs+=("$(dirname -- "${INST_DIR[$j]}")")
-    done
-    # A workspace installed with no space in it
-    for j in ${IWS_ID[@]+"${!IWS_ID[@]}"}; do
-      case "$q" in
-        */|*/*/*) false ;;
-        */*)   [[ "${IWS_ID[$j]}" == "$q" ]] ;;
-        *)     [[ "${IWS_ID[$j]#*/}" == "$q" ]] ;;
-      esac || continue
-      _in_list "${IWS_ID[$j]}" ${labels[@]+"${labels[@]}"} && continue
-      labels+=("${IWS_ID[$j]}") dirs+=("${IWS_DIR[$j]}")
+  local q="${1%/}" id
+  local -a ids=()
+  Q_ID="" Q_DIR=""
+  if [[ -n "${INSTALLED[$q]:-}" ]]; then
+    ids=("$q")
+  else
+    for id in "${SPACE_IDS[@]}"; do
+      [[ -n "${INSTALLED[$id]:-}" && "$id" == */"$q" ]] && ids+=("$id")
     done
   fi
-  if [[ ${#labels[@]} -eq 0 ]]; then
-    for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-      [[ "${ISRC_NAME[$j]}" == "${q%/}" ]] || continue
-      labels+=("${ISRC_NAME[$j]}/") dirs+=("${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}")
-    done
+  if [[ ${#ids[@]} -eq 0 ]]; then
+    if [[ "$q" != */* ]] && anfs_is_source "$q" && [[ -d "$ROOT/$q" ]]; then
+      Q_DIR="$ROOT/$q"
+      return 0
+    fi
+    fail "$EX_NOTFOUND" "no installed space matching '$1' (wsm ls)"
   fi
-  [[ ${#labels[@]} -gt 0 ]] || fail "$EX_NOTFOUND" "no installed space or workspace matching '$q'"
-  if [[ ${#labels[@]} -gt 1 ]]; then
-    warn "'$q' is ambiguous:"
-    for j in "${!labels[@]}"; do
-      printf '%s  %s\n' "${labels[$j]}" "$(_display "${dirs[$j]}")" >&2
+  if [[ ${#ids[@]} -gt 1 ]]; then
+    warn "'$1' is ambiguous:"
+    for id in "${ids[@]}"; do
+      printf '%s  %s\n' "$id" "$(_display "$(_space_home "$id")")" >&2
     done
     exit "$EX_AMBIGUOUS"
   fi
-  Q_LABEL="${labels[0]}" Q_DIR="${dirs[0]}"
-}
-
-# The source directory an installed directory was stowed from: <src>/spaces/<the same path>
-_source_of() {
-  local d="$1" j root
-  for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-    root="${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}"
-    if [[ "$d" == "$root" || "$d" == "$root"/* ]]; then
-      d="${d#"$root"}"
-      printf '%s/spaces%s\n' "$(_src_dir "${ISRC_NAME[$j]}")" "$d"
-      return 0
-    fi
-  done
-  fail "$EX_NOTFOUND" "no source directory for $(_display "$1")"
+  Q_ID="${ids[0]}" Q_DIR=$(_space_home "${ids[0]}")
 }
 
 cmd_path() {
-  local source=${CLI_OPT[source]:-false} q="${1:-}"
-  _installed_load
+  local source=${CLI_OPT[source]:-false} q="${1:-}" first d id best=""
+  _spaces_load
+  _root_load
 
   # -s with a source-qualified name needs nothing installed: <src>/spaces/<the rest>
-  local first d
   if $source && [[ -n "$q" ]]; then
     first="${q%%/*}"
-    if _is_registered "$first"; then
-      d="$(_src_dir "$first")/spaces"
+    if anfs_is_source "$first"; then
+      d="${SRC_SD[$first]}"
       [[ "$q" != */?* ]] || d="$d/${q#*/}"
       d="${d%/}"
       [[ -d "$d" ]] || fail "$EX_NOTFOUND" "no such directory in $first: $(_display "$d")"
@@ -1115,245 +1074,213 @@ cmd_path() {
       return 0
     fi
   fi
+  _state_load false
 
-  # No query: the deepest installed space, workspace or source directory containing the current
-  # directory
+  # No query: the deepest installed space containing the current directory
   if [[ -z "$q" ]]; then
-    local here j best=""
-    local -a cands=()
+    local here
     here=$(_canon "$PWD") || here="$PWD"
-    for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-      cands+=("${INST_DIR[$j]}" "$(dirname -- "${INST_DIR[$j]}")")
-    done
-    for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-      cands+=("${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}")
-    done
-    cands+=(${IWS_DIR[@]+"${IWS_DIR[@]}"})
-    for d in ${cands[@]+"${cands[@]}"}; do
+    for id in "${SPACE_IDS[@]}"; do
+      [[ -n "${INSTALLED[$id]:-}" ]] || continue
+      d=$(_space_home "$id")
       [[ "$here" == "$d" || "$here" == "$d"/* ]] || continue
-      [[ ${#d} -gt ${#best} ]] && best="$d"
+      [[ ${#id} -le ${#best} ]] || best="$id"
     done
     [[ -n "$best" ]] || fail "$EX_NOTFOUND" "not inside an installed space"
-    if $source; then _source_of "$best"; else printf '%s\n' "$best"; fi
+    if $source; then printf '%s\n' "${SPACE_DIR[$best]}"; else _space_home "$best"; fi
     return 0
   fi
 
   _resolve_query "$q"
   if $source; then
-    _source_of "$Q_DIR"
+    [[ -n "$Q_ID" ]] || { printf '%s\n' "${SRC_SD[${q%/}]}"; return 0; }
+    printf '%s\n' "${SPACE_DIR[$Q_ID]}"
     return 0
   fi
   printf '%s\n' "$Q_DIR"
-  # A gone directory still prints, so the cd wrapper can act on it
-  if [[ ! -d "$Q_DIR" ]]; then
-    warn "$Q_LABEL is stale: $(_display "$Q_DIR") is gone"
-    exit "$EX_STALE"
-  fi
 }
 
-# Whether level id <id> (src/, src/ws, src/ws/space) is in the subtree <filter> names
-_in_filter() {
-  local id="${1%/}" f="${2%/}"
-  [[ -z "$f" || "$id" == "$f" || "$id" == "$f"/* ]]
-}
-
-# One row for a level: its id, and where it is installed (- when it is not)
-_ls_row() {
-  local id="$1" d level=space status=""
-  case "$id" in */) level=source ;; */*/*) ;; *) level=workspace ;; esac
-  d=$(_installed_dir "${id%/}")
-  [[ -z "$d" || -d "$d" ]] || status=stale
-  anfs_row "$id" "$status" "$level" "$d"
-}
-
-# One row per repository a level's space.yml declares: where it goes, its state and its url
-_ls_repositories() {
-  local id="$1" from="$2" file="$2/space.yml" d url path ref state ahead
-  [[ -f "$file" ]] || return 0
-  d=$(_installed_dir "${id%/}")
-  while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
-    ahead=""
-    if [[ -z "$path" ]]; then
-      state="no path"
-    elif [[ -z "$d" ]]; then
-      state="not installed"
-    else
-      state=$(gitsrc_dir_status "$d/$path")
-      [[ "$state" != local ]] || state="not a repo"
-      ahead=$(gitsrc_dir_ahead "$d/$path")
-    fi
-    anfs_row "${id%/}/$path" "$state" "$url" "$ahead"
-  done < <(_repo_entries "$file")
-}
-
-# Check <filter> and load what _each_level reads; in the caller's shell, not a subshell
-_levels_load() {
-  if [[ -n "$1" ]]; then
-    _valid_name "${1%/}" && [[ $(_parts "${1%/}") -le 3 ]] || cli_usage_err "'$1' is not a level"
-  fi
-  _require_yq
-  _installed_load
-  anfs_sources spaces
-}
-
-# Run <fn> <id> <dir in the source> for every level the sources define under <filter> (all when
-# empty): sources (id ends in /), workspaces, spaces, in that order. After _levels_load.
-_each_level() {
-  local filter="$1" fn="$2" i name sd w s
-  for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
-    name="${ANFS_SRC_NAMES[$i]}" sd="${ANFS_SRC_DIRS[$i]}/spaces"
-    [[ -z "$filter" ]] || _in_filter "$name/" "$filter" || [[ "${filter%%/*}" == "$name" ]] || continue
-    ! _in_filter "$name/" "$filter" || "$fn" "$name/" "$sd"
-    for w in "$sd"/*/; do
-      w="${w%/}"
-      _is_level "$w" || continue
-      w="${w##*/}"
-      ! _in_filter "$name/$w" "$filter" || "$fn" "$name/$w" "$sd/$w"
-      for s in "$sd/$w"/*/; do
-        s="${s%/}"
-        _is_level "$s" || continue
-        s="${s##*/}"
-        ! _in_filter "$name/$w/$s" "$filter" || "$fn" "$name/$w/$s" "$sd/$w/$s"
-      done
-    done
-  done
-}
-
-# `wsm ls [SPEC]`: every source, workspace and space the sources define, each with where it is
-# installed; SPEC (source/, source/ws, source/ws/space) narrows it to that subtree.
+# `wsm ls [SPEC]`: every space the sources define (under SPEC), its state when installed, then the
+# spaces the tree still has that the sources no longer define. `wsm ls <id> --json` adds the files.
 cmd_list() {
-  local filter="${1:-}" rows j
-  _levels_load "$filter"
-  rows=$(_each_level "$filter" _ls_row)
-  # Installed spaces their source no longer defines
-  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-    _in_filter "${INST_ID[$j]}" "$filter" || continue
-    [[ -d "$(_src_dir "${INST_SRC[$j]}")/spaces/${INST_WS[$j]}/${INST_SPACE[$j]}" ]] && continue
-    rows="$rows"$'\n'"$(anfs_row "${INST_ID[$j]}" "not in the source" space "${INST_DIR[$j]}")"
+  local spec="${1:-}" id src rows="" json=false detail="" f note
+  [[ -z "$spec" ]] || _spec_ok "$spec"
+  anfs_json_on && json=true
+  _spaces_load
+  _root_load
+  local -a srcs=()
+  if [[ -n "$spec" ]]; then
+    _spec_parse "$spec"
+    [[ -z "$SP_SRC" ]] || srcs=("$SP_SRC")
+  fi
+  [[ -z "$spec" || ${#srcs[@]} -gt 0 ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
+  _state_load true ${srcs[@]+"${srcs[@]}"}
+
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -z "$spec" ]] || _spec_match "$id" || continue
+    if [[ -z "${INSTALLED[$id]:-}" ]]; then
+      if $json; then rows+="$(anfs_row "$id" "" "" "" "" "" "")"$'\n'
+      else rows+="$(anfs_row "$id" "" "" "")"$'\n'; fi
+      continue
+    fi
+    _space_counts "$id"
+    note="$REPLY"
+    if $json; then
+      rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" \
+        "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT")"$'\n'
+    else
+      rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" "$note")"$'\n'
+    fi
+    [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
   done
-  rows=$(printf '%s' "$rows" | grep . || true)
-  [[ -n "$rows" || -z "$filter" ]] || fail "$EX_NOTFOUND" "nothing defined under $filter"
+  for id in ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"}; do
+    [[ -z "$spec" ]] || _spec_match_path "${VANISHED_SRC[$id]}" "${VANISHED_PATH[$id]}" || continue
+    if $json; then rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "" "" "" "")"$'\n'
+    else rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "")"$'\n'; fi
+  done
+  [[ -n "$rows" || -z "$spec" ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
+
   # The lists other tools read: with --json (lib/anfs/table.sh), never by column
-  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "SPACE STATUS LEVEL DIR" "space status level dir"
+  if ! $json; then
+    printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "space status dir note"
+    return 0
+  fi
+  local out
+  out=$(printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "space status dir missing wrong in_the_way leftover")
+  if [[ -z "$detail" ]]; then
+    printf '%s\n' "$out"
+    return 0
+  fi
+  # One space by its id: its files and their states, relative to it
+  local p="${SPACE_PATH[$detail]}" src="${SPACE_SRC[$detail]}" files="" sep=""
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    files+="$sep{\"file\":$(_anfs_json_str "$f"),\"status\":$(_anfs_json_str "${FSTATE["$src|${p:+$p/}$f"]:-missing}")}"
+    sep=,
+  done <<< "${SPACE_FILES[$detail]}"
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    files+="$sep{\"file\":$(_anfs_json_str "${f#"${p:+$p/}"}"),\"status\":\"leftover\"}"
+    sep=,
+  done < <(_leftovers_of "$detail")
+  printf '%s,"files":[%s]}]\n' "${out%\}]}" "$files"
 }
 
 # `wsm repo ls [SPEC]`: the repositories the space.yml files under SPEC declare, and their state
 cmd_repo_list() {
-  local filter="${1:-}" rows
-  _levels_load "$filter"
-  rows=$(_each_level "$filter" _ls_repositories | grep . || true)
-  printf '%s' "${rows:+$rows$'\n'}" | anfs_table "REPOSITORY STATUS URL" "repository status url ahead"
+  local spec="${1:-}" id url path ref state ahead d rows=""
+  [[ -z "$spec" ]] || _spec_ok "$spec"
+  _require_yq
+  _spaces_load
+  _root_load
+  [[ -z "$spec" ]] || _spec_parse "$spec"
+  _state_load false
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -z "$spec" ]] || _spec_match "$id" || continue
+    while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+      ahead="" d=""
+      if [[ -z "$path" ]]; then
+        state="no path"
+      elif [[ -n "$(_repo_invalid "$id" "$path")" ]]; then
+        state=invalid
+      elif [[ -z "${INSTALLED[$id]:-}" ]]; then
+        state="not installed"
+      else
+        d="$(_space_home "$id")/$path"
+        state=$(gitsrc_dir_status "$d")
+        [[ "$state" != local ]] || state="not a repo"
+        ahead=$(gitsrc_dir_ahead "$d")
+      fi
+      rows+="$(anfs_row "$id/$path" "$state" "$url" "$ahead" "$id" "$path" "$d")"$'\n'
+    done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
+  done
+  printf '%s' "$rows" | anfs_table "REPOSITORY STATUS URL" "repository status url ahead space path dir"
 }
 
-# One installed level's repositories (repo install): a level not installed is skipped
-REPO_FAILED=0
-_repo_install_level() {
-  local d
-  d=$(_installed_dir "${1%/}")
-  [[ -n "$d" && -d "$d" ]] || return 0
-  echo "${1%/}"
-  _level_repositories "$d" "$2" "$REPO_DRY" || REPO_FAILED=$((REPO_FAILED + 1))
-}
-
-# _each_level's callback for REPO_WANT (source/ws/space/path, as repo list names it): the
-# level that declares it, that level's dir in the source and the path, a line each
-REPO_WANT=""
-_repo_find_level() {
-  local path
-  while IFS= read -r path; do
-    [[ "${1%/}/$path" == "$REPO_WANT" ]] && printf '%s\n%s\n%s\n' "$1" "$2" "$path"
-  done < <(_repo_paths "$2/space.yml")
-  return 0
-}
-
-# `wsm repo install REPOSITORY [-n]`: clone that one, from what _repo_find_level found; its
-# level must be installed
-_repo_install_one() {
-  local id from path d file
-  { IFS= read -r id; IFS= read -r from; IFS= read -r path; } <<< "$1"
-  d=$(_installed_dir "${id%/}")
-  [[ -n "$d" && -d "$d" ]] || fail "$EX_NOTFOUND" "${id%/} is not installed: wsm install ${id%/} clones its repositories"
-  file="$d/space.yml"
-  [[ -f "$file" ]] || file="$from/space.yml"
-  _repositories "$d" "$file" "$REPO_DRY" "$path"
-}
-
-# `wsm repo install [SPEC|REPOSITORY] [-n]`: the clone half of install, for the levels already
+# `wsm repo install [SPEC|REPOSITORY] [-n]`: the clone half of install, for the spaces already
 # installed; a repository's id clones that one
 cmd_repo_install() {
-  REPO_DRY=${CLI_OPT[dry-run]:-false} REPO_FAILED=0
-  local found=""
-  if [[ "${1:-}" == */* ]]; then
-    _require_yq
-    _installed_load
-    anfs_sources spaces
-    REPO_WANT="$1"
-    found=$(_each_level "${1%%/*}/" _repo_find_level)
+  local dry=${CLI_OPT[dry-run]:-false} arg="${1:-}" id failed=0 any=false url path ref found=false
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load false
+  [[ -z "$arg" ]] || _spec_ok "$arg"
+  if [[ -n "$arg" ]]; then
+    _spec_parse "$arg"
+    for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do _spec_match "$id" && { any=true; break; }; done
   fi
-  if [[ -n "$found" ]]; then
-    _repo_install_one "$found"
+  # A repository: the longest prefix that is a space, and the rest a path it declares
+  if [[ -n "$arg" ]] && ! $any && _repo_split "$arg"; then
+    while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+      [[ "$path" == "$REPO_PATH" ]] && found=true
+    done < <(_repo_entries "${SPACE_DIR[$REPO_SPACE]}/space.yml")
+    $found || fail "$EX_NOTFOUND" "$REPO_SPACE declares no repository $REPO_PATH (wsm repo ls $REPO_SPACE)"
+    [[ -n "${INSTALLED[$REPO_SPACE]:-}" ]] ||
+      fail "$EX_NOTFOUND" "$REPO_SPACE is not installed: wsm install $REPO_SPACE clones its repositories"
+    _space_repositories "$REPO_SPACE" "$dry" "$REPO_PATH"
     return
   fi
-  _levels_load "${1:-}"
-  _each_level "${1:-}" _repo_install_level
-  [[ $REPO_FAILED -eq 0 ]]
+  [[ -z "$arg" ]] || $any || fail "$EX_NOTFOUND" "no space or repository '$arg' (wsm ls, wsm repo ls)"
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -n "${INSTALLED[$id]:-}" ]] || continue
+    [[ -z "$arg" ]] || _spec_match "$id" || continue
+    echo "$id"
+    _space_repositories "$id" "$dry" || failed=$((failed + 1))
+  done
+  [[ $failed -eq 0 ]]
 }
 
-# `wsm new [[SOURCE/]WS/]SPACE`: the parts left out come from where you are, in a source checkout
-# or an installed tree. The space is created in the source, and installed into its workspace's
-# target when that workspace is installed.
+# `wsm new SPACE`: SOURCE/PATH anywhere, or a PATH below where you are (in the tree, or in a source
+# checkout: below its spaces/). The space is created in the source, and installed when the space
+# around it is.
 cmd_new() {
-  local u="wsm new [[SOURCE/]WS/]SPACE" spec src="" ws="" space here
-  [[ $# -eq 1 && "$1" != -* ]] || usage_err "$u"
-  spec="$1"
-  _valid_name "$spec" || usage_err "$u"
-  _installed_load
+  local u="wsm new [SOURCE/]PATH" spec="$1" src="" path here srcdir dir id enc
+  [[ "$spec" != */ ]] && _valid_spec "$spec" || usage_err "$u"
+  _spaces_load
+  _root_load
   gitsrc_collect
 
-  case $(_parts "$spec") in
-    3) src="${spec%%/*}" ws="${spec#*/}" ws="${ws%/*}" space="${spec##*/}" ;;
-    2|1)
-      here=$(_canon "$PWD") || here="$PWD"
-      _context "$here" ||
-        fail "$EX_NOTFOUND" "not inside a source or an installed tree: wsm new SOURCE/WS/SPACE"
-      src="$CTX_SRC"
-      if [[ "$spec" == */* ]]; then
-        ws="${spec%/*}" space="${spec#*/}"
-      else
-        $CTX_SPACES && [[ -n "$CTX_REL" ]] ||
-          fail "$EX_NOTFOUND" "not inside a workspace of $src: wsm new WS/$spec"
-        ws="${CTX_REL%%/*}" space="$spec"
-      fi
-      ;;
-    *) usage_err "$u" ;;
-  esac
-  [[ "$ws" != .* && "$space" != .* ]] || fail "$EX_USAGE" "a hidden directory is never a workspace or a space"
-  _is_registered "$src" || fail "$EX_NOTFOUND" "no source '$src' on this machine (anfs src list)"
+  if _is_registered "${spec%%/*}"; then
+    src="${spec%%/*}" path=""
+    [[ "$spec" != */* ]] || path="${spec#*/}"
+  else
+    here=$(_canon "$PWD") || here="$PWD"
+    _context "$here" ||
+      fail "$EX_NOTFOUND" "not inside a source or the spaces tree: wsm new SOURCE/PATH"
+    src="$CTX_SRC" path="$spec"
+    ! $CTX_SPACES || [[ -z "$CTX_REL" ]] || path="$CTX_REL/$spec"
+  fi
 
-  local srcdir dir
   srcdir=$(gitsrc_dir "$src")
   [[ -d "$srcdir" ]] || fail "$EX_NOTFOUND" "source '$src' is not cloned (anfs src update)"
-  dir="$srcdir/spaces/$ws/$space"
-  [[ -e "$dir" ]] && fail "$EX_EXISTS" "already exists: $(_display "$dir")"
+  dir="$srcdir/spaces${path:+/$path}"
+  id="$src${path:+/$path}"
+  [[ ! -e "$dir/space.yml" ]] || fail "$EX_EXISTS" "already a space: $id ($(_display "$dir"))"
   mkdir -p -- "$dir"
   cat > "$dir/space.yml" <<EOF
-# $ws/$space: \`wsm install $src/$ws/$space\` stows this directory's files into <target>/$src/$ws/$space
-#depends: [other]          # spaces installed first: a sibling by name, or <ws>/<space>
+# $id: \`wsm install $id\` links this directory's files into \$WSM_SPACES_HOME/$id
+#depends: [other]          # spaces installed first: an id (<source>/<path>), or a path in this source
 repositories: []
 #  - url: git@github.com:you/thing
-#    path: repos/thing
+#    path: repos/thing     # optional: git's name for it
 #    ref: main             # optional
 EOF
   printf 'created %s\n' "$(_display "$dir/space.yml")"
 
-  local j inst=false
-  for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-    [[ "${INST_SRC[$j]}/${INST_WS[$j]}" == "$src/$ws" ]] && inst=true
-  done
-  if $inst; then
-    cmd_install "$src/$ws/$space"
+  # The space around it, as loaded before this one existed
+  enc=""
+  if [[ -n "$path" ]] && [[ -n "${SRC_SD[$src]:-}" ]]; then
+    _state_load false "$src"
+    local p="$path"
+    if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
+    _space_of "$src" "$p" true && enc="$REPLY"
+  fi
+  if [[ -n "$enc" ]]; then
+    _spaces_reset
+    cmd_install "$id"
   else
-    echo "next: wsm install $src/$ws/$space"
+    echo "next: wsm install $id"
   fi
   echo "commit it in $(_display "$srcdir")"
 }
@@ -1373,52 +1300,17 @@ _walk_local() {
   done
 }
 
-# The level a path below a source's spaces/ belongs to, by depth: a file in the first directory
-# below spaces/ is a workspace's, below its second a space's; a hidden directory is never a level.
-# Sets U_ID, U_WS, U_SPACE and U_FILE (the path within that level).
-U_ID="" U_WS="" U_SPACE="" U_FILE=""
-_unit_of() {
-  local src="$1" rel="$2" a b rest
-  U_ID="$src" U_WS="" U_SPACE="" U_FILE="$rel"
-  [[ "$rel" == */* ]] || return 0
-  a="${rel%%/*}" rest="${rel#*/}"
-  [[ "$a" != .* ]] || return 0
-  U_ID="$src/$a" U_WS="$a" U_FILE="$rest"
-  [[ "$rest" == */* ]] || return 0
-  b="${rest%%/*}"
-  [[ "$b" != .* ]] || return 0
-  U_ID="$src/$a/$b" U_SPACE="$b" U_FILE="${rest#*/}"
-}
-
-# Whether <rel> (below the spaces/ of source dir <srcdir>) is inside a repository the space.yml of
-# its level, or of a level above, declares
-_in_repository() {
-  local srcdir="$1" src="$2" rel="$3" p l under
-  _unit_of "$src" "$rel"
-  for l in "" "$U_WS" "$U_WS/$U_SPACE"; do
-    case "$l" in
-      "") under="$rel" ;;
-      /*|*/) continue ;;
-      *) [[ "$rel" == "$l"/* ]] || continue; under="${rel#"$l"/}" ;;
-    esac
-    while IFS= read -r p; do
-      [[ "$under" == "$p" || "$under" == "$p"/* ]] && return 0
-    done < <(_repo_paths "$srcdir/spaces${l:+/$l}/space.yml")
-  done
-  return 1
-}
-
-# Move one file of an installed tree into its source and link it back (relative, to the canonical
-# file: anfs_relpath), so the next install sees it as linked. <explicit> is false when it was
-# found under a directory given to add, which skips quietly what an explicit file would be refused
-# for, and leaves a changed copy of a linked file alone.
+# Move one file of the tree into its source and link it back (relative, to the canonical file:
+# anfs_relpath), so the next install sees it as linked. <explicit> is false when it was found
+# under a directory given to add, which skips quietly what an explicit file would be refused for,
+# and leaves a copy of a source file alone.
 # Usage: _add_one <canonical path> <explicit:true|false>
 ADDED_SRCS=()
 _add_one() {
-  local path="$1" explicit="$2" src rel srcdir tracker dest d tracked=false
-  _context "$path" || { warn "not in an installed tree: $(_display "$path")"; return 1; }
-  if [[ "$CTX_KIND" != installed ]]; then
-    warn "already in the source $CTX_SRC: $(_display "$path")"
+  local path="$1" explicit="$2" src rel srcdir dest d id sub
+  if ! _context "$path" || [[ "$CTX_KIND" != tree ]]; then
+    if [[ "$CTX_KIND" == source ]]; then warn "already in the source $CTX_SRC: $(_display "$path")"
+    else warn "not in the spaces tree: $(_display "$path")"; fi
     return 1
   fi
   src="$CTX_SRC" rel="$CTX_REL"
@@ -1434,7 +1326,7 @@ _add_one() {
 
   # Never part of a clone
   d=$(dirname -- "$path")
-  while [[ "$d" == "$CTX_ROOT"/* ]]; do
+  while [[ "$d" == "$ROOT/$src"/* ]]; do
     if [[ -e "$d/.git" ]]; then
       $explicit && warn "inside a git repo, not added: $(_display "$path")"
       $explicit && return 1 || return 0
@@ -1442,59 +1334,56 @@ _add_one() {
     d=$(dirname -- "$d")
   done
 
-  srcdir=$(_src_dir "$src")
-  if _in_repository "$srcdir" "$src" "$rel"; then
-    $explicit && warn "inside a repository of $U_ID, not added: $(_display "$path")"
-    $explicit && return 1 || return 0
-  fi
-  _unit_of "$src" "$rel"
-  tracker=$(_tracker_path "$U_ID")
-  if [[ ! -f "$tracker" ]]; then
-    warn "$U_ID is not installed: $(_display "$path")"
+  d=""
+  [[ "$rel" != */* ]] || d="${rel%/*}"
+  if ! _space_of "$src" "$d"; then
+    warn "not in any space of $src, not added: $(_display "$path")"
     return 1
   fi
+  id="$REPLY"
+  sub="${rel#"${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}"}"
+  if _in_repository "$id" "$sub"; then
+    $explicit && warn "inside a repository of $id, not added: $(_display "$path")"
+    $explicit && return 1 || return 0
+  fi
+  if [[ -z "${INSTALLED[$id]:-}" ]]; then
+    warn "$id is not installed: $(_display "$path")"
+    return 1
+  fi
+  srcdir=$(gitsrc_dir "$src")
   if git -C "$srcdir" check-ignore -q -- "spaces/$rel" 2>/dev/null; then
     $explicit && warn "ignored by $src's .gitignore, not added: $(_display "$path")"
     $explicit && return 1 || return 0
   fi
 
-  # Read whole first: grep -q stopping early would fail the pipeline under pipefail
-  local recorded
-  recorded=$'\n'$(_tracker_files "$tracker")$'\n'
-  [[ "$recorded" == *$'\n'"$U_FILE"$'\n'* ]] && tracked=true
-  dest="$srcdir/spaces/$rel"
+  dest="${SRC_SD[$src]}/$rel"
   if [[ -e "$dest" || -L "$dest" ]]; then
-    # A linked file replaced by a plain copy (some tools save by renaming over the link): named
+    # A copy where the source has the file (some tools save by renaming over the link): named
     # explicitly, the copy goes back to the source, where git shows what changed
-    if $tracked && $explicit; then
+    if $explicit; then
       mv -f -- "$path" "$dest"
       ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
       printf 'updated %s (git diff in %s)\n' "$src/$rel" "$(_display "$srcdir")"
       _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
       return 0
     fi
-    if $tracked; then
-      warn "a linked file was replaced by a copy: wsm add $(_display "$path") puts it back in the source"
-      return 0
-    fi
-    warn "$src already has $rel: wsm install $U_ID links it (move yours aside first)"
-    return 1
+    warn "a copy where $src has the file: wsm add $(_display "$path") puts it in the source"
+    return 0
   fi
 
   mkdir -p -- "$(dirname -- "$dest")"
   mv -- "$path" "$dest"
   ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
-  _tracker_add_file "$tracker" "$U_FILE"
   printf 'added %s\n' "$src/$rel"
   _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
 }
 
 cmd_add() {
   local arg p rc=0 f
-  [[ $# -gt 0 ]] || usage_err "wsm add FILE..."
   _require_yq
-  _installed_load
-  anfs_sources spaces
+  _spaces_load
+  _root_load
+  _state_load false
   ADDED_SRCS=()
   for arg in "$@"; do
     if [[ ! -e "$arg" && ! -L "$arg" ]]; then
@@ -1517,156 +1406,74 @@ cmd_add() {
     fi
   done
   for f in ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"}; do
-    echo "commit it in $(_display "$(_src_dir "$f")")"
+    echo "commit it in $(_display "$(gitsrc_dir "$f")")"
   done
   return "$rc"
 }
 
-# `wsm status [SOURCE...]`: for each installed source, what its tree and the source disagree on
-cmd_status() {
-  local arg
-  local -a want=()
-  for arg in "$@"; do want+=("${arg%/}"); done
-  _require_yq
-  _installed_load
-  anfs_sources spaces
-
-  local j src root srcdir f rel prefix dir level tracked any=false hint_add=false hint_install=false
-  local -a trackers=() lines=() locals=()
-  for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-    src="${ISRC_NAME[$j]}"
-    [[ ${#want[@]} -eq 0 ]] || _in_list "$src" "${want[@]}" || continue
-    any=true
-    root="${ISRC_TARGET[$j]}/$src"
-    srcdir=$(_src_dir "$src")
-    lines=() tracked=$'\n'
-
-    trackers=()
-    for f in "$WSM_INSTALLED/$src.yml" "$WSM_INSTALLED/$src"/*.yml "$WSM_INSTALLED/$src"/*/*.yml; do
-      [[ -f "$f" ]] && trackers+=("$f")
-    done
-    for f in ${trackers[@]+"${trackers[@]}"}; do
-      dir=$(yq -r '.dir' "$f")
-      prefix="${dir#"$root"}" prefix="${prefix#/}"
-      level=space
-      case "$prefix" in "") level=source ;; */*) ;; *) level=ws ;; esac
-      local -a recorded=()
-      while IFS= read -r rel; do
-        [[ -n "$rel" ]] || continue
-        recorded+=("$rel")
-        tracked="$tracked${prefix:+$prefix/}$rel"$'\n'
-        if [[ -L "$dir/$rel" ]]; then
-          [[ -e "$dir/$rel" ]] || { lines+=("broken    ${prefix:+$prefix/}$rel"); hint_install=true; }
-        elif [[ -f "$dir/$rel" ]]; then
-          lines+=("changed   ${prefix:+$prefix/}$rel (a copy where the link was)"); hint_add=true
-        else
-          lines+=("missing   ${prefix:+$prefix/}$rel"); hint_install=true
-        fi
-      done < <(_tracker_files "$f")
-      while IFS= read -r rel; do
-        [[ -n "$rel" ]] || continue
-        _in_list "$rel" ${recorded[@]+"${recorded[@]}"} && continue
-        lines+=("unlinked  ${prefix:+$prefix/}$rel (new in the source)"); hint_install=true
-      done < <(_unit_files "$srcdir/spaces${prefix:+/$prefix}" "$level")
-    done
-
-    # Local files: not recorded, not in a repository, not ignored by the source's .gitignore
-    locals=()
-    while IFS= read -r f; do
-      rel="${f#"$root"/}"
-      [[ "$tracked" == *$'\n'"$rel"$'\n'* ]] && continue
-      _in_repository "$srcdir" "$src" "$rel" && continue
-      locals+=("$rel")
-    done < <([[ -d "$root" ]] && _walk_local "$root")
-    if [[ ${#locals[@]} -gt 0 ]]; then
-      local ignored
-      ignored=$'\n'$(printf 'spaces/%s\n' "${locals[@]}" | git -C "$srcdir" check-ignore --stdin 2>/dev/null || true)$'\n'
-      for rel in "${locals[@]}"; do
-        [[ "$ignored" == *$'\n'"spaces/$rel"$'\n'* ]] && continue
-        lines+=("local     $rel"); hint_add=true
-      done
-    fi
-
-    printf '%s  %s\n' "$src" "$(_display "$root")"
-    if [[ ${#lines[@]} -eq 0 ]]; then
-      echo "  clean"
-    else
-      printf '  %s\n' "${lines[@]}"
-    fi
-  done
-  $any || { [[ ${#want[@]} -eq 0 ]] && echo "Nothing installed" || fail "$EX_NOTFOUND" "not installed: ${want[*]}"; }
-  $hint_add && echo "wsm add FILE... moves local files (and changed copies) into the source"
-  $hint_install && echo "wsm install SPEC links again what the source has"
-  return 0
-}
-
 # What cli.sh asks for on a tab press (complete_<kind>): one candidate per line, quickly. They
-# read file names only: no yq, no git.
+# read file names only, from one find over the sources' spaces/: no yq, no git, no check.
 
-# Every level the sources define: source/, source/ws, source/ws/space
+# Every space id, and every prefix with spaces at or under it (source/, source/a/)
 complete_spec() {
-  local d rel
-  for d in "$ANFS_SOURCES_HOME"/*/spaces/ "$ANFS_SOURCES_HOME"/*/spaces/*/ "$ANFS_SOURCES_HOME"/*/spaces/*/*/; do
-    [[ -d "$d" ]] || continue
-    d="${d%/}"
-    rel="${d#"$ANFS_SOURCES_HOME"/}"
-    case "$rel" in
-      */spaces)   printf '%s/\n' "${rel%/spaces}" ;;
-      */spaces/*) [[ "${rel##*/}" == .* ]] || printf '%s/%s\n' "${rel%%/spaces/*}" "${rel#*/spaces/}" ;;
-    esac
-  done
+  local f rel src p
+  local -A seen=()
+  while IFS= read -r f; do
+    rel="${f#"$ANFS_SOURCES_HOME"/}" rel="${rel//\/\//\/}"
+    src="${rel%%/*}" p="${rel#*/spaces/}" p="${p%space.yml}" p="${p%/}"
+    printf '%s\n' "$src${p:+/$p}"
+    while :; do
+      [[ -n "${seen["$src/$p"]:-}" ]] || { seen["$src/$p"]=1; printf '%s/\n' "$src${p:+/$p}"; }
+      [[ -n "$p" ]] || break
+      if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
+    done
+  done < <(find "$ANFS_SOURCES_HOME"/*/spaces/ -name space.yml 2>/dev/null)
 }
-# The installed levels, by id: what there is a tracker for
-complete_level() {
-  local f
-  for f in "$WSM_INSTALLED"/*.yml "$WSM_INSTALLED"/*/*.yml "$WSM_INSTALLED"/*/*/*.yml; do
-    [[ -f "$f" ]] || continue
-    f="${f#"$WSM_INSTALLED"/}"
-    printf '%s\n' "${f%.yml}"
-  done
+# The installed spaces: those whose space.yml under the root is a link
+complete_space() {
+  local id root src p
+  root=$(_spaces_home)
+  while IFS= read -r id; do
+    [[ "$id" != */ ]] || continue
+    [[ -L "$root/$id/space.yml" ]] && printf '%s\n' "$id"
+  done < <(complete_spec)
 }
-# What cd and path take: an installed workspace or space, by id or by its bare name
+# What cd and path take: an installed space by id, or by its last segment
 complete_query() {
   local id
   while IFS= read -r id; do
-    [[ "$id" == */* ]] || continue
-    printf '%s\n%s\n' "$id" "${id##*/}"
-  done < <(complete_level) | awk '!seen[$0]++'
-}
-complete_source() {
-  local f
-  for f in "$WSM_INSTALLED"/*.yml; do
-    [[ -f "$f" ]] || continue
-    f="${f##*/}"
-    printf '%s\n' "${f%.yml}"
-  done
+    printf '%s\n' "$id"
+    [[ "$id" != */* ]] || printf '%s\n' "${id##*/}"
+  done < <(complete_space) | awk '!seen[$0]++'
 }
 
-# `wsm implode [-y]`: unlink every installed level and delete wsm's state, which takes the stow/
-# directory an older wsm kept there too. What the spaces hold besides the links (cloned repos, your
-# files) is never touched.
+# `wsm implode [-y]`: unlink every installed space (and those no longer in their source) and delete
+# wsm's state, the backups -f made included. What the spaces hold besides the links (cloned repos,
+# your files) is never touched.
 cmd_implode() {
-  local yes=${CLI_OPT[yes]:-false} j f
-
-  _installed_load
+  local yes=${CLI_OPT[yes]:-false} id
+  local -a all=() order=()
+  _spaces_load
+  _root_load
+  _state_load true
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do [[ -z "${INSTALLED[$id]:-}" ]] || all+=("$id"); done
+  all+=(${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"})
   {
     echo "wsm implode removes:"
-    for j in ${INST_ID[@]+"${!INST_ID[@]}"}; do
-      echo "  links        ${INST_ID[$j]} in $(_display "${INST_DIR[$j]}")"
+    for id in ${all[@]+"${all[@]}"}; do
+      echo "  links        $id in $(_display "$(_space_home "$id")")"
     done
-    for j in ${ISRC_NAME[@]+"${!ISRC_NAME[@]}"}; do
-      echo "  links        ${ISRC_NAME[$j]}/ in $(_display "${ISRC_TARGET[$j]}/${ISRC_NAME[$j]}") (and its workspaces)"
-    done
-    echo "  state        $(_display "$WSM_STATE_HOME")"
+    echo "  state        $(_display "$WSM_STATE_HOME") (the backups install -f made included)"
     echo "Kept: everything else in the spaces (cloned repos, your files)"
   } >&2
 
   $yes || anfs_confirm "implode unlinks every space" "Implode wsm?"
 
-  anfs_sources spaces
-  # Spaces, then the workspace and source levels above them
-  for f in "$WSM_INSTALLED"/*/*/*.yml "$WSM_INSTALLED"/*/*.yml "$WSM_INSTALLED"/*.yml; do
-    [[ -f "$f" ]] && _unlink_unit "$f"
+  mapfile -t order < <(for id in ${all[@]+"${all[@]}"}; do printf '%s\t%s\n' "${#id}" "$id"; done | sort -rn | cut -f2-)
+  for id in ${order[@]+"${order[@]}"}; do
+    [[ -n "$id" ]] || continue
+    if [[ -n "${VANISHED_SRC[$id]:-}" ]]; then _remove_vanished "$id"; else _remove_space "$id"; fi
+    WSM_EV_REMOVED+=("$id")
   done
   rm -rf -- "${WSM_STATE_HOME:?}"
   echo "wsm imploded" >&2

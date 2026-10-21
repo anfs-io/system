@@ -1,7 +1,7 @@
 # Shared setup for wsm's tests.
 #
-# Every test runs the script straight out of the package, with HOME and XDG_STATE_HOME inside
-# the per-test temp directory, so nothing reaches the real trackers or the real home.
+# Every test runs the script straight out of the package, with HOME, XDG_STATE_HOME and
+# WSM_SPACES_HOME inside the per-test temp directory, so nothing reaches the real home.
 
 wsm_setup() {
   WSM="$BATS_TEST_DIRNAME/../home/.local/bin/wsm"
@@ -13,10 +13,11 @@ wsm_setup() {
   # The rest of XDG under the test HOME, so anfs's paths never reach the real ones
   XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME
-  unset WSM_CONFIG_HOME WSM_DATA_HOME WSM_STATE_HOME WSM_CACHE_HOME WSM_SPACES_HOME
-  export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+  unset WSM_CONFIG_HOME WSM_DATA_HOME WSM_STATE_HOME WSM_CACHE_HOME
+  WSM_SPACES_HOME="$HOME/spaces"
+  export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME WSM_SPACES_HOME
   export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
-  TRACKERS="$XDG_STATE_HOME/wsm/installed"
+  WSM_STATE="$XDG_STATE_HOME/wsm"
   # anfs's libraries, where wsm looks for them
   mkdir -p "$HOME/.local/lib"
   ln -s "$(cd "$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs" && pwd)" "$HOME/.local/lib/anfs"
@@ -58,18 +59,26 @@ mksource() {
   printf '%s\n' "$dir"
 }
 
-# Write a space definition, <source>/spaces/<ws>/<space>/space.yml, from stdin
-# Usage: space_def <source> <ws>/<space>  < body
+# Write a space definition, <source>/spaces/<path>/space.yml (any depth; an empty path is the
+# source's root space), from stdin
+# Usage: space_def <source> [path]  < body
 space_def() {
-  mkdir -p "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2"
-  cat > "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2/space.yml"
+  local d="$BATS_TEST_TMPDIR/srcs/$1/spaces${2:+/$2}"
+  mkdir -p "$d"
+  cat > "$d/space.yml"
 }
 
-# Any other file in a space: <source> <ws>/<space>/<path> [content]
+# Any other file below a source's spaces/: <source> <path> [content]
 space_file() {
   mkdir -p "$(dirname "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2")"
   printf '%s\n' "${3:-$2}" > "$BATS_TEST_TMPDIR/srcs/$1/spaces/$2"
 }
 
-# Number of installed spaces (space trackers: <src>/<ws>/<space>.yml)
-installed() { find "$TRACKERS" -mindepth 3 -name '*.yml' 2>/dev/null | grep -c . || true; }
+# The installed spaces, as wsm ls says (status not null), one id per line
+installed() { wsm ls --json 2>/dev/null | yq -p json -r '.[] | select(.status != null and .status != "not in the source") | .space'; }
+
+# The number of installed spaces
+ninstalled() { installed | grep -c . || true; }
+
+# A column of `wsm ls` for one space: ls_field <id> <key>
+ls_field() { wsm ls --json 2>/dev/null | yq -p json -r ".[] | select(.space == \"$1\") | .$2"; }

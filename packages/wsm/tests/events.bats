@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Events: wsm tells whoever registered with it (lib/anfs/callbacks.sh) which levels a run
-# installed or removed, once, when the command is over. The listener here is a script that logs
+# Events: wsm tells whoever registered with it (lib/anfs/callbacks.sh) which spaces a run
+# installed or removed, by id, once, when the command is over. The listener here is a script that logs
 # its arguments.
 # Run: bats packages/wsm/tests/events.bats
 
@@ -8,12 +8,9 @@ load helper
 setup() {
   wsm_setup
   mksource acme >/dev/null
-  space_def acme main/tech <<'YML'
-repositories: []
-YML
-  space_def acme main/org <<'YML'
-repositories: []
-YML
+  space_def acme <<<'repositories: []'
+  space_def acme main/tech <<<'depends: [acme]'
+  space_def acme main/org <<<'repositories: []' 
   CALLS="$BATS_TEST_TMPDIR/calls"
   REGISTRATIONS="$XDG_STATE_HOME/anfs/callbacks/wsm.yml"
   mkdir -p "$BATS_TEST_TMPDIR/bin" "${REGISTRATIONS%/*}"
@@ -26,14 +23,14 @@ SH
   printf 'test/listener: listener heard\n' > "$REGISTRATIONS"
 }
 
-@test "install emits once, with every level that became installed" {
+@test "install emits once, with every space that became installed; the root space is its alias" {
   run wsm install acme/main/tech
   [ "$status" -eq 0 ]
   run cat "$CALLS"
-  [ "$output" = "heard install acme acme/main acme/main/tech" ]
+  [ "$output" = "heard install acme acme/main/tech" ]
 }
 
-@test "installing what is installed emits nothing; a new level emits only itself" {
+@test "installing what is installed emits nothing; a new space emits only itself" {
   wsm install acme/main/tech >/dev/null
   rm "$CALLS"
   wsm install acme/main/tech >/dev/null
@@ -49,7 +46,7 @@ SH
   [ ! -f "$CALLS" ]
 }
 
-@test "remove emits the levels that went" {
+@test "remove emits the spaces that went" {
   wsm install acme/main/tech >/dev/null
   wsm install acme/main/org >/dev/null
   rm "$CALLS"
@@ -59,13 +56,13 @@ SH
   [ "$output" = "heard remove acme/main/tech" ]
 }
 
-@test "new into an installed workspace emits install for the space it installs" {
+@test "new inside an installed space emits install for the space it installs" {
   wsm install acme/main/tech >/dev/null
   rm "$CALLS"
-  run wsm new acme/main/web
+  run wsm new acme/main/tech/web
   [ "$status" -eq 0 ]
   run cat "$CALLS"
-  [ "$output" = "heard install acme/main/web" ]
+  [ "$output" = "heard install acme/main/tech/web" ]
 }
 
 @test "new that only creates the space in the source emits nothing" {
@@ -80,14 +77,14 @@ SH
   run wsm implode -y
   [ "$status" -eq 0 ]
   run cat "$CALLS"
-  [[ "$output" == "heard remove "*"acme/main/tech"* ]]
+  [ "$output" = "heard remove acme/main/tech acme" ]
   [ ! -e "$XDG_STATE_HOME/wsm" ]
   # They are the listener's, kept by anfs: a later install is heard without registering again
   [ -f "$REGISTRATIONS" ]
   rm "$CALLS"
   wsm install acme/main/tech >/dev/null
   run cat "$CALLS"
-  [ "$output" = "heard install acme acme/main acme/main/tech" ]
+  [ "$output" = "heard install acme acme/main/tech" ]
 }
 
 @test "a listener that fails or is gone does not fail the command" {
@@ -97,7 +94,7 @@ SH
   [[ "$output" == *"callback of test/broken for wsm install failed"* ]]
   [[ "$output" != *"test/gone"* ]]
   run cat "$CALLS"
-  [ "$output" = "heard install acme acme/main acme/main/tech" ]
+  [ "$output" = "heard install acme acme/main/tech" ]
 }
 
 @test "the options every tool takes come before the command" {
