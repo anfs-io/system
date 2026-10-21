@@ -7,7 +7,7 @@ A source is a git repo (or a local directory) that may hold any of:
 
 | Top-level dir | Tool | What it holds |
 | --- | --- | --- |
-| `packages/` | `ppm` | software and dotfiles: GNU Stow plus install hooks (most of this file) |
+| `packages/` | `ppm` | software and dotfiles: files linked into place (`lib/anfs/link.sh`) plus install hooks (most of this file) |
 | `containers/` | `pcm` | podman compose services (`containers/<name>/compose.yml`) |
 | `machines/` | `pmm` | machines (`machines/<name>/machine.yml`), the VM images they run from (`machines/images/<name>/image.yml`) and the networks they are on (`machines/networks/<name>/network.yml`); see pmm |
 | `skills/` | `psm` | agent skills (`skills/<name>/SKILL.md`) |
@@ -501,12 +501,12 @@ help` documents the commands.
   path left out is the one `git clone` would use), and for a space, `depends:`. Install clones the
   repositories of every `space.yml` under the spec, plus those of the spaces it depends on. A
   narrower spec still stows the levels above but does not clone their repositories. It never pulls.
-- **`wsm install [SPEC [DIR]]` stows, as ppm does.** It runs `stow --no-folding` per level into
-  `<target>/<src>/<ws>/<space>/`, ignoring the directories below (the levels of their own).
-  `--no-folding` keeps directories real, so a clone never lands in the source.
-  - stow runs with `HOME=$WSM_STATE_HOME/stow`, whose `.stow-global-ignore` is wsm's list
-    (`.DS_Store`). stow's built-in list would drop `README.*`, `LICENSE.*` and `.gitignore`. ppm
-    still uses the built-in list, so a `README.md` under a package's `home/` is not stowed.
+- **`wsm install [SPEC [DIR]]` links, as ppm does** (`lib/anfs/link.sh`): the level's files
+  (`_unit_files`, which leaves out the levels below) into `<target>/<src>/<ws>/<space>/`, one
+  relative link per file, so directories stay real and a clone never lands in the source. Every
+  file is linked but `.DS_Store`, `README.*` and `.gitignore` included, as in ppm. Anything in the
+  way (the plan's `other` and `conflict`) fails the level, except a link the previous install
+  recorded, which is wsm's to replace wherever it points.
   - With no SPEC, install takes the level at `.`, which must hold a `space.yml`.
 - **Targets.** The target is DIR, else `WSM_SPACES_HOME` (`anfs.conf`, default `~/spaces`). A source
   lives in one target. A target inside a source checkout, or inside another source's installed
@@ -517,9 +517,9 @@ help` documents the commands.
   - `wsm new` creates a space in the source. A part left out comes from the current directory,
     either a checkout or an installed tree. If the workspace is installed, the new space is
     installed too.
-  - `wsm add` moves files from the tree into the source and links them back. The links are
-    relative, as stow's are, because stow treats an absolute link as foreign. It never takes
-    clones, repository paths or what the source's `.gitignore` ignores.
+  - `wsm add` moves files from the tree into the source and links them back, relative
+    (`anfs_relpath`), so the next install's plan keeps them. It never takes clones, repository
+    paths or what the source's `.gitignore` ignores.
   - `wsm status` lists the differences.
   - `wsm ls [SPEC]` lists the defined levels with where each is installed; `wsm repo ls [SPEC]`
     their repositories' git state, and `wsm repo install [SPEC]` clones what an installed level
@@ -527,9 +527,9 @@ help` documents the commands.
   - wsm never commits.
 - **Names nest**: `ANFS_NAME_PARTS=2`, so `main/tech` is a name and `lgat/main/tech` a qualified
   one. A bare `depends:` entry is a sibling in the same workspace. Spaces don't layer
-  (`ANFS_RESOLVE_FIRST`); layering may come later, which is one reason wsm uses stow.
-- `remove`/`implode` unstow, then take any recorded link still pointing at the source's file, then
-  the empty directories; clones and the user's files stay.
+  (`ANFS_RESOLVE_FIRST`); layering may come later (the linker's skip set is how ppm layers).
+- `remove`/`implode` take each recorded link still pointing at the source's file, then the empty
+  directories; clones and the user's files stay.
 
 ## The toolkit API (anfs rpc)
 
@@ -637,7 +637,7 @@ This repo (`core/`) contains:
   lists, commands streamed with `yes`, `watch` for events); without `ANFS_RPC_URL` it runs them
   from `ANFS_BIN` and follows `anfs.log` (on the host)
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
-  Homebrew, stow, yq, mise — clones this repo, stows the base packages `core/anfs` and `core/ppm`,
+  Homebrew, yq, mise — clones this repo, links the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
   package's rc file runs `brew shellenv`, so without one `brew` is "not found" in a new shell;
   `--no-shell` skips it, and a shell with no package gets a hint, never a failure), then
@@ -645,7 +645,7 @@ This repo (`core/`) contains:
 - Plans and design docs are not here: they are in [anfs-io/docs](https://github.com/anfs-io/docs)
 
 The tools don't declare `depends: [anfs]` although they source `lib/anfs`: anfs depends on them,
-and like stow and yq it is base software that is always present.
+and like yq it is base software that is always present.
 
 Every tool, anfs included, keeps to `<dir>/<tool>`: `~/.local/bin/<tool>`, `~/.local/lib/<tool>/`,
 and `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>/` for its own files. Nothing is namespaced under
@@ -727,7 +727,7 @@ cask:
   otherwise refuses the formula's dependencies from the same tap.
 - `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` and `@category` skip them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
 - A `system` map with entries for other distros but not this one (and no `linux` key) is an error.
-- Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside stow and yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
+- Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
 - Trackers record the formulas/casks ppm installed (`installed_deps`). `ppm remove` uninstalls them when no other installed package recorded or declares them. System packages are never removed.
 - `-c` skips all of this, like hooks.
 
@@ -1151,7 +1151,7 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
 - `~/.config/anfs/anfs.local.conf` — machine-local settings (not committed)
 - `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, stowed files, `installed_deps`, `resources`)
 - `~/.local/state/ppm/installed/callbacks.yml` — packages registered for post-run callbacks (`ppm_register_callback`)
-- `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into stow's ignore list so they are never re-linked
+- `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into the installer's skip list so they are never re-linked
 - `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
 - `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
@@ -1213,7 +1213,7 @@ Rules:
   for bash 3.2.
 - **A shell whose rc path is fixed has to move the distro's file aside.** `~/.bashrc` exists on
   stock Debian and Fedora, so `stack/bash`'s `pre_install` renames it to `.bashrc.pre-ppm` (and
-  `post_remove` restores it); otherwise stow aborts the install and `-f` would delete it. Note
+  `post_remove` restores it); otherwise the install stops on it and `-f` would move it aside. Note
   that shipping `~/.bash_profile` also stops login bash from reading `~/.profile`, which is what
   puts `~/.local/bin` on PATH on Debian — another reason the rc owns the base environment.
 - **The shell package owns the login shell.** `stack/zsh`'s `post_install` chsh's to the distro
@@ -1253,10 +1253,43 @@ source provides. The order is global — one order for every tool — and within
 only the sources holding its directory. When a package exists in multiple repos, each copy is a
 layer:
 
-- `ppm install git` installs every `git` package in source order (e.g. `user/git`, then `stack/git`). The layers share one stow ignore list (`PPM_IGNORE_ARGS`), so files stowed by a higher-priority layer are skipped by lower ones. This lets personal repos override individual files.
-- `ppm install stack/git` installs only that layer. It hits a stow conflict on files owned by a higher layer; this is intended.
+- `ppm install git` installs every `git` package in source order (e.g. `user/git`, then `stack/git`). The layers share one skip list (`PPM_SKIP_FILE`, exact paths), so files linked by a higher-priority layer are skipped by lower ones. This lets personal repos override individual files.
+- `ppm install stack/git` installs only that layer. Files a higher layer linked are the plan's `other` (a live link into another package), so the install stops on them; this is intended.
 - `core` is last in `system.list`, so every other source may layer over its packages and depend
   on what it ships (`depends: [node]` resolves to `core/node`).
+
+## Linking (lib/anfs/link.sh)
+
+ppm, wsm and `install.sh` put files in place with one library, `lib/anfs/link.sh` (GNU Stow did
+it before). It knows nothing about packages or spaces: it links a list of files from one
+directory into another, skipping a set, and says who a link points into.
+
+- **A link is per file and relative**, exactly what `stow --no-folding` wrote
+  (`~/.local/bin/ppm -> ../../.local/share/anfs/sources/core/packages/ppm/home/.local/bin/ppm`), so
+  an install stow made is taken over with no link rewritten, and `stow -D` still undoes one.
+  Directories on the way are real; a directory on the way that is a link is followed only when it
+  resolves inside the target.
+- **A plan, then the links.** `anfs_link_plan` classifies every file, one `<class>\t<path>[\t<detail>]`
+  line each: `link`, `keep` (a relative link to this file), `replace` (a link into `<from>`
+  that is absolute or points at another of its files, or a dangling link into the sources),
+  `skip` (the skip set, and `.DS_Store`: the only name the library skips itself), `other` (a live
+  link into another directory of the sources: another layer's; detail is its owner) and
+  `conflict` (a file, a directory, a link elsewhere). `anfs_link_apply` changes nothing unless
+  the plan has no `other` or `conflict`; it returns 1 and the caller decides: ppm moves them
+  aside under `-f` (`stow_subdir`), wsm refuses. Every file in the way is reported, not the first.
+- **Names are data**: spaces, `+`, `(`, `[`, a leading `-`. A name with a newline or a tab is
+  refused (exit 2), once. Paths are compared canonical (macOS's `/var` is `/private/var`).
+- **`anfs_link_owner <path>`** is the one answer to "is this ours": `<source>/<path in it>` for a
+  link into `$ANFS_SOURCES_HOME` (live or dangling; a local-path source by its alias), else 1.
+  ppm's implode sweep uses it.
+- **`ppm install -n`** prints each layer's plan (and what `-f` would do with what is in the way)
+  and changes nothing: no pull, no brew, no hooks, no links, no tracker. It exits 1 when the
+  install would stop. Hooks do not run, so a `pre_install` that moves a file aside (stack/bash's
+  `.bashrc`) shows as a conflict.
+- ppm and wsm source `~/.local/lib/anfs/link.sh`, or the core clone's copy when it is not linked
+  yet (a pull brought it before `core/anfs` was installed again).
+- Tests: `packages/anfs/tests/link.bats` (the library, under `/bin/bash` too; the stow comparison
+  skips without stow), `packages/ppm/tests/backup.bats` and `plan.bats`.
 
 ## Your Customization Repo
 
@@ -1283,22 +1316,25 @@ Homebrew supports one owner per installation (`/opt/homebrew` on Apple silicon m
 Three levels of ownership for an individual file: ppm owns it (default), *you* own it in
 *your repo* (`claim`), or *you* own it locally with ppm detached (`protect`).
 
-- `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and stows them from there. The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
-- `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Stow's `--no-folding` keeps the directory real with a link per file, so files a tool creates there later stay local until added too.
+- `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and links them from there (`anfs_link_one`, that file only). The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
+- `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Directories are always real with a link per file, so files a tool creates there later stay local until added too.
 - **Never put a space in a package**: a space is `spaces/<ws>/<space>/` in a source, and wsm links it into its target and records it (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
-- Protected files are refused by `claim`/`add` (unprotect first): claim's stow does not use the protected ignore list.
+- Protected files are refused by `claim`/`add` (unprotect first): claim would link them again.
 - `ppm file reset <file...>` deletes the claimed copy, restores the owner's link, and removes the claimant package if it becomes empty.
 - `ppm file protect <file...>` turns a package-managed symlink into a plain local copy (preserving its content) and records it in `protected.yml`. ppm then never re-links or force-removes it — including under `-f` — so you can customize it without a repo. The file is also dropped from its package's tracker.
 - `ppm file unprotect <file...>` removes it from `protected.yml`; the next `ppm install -f <package>` re-links it.
 - Claims are recorded in `~/.local/state/ppm/installed/claims.yml` (file → claimant, owner); protections in `~/.local/state/ppm/installed/protected.yml` (a plain list of `$HOME`-relative paths). The per-package trackers are updated to match.
 - None of these touch git. Commit the changes in the repo yourself.
-- `ppm install -f` never deletes a file of yours. `force_remove_conflicts` (`installer.sh`) deletes only a link into the sources; anything else in stow's way is moved to `~/.local/state/ppm/backup/files/<path>` and recorded in `backup/manifest` (`repo/pkg<TAB>path`). `ppm remove` of that package puts it back (`_backup_restore`, skipped by a reinstall), and `ppm implode` restores whatever is left before it deletes the state dir, beside the path as `<path>.pre-ppm` when the path is taken. The first backup of a path is the pre-ppm original and is never replaced. `packages/ppm/tests/backup.bats`.
+- `ppm install -f` never deletes a file of yours. `stow_subdir` (`installer.sh`) deletes only a link into the sources (the plan's `other`); anything else in the way (`conflict`) is moved to `~/.local/state/ppm/backup/files/<path>` and recorded in `backup/manifest` (`repo/pkg<TAB>path`). `ppm remove` of that package puts it back (`_backup_restore`, skipped by a reinstall), and `ppm implode` restores whatever is left before it deletes the state dir, beside the path as `<path>.pre-ppm` when the path is taken. The first backup of a path is the pre-ppm original and is never replaced. `packages/ppm/tests/backup.bats`.
 
 ## Dependencies
 
 - `yq` (mikefarah/yq) — for YAML parsing of package.yml and tracker files
-- `stow` — GNU Stow for symlink management
 - `git` — repo cloning and updates
+
+Links are made by the toolkit itself (`lib/anfs/link.sh`); GNU Stow is not needed. A machine that
+has it keeps it: nothing uninstalls the formula, and `stow -D` still undoes a package (the links
+are the ones it wrote).
 
 ## Development
 
@@ -1321,7 +1357,10 @@ command lives in the lib file for its area, next to its helpers:
 ```
 packages/anfs/home/.local/lib/anfs/     what every tool sources
   bash.sh      # the bash floor (5.2): re-exec under a newer bash, or exit 69. Sourced first by
-               # every entry point, and the one file here that must run under bash 3.2
+               # every entry point; bash 3.2, like link.sh
+  link.sh      # the linker (bash 3.2, in the bootstrap set): anfs_link_plan / anfs_link_apply
+               # (<from> <to> <files-file> [skip-file]), anfs_unlink, anfs_unlink_tree,
+               # anfs_link_one, anfs_link_owner, anfs_relpath. See "Linking" below
   log.sh       # anfs_info/warn/die/fail/debug, the log file (anfs log), ANFS_DEBUG, ANFS_TRACE
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
   catalog.sh   # the definitions of one kind across the sources (pcm's services, pmm's images):
@@ -1355,8 +1394,10 @@ packages/ppm/home/.local/lib/ppm/
   sources.sh     # collect_repos() (the sources holding packages/), update_ppm_if_needed()
   packages.sh    # list, show, path, deps; collect_packages(), find_package_dirs() and resolve_deps()
                  # (over resolve.sh), package.yml reads, install trackers
-  installer.sh   # install, remove; install_single_package(), remover(), stow_package(), PPM_IGNORE_ARGS,
-                 # _install_declared_resources()/_remove_declared_resources(), _reload_stowed_libs()
+  installer.sh   # install (and install -n), remove; install_single_package(), remover(),
+                 # stow_package()/stow_subdir() (the plan, -f, then the links), unstow_package(),
+                 # PPM_SKIP_FILE, _backup_file(), _install_declared_resources()/
+                 # _remove_declared_resources(), _reload_stowed_libs()
   file.sh        # file claim|reset|protect|unprotect (file_command), claims.yml, protected.yml
   implode.sh     # implode: every installed package removed, dependents first, then ppm's dirs
   completion.sh  # completion
@@ -1386,7 +1427,8 @@ source "$HOME/.local/lib/anfs/bash.sh"
 - `anfs` and `ppm` source it only if it exists. `lib/anfs` is stowed file by file, so a pulled
   source has the file before an install links it, and those two are what repair that.
 - **The bootstrap set stays on 3.2**: `install.sh`, the four ppm libraries it sources
-  (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`) and `bash.sh` itself.
+  (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`), `lib/anfs/link.sh`
+  (`ANFS_BOOTSTRAP_LIBS`) and `bash.sh` itself.
   They run on a vanilla Mac before Homebrew's bash exists, so no bash 4+ syntax in them. Each says
   so in its header, and `packages/anfs/tests/bash.bats` parses them under `/bin/bash`. They may
   call functions from bash 5 libraries, as long as that only happens once the real `ppm` runs.
@@ -1415,14 +1457,14 @@ change. Their helpers skip every test and `tests/all` leaves them out; the perso
 hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, bash.sh (the floor, the bootstrap set),
+bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
-bats packages/ppm/tests      # ppm: callbacks, meta
+bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
-bats packages/wsm/tests      # wsm: install (stow, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
+bats packages/wsm/tests      # wsm: install (links, levels, targets, dependencies, repositories), ls/path/remove/new/add/status/implode, events
 bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
                              # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart

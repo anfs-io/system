@@ -119,5 +119,5 @@ whoever owns `.zshrc` decide to source them. The dependency only runs one way: t
 snippets use helpers from `stack/zsh` when they are present and degrade silently when they are not.
 
 This package also ships mise's activation, because mise is part of ppm's bootstrap rather than a
-package: `install.sh` installs it alongside `stow` and `yq`. Packages therefore declare the mise
+package: `install.sh` installs it alongside `yq`. Packages therefore declare the mise
 *tools* they want and never depend on mise itself.

@@ -20,10 +20,10 @@ lgat/spaces/
     rails/
 ```
 
-`wsm install lgat/main` stows each level into `<target>/lgat/`, `<target>/lgat/main/` and
-`<target>/lgat/main/<space>/` with GNU Stow (`--no-folding`, so the directories stay real and
-what you put in them stays yours). It then clones the repositories of every `space.yml` under the
-spec. A narrower spec clones less: `wsm install lgat/main/tech` stows the source and workspace
+`wsm install lgat/main` links each level into `<target>/lgat/`, `<target>/lgat/main/` and
+`<target>/lgat/main/<space>/`, one relative link per file (so the directories stay real and what
+you put in them stays yours). It then clones the repositories of every `space.yml` under the
+spec. A narrower spec clones less: `wsm install lgat/main/tech` links the source and workspace
 levels too, but clones only the space's repositories (and those of the spaces it depends on).
 
 The target is the `DIR` argument, else `WSM_SPACES_HOME` (default `~/spaces`). Set it in your
@@ -43,15 +43,15 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | --- | --- |
 | `wsm ls [SPEC]` | Every source, workspace and space the sources define, with where each is installed (`-` if not): `SPACE STATUS LEVEL DIR` |
 | `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
-| `wsm repo install [SPEC] [--dry-run]` | Clones what the installed levels under `SPEC` declare and is missing; stows nothing, pulls nothing (the clone half of `install`) |
-| `wsm install [SPEC [DIR]] [--dry-run]` | Stows levels into `DIR/<source>/<ws>/<space>` and clones their repositories, dependencies first. With no `SPEC`, the level at `.`, which must hold a `space.yml` |
-| `wsm remove [-y] SPEC...` | Asks, then unstows installed spaces, and the workspace or source the spec names; cloned repos and your own files stay |
+| `wsm repo install [SPEC] [--dry-run]` | Clones what the installed levels under `SPEC` declare and is missing; links nothing, pulls nothing (the clone half of `install`) |
+| `wsm install [SPEC [DIR]] [--dry-run]` | Links levels into `DIR/<source>/<ws>/<space>` and clones their repositories, dependencies first. With no `SPEC`, the level at `.`, which must hold a `space.yml` |
+| `wsm remove [-y] SPEC...` | Asks, then unlinks installed spaces, and the workspace or source the spec names; cloned repos and your own files stay |
 | `wsm new [[SOURCE/]WS/]SPACE` | Creates a space in a source; installs it when its workspace is installed |
-| `wsm add FILE...` | Moves files (or every file under a directory) into the source, then stows them back |
+| `wsm add FILE...` | Moves files (or every file under a directory) into the source, then links them back |
 | `wsm status [SOURCE...]` | Lists what an installed tree and its source disagree on |
 | `wsm cd [-s] [QUERY]` | Jumps to an installed space, workspace or source; with no `QUERY`, to the deepest one you are in. `-s`, `--source`: to its directory in the source instead |
 | `wsm path [-s] [QUERY]` | Prints that path (what `cd` is built on) |
-| `wsm implode [-y]` | Unstows every installed level and deletes wsm's state; contents are kept |
+| `wsm implode [-y]` | Unlinks every installed level and deletes wsm's state; contents are kept |
 
 `SPEC` for install is one of:
 - `source/` (or a bare `source` that names no workspace): the source level and every workspace;
@@ -59,7 +59,7 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 - `ws` or `ws/space` without a source: taken from the highest-priority source that has it.
 
 A level installs even with nothing below it: `wsm install rws/` on a source whose `spaces/` holds
-only a `space.yml` stows that and clones its repositories.
+only a `space.yml` links that and clones its repositories.
 
 `remove` takes the same forms, matched against what is installed.
 
@@ -88,7 +88,7 @@ directory, so the binary prints the path and the shell does the `cd`.
 The space is created in the source. If its workspace is installed, it is installed there too.
 Commit it in the source yourself; wsm never touches git history.
 
-`wsm add` moves each file to the matching place in the source, links it back as stow would, and records it at
+`wsm add` moves each file to the matching place in the source, links it back as install would, and records it at
 its level (source, workspace or space), so `remove` takes it with that level. A directory adds
 every plain file below it. It refuses, or skips quietly under a directory:
 
@@ -132,11 +132,11 @@ and repositories added since, and drops the links to files the source no longer 
 
 ## How it is kept
 
-- **Stowed, as ppm stows packages**, with `--no-folding`: one relative link per file, so a clone
-  never lands in the source. Each level's stow ignores the directories below it (the levels of
-  their own). stow runs with `HOME` set to `$WSM_STATE_HOME/stow`, whose `.stow-global-ignore`
-  holds wsm's ignore list (`.DS_Store`). Without it, stow's built-in list would drop `README.*`,
-  `LICENSE.*` and `.gitignore`. A file already in the way fails that level before stow runs.
+- **Linked, as ppm links packages** (`lib/anfs/link.sh`): one relative link per file, exactly as
+  `stow --no-folding` wrote them, so a clone never lands in the source. A level's files are what
+  is not inside the levels below it. Every file is linked, `README.*`, `LICENSE.*` and
+  `.gitignore` included; only `.DS_Store` is not. Anything already in the way fails that level
+  before anything is linked, every file named.
 - **One tracker per installed level** is wsm's only state: `<source>.yml`, `<source>/<ws>.yml`
   and `<source>/<ws>/<space>.yml` under `$WSM_STATE_HOME/installed/`, each holding the target, the
   directory and the linked files. A space's identity is its name; there is no marker in the
@@ -144,12 +144,12 @@ and repositories added since, and drops the links to files the source no longer 
   install spec named that level (its tracker says `named: true`); then only `wsm remove` of the
   level, or of its source, takes it.
 - **No target inside a source**, nor inside another source's installed tree. Otherwise the source
-  would be stowed into itself, and the clones would land in it.
+  would be linked into itself, and the clones would land in it.
 - **remove and implode only take links**, and only those still pointing at the space's file, then
   the directories that leaves empty. Clones and your own files keep a space directory alive.
 
 **Exit codes.** `0` success, `1` not found or failed, `2` ambiguous, `3` matched but its directory
-is gone (the path is still printed), `64` usage, `69` yq, git or stow missing, `73` already exists.
+is gone (the path is still printed), `64` usage, `69` yq or git missing, `73` already exists.
 
 ## Tests
 

@@ -106,7 +106,7 @@ anfs_find() {
 #   ANFS_ORDER_DIRS  the resource directories
 # <deps_fn> <resource_dir> prints the names that resource depends on, one per line. Every layer of
 # a name is resolved together and the layers land next to each other, highest priority first, so
-# a tool installing them in order can let higher layers win (ppm's shared stow ignore list).
+# a tool installing them in order can let higher layers win (ppm's shared skip list).
 # A dependency on a sibling layer (user/git depends on stack/git) is satisfied by the group itself.
 # Unknown names and cycles are fatal: a half-ordered install is worse than none.
 #

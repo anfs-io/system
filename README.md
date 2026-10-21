@@ -6,7 +6,7 @@ tools that share one idea of where things come from:
 
 | Tool | Reads | Does |
 | --- | --- | --- |
-| `ppm` | `packages/` | software and dotfiles: a manifest of what a package needs, files symlinked with GNU Stow |
+| `ppm` | `packages/` | software and dotfiles: a manifest of what a package needs, files symlinked into place, one relative link per file |
 | [`pcm`](packages/pcm/README.md) | `containers/` | podman compose services, with their configuration schema and dependencies |
 | `psm` | `skills/` | agent skills, synced to every AI agent installed |
 | `wsm` | `spaces/` | workspaces: where they live, what they depend on, the repos inside them |
@@ -115,10 +115,10 @@ installs the irreducible prerequisites and then hands over to ppm itself:
 
 - Homebrew's prerequisites (Debian: `build-essential procps curl file git`; Fedora:
   `gcc gcc-c++ make procps-ng curl file git`; macOS: the Xcode Command Line Tools)
-- Homebrew, if the machine has none — then `stow`, `yq` and `mise` from it, plus a current `bash`
+- Homebrew, if the machine has none — then `yq` and `mise` from it, plus a current `bash`
   on macOS, where the system copy is still 3.2
 - GitHub's published SSH host keys, added to `~/.ssh/known_hosts`
-- anfs itself, by stowing its two base packages, [`anfs`](packages/anfs/README.md) and
+- anfs itself, by linking its two base packages, [`anfs`](packages/anfs/README.md) and
   [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
   `~/.config/anfs/` (your source list, `anfs.local.conf`)
 - `anfs src update`, then the package for your login shell (`stack/bash` or `stack/zsh`: it is
@@ -177,7 +177,7 @@ ppm install -f user/anfs
 - `--script-only` installs anfs and ppm and stops, without installing any packages (or the rest
   of the toolkit).
 - `--skip-deps` skips the prerequisites and Homebrew entirely, for a machine where you manage them
-  yourself. ppm still needs `git`, `stow` and `yq` on your PATH.
+  yourself. ppm still needs `git` and `yq` on your PATH (it links files itself: no GNU Stow).
 - To read the script before running it, download it, `chmod +x` it and run it — the one-liners
   above are a convenience, not a requirement.
 
@@ -185,7 +185,7 @@ ppm install -f user/anfs
 
 ```bash
 anfs implode            # your other stacks, every tool's implode, the system stack, then the sources; asks first (-y to skip)
-anfs implode --all      # also stow, yq and mise (and bash on macOS) from Homebrew
+anfs implode --all      # also the formulas install.sh brewed: yq and mise (and bash on macOS); stow on a machine installed before it was dropped
 ```
 
 wsm forgets its workspaces (their contents are kept), psm removes every skill, pcm deletes its

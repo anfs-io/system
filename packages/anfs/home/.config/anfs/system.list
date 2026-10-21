@@ -1,5 +1,5 @@
 # anfs system source list — shipped and managed by the core/anfs package.
-# Do NOT edit: it is a stow symlink into the anfs repo; changes here dirty the repo and
+# Do NOT edit: it is a symlink into the anfs repo; changes here dirty the repo and
 # stop `anfs src update`. Add your own sources with `anfs src add` (they go in user.list and
 # take priority). Format per line: <git-url-or-path> [alias]
 # Each source may hold packages/ (ppm), containers/ (pcm), skills/ (psm) and spaces/ (wsm).

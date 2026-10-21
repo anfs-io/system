@@ -4,5 +4,5 @@ author: rjayroach
 # command itself runs and nothing else: ppm, for `anfs src install` and the stacks. The toolkit
 # (every tool and the software they run on) is the stack core/system (stacks/system/stack.yml),
 # which install.sh installs with `anfs install system` and `anfs implode` removes. The tools don't
-# declare a dependency back on anfs: like stow and yq it is base software, always present.
+# declare a dependency back on anfs: like yq it is base software, always present.
 depends: [ppm]

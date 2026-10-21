@@ -134,7 +134,7 @@ expand_packages() {
 
 # Find all package directories for a given package specifier
 # "repo/pkg" matches only that repo; "pkg" matches every repo containing it, in source order.
-# Multiple matches are layers: higher-priority layers stow first and lower layers skip their files.
+# Multiple matches are layers: higher-priority layers link first and lower layers skip their files.
 # Outputs one "repo_index<TAB>repo_name<TAB>pkg_dir" line per match; returns 1 if none
 # Optional second arg restricts search to repos at index >= min_index
 # (enforces layered dependency rule: repos can only depend on same or lower-priority repos)
@@ -158,9 +158,9 @@ find_package_dir() {
 # Resolve the full dependency tree for a list of packages into, deps first:
 #   RESOLVE_ORDER  — "repo/pkg" in install order
 #   RESOLVE_DIRS   — parallel array of package directories
-# Layers of one name land next to each other, highest priority first, so install() stows them
-# against one shared ignore list. The algorithm is anfs's (anfs_resolve in lib/anfs/resolve.sh),
-# which wsm uses for spaces too.
+# Layers of one name land next to each other, highest priority first, so install() links them
+# against one shared skip list (PPM_SKIP_FILE). The algorithm is anfs's (anfs_resolve in
+# lib/anfs/resolve.sh), which wsm uses for spaces too.
 # Usage: resolve_deps pkg1 [pkg2 ...]
 resolve_deps() {
   anfs_resolve packages meta_depends "$@"

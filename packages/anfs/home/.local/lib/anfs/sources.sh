@@ -9,7 +9,7 @@
 #
 #   GITSRC_TOOL           name used in messages and usage (ppm, pcm)
 #   GITSRC_USER_LIST      your list, edited by `src add/remove/ssh`; highest priority
-#   GITSRC_SYSTEM_LIST    the shipped list (stowed by a package); never edited
+#   GITSRC_SYSTEM_LIST    the shipped list (linked by a package); never edited
 #   GITSRC_REPOS_DIR      where git sources are cloned, one directory per alias
 #   GITSRC_CACHE_DIR      holds updated/<alias>: epoch of each repo's last clone or pull
 #   GITSRC_UPDATE_TTL     seconds before a repo is stale for gitsrc_update_stale (default 86400)
