@@ -234,3 +234,16 @@ mine() {
   meta_cleanup_stale stack tool "$PKG" ".config/tool/rc"
   [ ! -L "$HOME/.config/tool/old" ] && [ -L "$HOME/.config/tool/rc" ]
 }
+
+@test "the tracker keeps any name: quoted, so [, -, *, &, !, #, :, quotes and numbers read back" {
+  local names
+  names=$(printf '%s\n' '[x]' '-lead' '*star' '&amp' '!bang' '#hash' 'a: b' '"dq"' "it's" 'back\slash' '123' 'true' '.config/plain')
+  meta_mark_installed stack tool "$PKG" "$names"
+  [ "$(meta_installed_files stack tool)" = "$names" ]
+}
+
+@test "a tracker written unquoted (before) still reads" {
+  mkdir -p "$PPM_INSTALLED_DIR/stack"
+  printf 'version: 1\nfiles:\n  - .config/tool/rc\n  - .toolrc\n' > "$PPM_INSTALLED_DIR/stack/tool.yml"
+  [ "$(meta_installed_files stack tool)" = "$(printf '%s\n' .config/tool/rc .toolrc)" ]
+}

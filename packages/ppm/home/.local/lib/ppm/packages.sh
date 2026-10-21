@@ -314,8 +314,12 @@ meta_mark_installed() {
     echo "installed_at: \"$timestamp\""
     if [[ -n "$stowed_files" ]]; then
       echo "files:"
+      # double-quoted, so a name YAML reads specially ([, -, *, &, !, #, :, a number) stays a
+      # string; trackers written before this, unquoted, still read
       echo "$stowed_files" | while IFS= read -r f; do
-        [[ -n "$f" ]] && echo "  - $f"
+        [[ -n "$f" ]] || continue
+        f="${f//\\/\\\\}"
+        printf '  - "%s"\n' "${f//\"/\\\"}"
       done
     fi
     if [[ -n "$brew$cask" ]]; then
