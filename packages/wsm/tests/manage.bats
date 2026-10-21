@@ -81,7 +81,7 @@ YML
   [[ "${lines[0]}" == "REPOSITORY"*"STATUS"*"URL" ]]
   run wsm repo ls --json
   run yq -p json -r '.[0] | keys | join(" ")' <<< "$output"
-  [ "$output" = "repository status url" ]
+  [ "$output" = "repository status url ahead" ]
   echo x > "$HOME/spaces/acme/main/tech/repos/alpha/new"
   run wsm repo ls acme/main
   [[ "$output" == *"dirty"* && "$output" != *"beta"* ]]
