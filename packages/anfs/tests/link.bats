@@ -297,14 +297,80 @@ class_of() { awk -F'\t' -v p="$1" '$2 == p { print $1 }' <<< "$output"; }
   [ "$(anfs_relpath /a/b /c)" = ../../c ]
 }
 
+# The state the last check gave <path>
+state_of() { awk -F'\t' -v p="$1" '$2 == p { print $1 }' <<< "$output"; }
+
+@test "check: what apply wrote is ok, nothing is missing, a link elsewhere is wrong, a file or a directory in the way" {
+  echo a > "$FROM/a.md"; echo b > "$FROM/b.md"; mkdir -p "$FROM/d"; echo c > "$FROM/d/c.md"; echo e > "$FROM/e.md"
+  list
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$status" -eq 0 ]
+  [ "$(state_of .config/tool/rc)" = missing ]
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  rm "$T/a.md"; ln -s /nowhere "$T/a.md"
+  rm "$T/b.md"; echo mine > "$T/b.md"
+  rm "$T/e.md"; mkdir "$T/e.md"
+  rm "$T/.toolenv"; ln -s "$FROM/.toolenv" "$T/.toolenv"
+  rm -r "$T/d"; echo f > "$T/d"
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$status" -eq 0 ]
+  [ "$(state_of .config/tool/rc)" = ok ]
+  [ "$(state_of .toolenv)" = ok ]      # an absolute link to the file
+  [ "$(state_of a.md)" = wrong ]
+  [ "$(state_of b.md)" = "in the way" ]
+  [ "$(state_of e.md)" = "in the way" ]
+  [ "$(state_of d/c.md)" = "in the way" ]
+  # in the list's order, one line each, and nothing changed
+  [ "$(cut -f2 <<< "$output" | tr '\n' ' ')" = "$(tr '\n' ' ' < "$LIST")" ]
+  [ "$(cat "$T/b.md")" = mine ]
+}
+
+@test "check: a relative link written another way is ok; a link to another of the files is wrong" {
+  list
+  mkdir -p "$T/.config/tool"
+  ln -s "../../.local/share/anfs/sources/core/packages/tool/home/.config/tool/../tool/rc" "$T/.config/tool/rc"
+  ln -s ".local/share/anfs/sources/core/packages/tool/home/.config/tool/rc" "$T/.toolenv"
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$(state_of .config/tool/rc)" = ok ]
+  [ "$(state_of .toolenv)" = wrong ]
+}
+
+@test "check: names with spaces and +, and a tab refused" {
+  mkdir -p "$FROM/a b"
+  echo x > "$FROM/a b/c+d e.md"
+  list
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$(state_of "a b/c+d e.md")" = ok ]
+  printf 'x\ty\n' > "$LIST"
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$status" -eq 2 ]
+}
+
+@test "check: the same few processes for 50 files as for 1 (one readlink for all the links)" {
+  local i bin="$BATS_TEST_TMPDIR/bin"
+  for i in $(seq 1 50); do echo "$i" > "$FROM/f$i.md"; done
+  list
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho x >> "%s/readlinks"\nexec %s "$@"\n' "$BATS_TEST_TMPDIR" "$(command -v readlink)" > "$bin/readlink"
+  chmod +x "$bin/readlink"
+  PATH="$bin:$PATH" run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^ok' <<< "$output")" -eq 52 ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/readlinks" | tr -d ' ')" -eq 1 ]
+}
+
 @test "under macOS's bash 3.2: plan, apply, keep, unlink" {
   [[ -x /bin/bash ]] || skip "no /bin/bash"
   list
   run /bin/bash -c 'set -euo pipefail; source "$1"
     anfs_link_apply "$2" "$3" "$4" >/dev/null
     anfs_link_plan "$2" "$3" "$4"
+    anfs_link_check "$2" "$3" "$4"
     anfs_unlink "$2" "$3" "$4"' _ "$LIB" "$FROM" "$T" "$LIST"
   [ "$status" -eq 0 ]
-  [ "$(class_of .config/tool/rc)" = keep ]
+  [[ "$output" == *$'keep\t.config/tool/rc'* && "$output" == *$'ok\t.config/tool/rc'* ]]
+  [ "$(awk -F'\t' '$1 == "ok" { n++ } END { print n }' <<< "$output")" -eq 2 ]
   [ -z "$(find "$T" -type l)" ]
 }

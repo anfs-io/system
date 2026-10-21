@@ -32,12 +32,24 @@
 #
 #   anfs_link_plan   <from> <to> <files-file> [skip-file]   print the plan; 1 on any other or conflict
 #   anfs_link_apply  <from> <to> <files-file> [skip-file]   the plan, then the links; nothing on a conflict
+#   anfs_link_check  <from> <to> <files-file>               the state of each file's link; read-only
 #   anfs_unlink      <from> <to> <files-file>               remove each link that points into <from>
 #   anfs_unlink_tree <from> <to>                            the same for every file under <from>
 #   anfs_link_one    <from-file> <to-path>                  one relative link, parents made
 #   anfs_link_owner  <path>                                 the sources-relative target of a link into
 #                                                           $ANFS_SOURCES_HOME, else 1
 #   anfs_relpath     <from-dir> <to>                        <to> relative to <from-dir> (both canonical)
+#
+# The check prints "<state><TAB><path>" per file, in the list's order, and changes nothing:
+#   ok          a link whose text is what anfs_link_apply writes, or that resolves to the file
+#               (relative or absolute)
+#   missing     nothing there (a directory on the way may be missing too)
+#   wrong       a link to anything else, dangling or not
+#   in the way  a file or a directory there, or a directory on the way that is a file or a link
+#               out of <to>
+# It forks a constant number of times however many files there are: tests in the shell, the
+# expected text built by string operations, and every link's text read with one readlink (through
+# xargs: BSD's and GNU's take many operands). Only a link whose text differs is resolved.
 #
 # Exit codes: 0 done; 1 other or conflict (nothing touched); 2 refused (a name with a newline or a
 # tab, or a path the list names that <from> does not have).
@@ -317,6 +329,97 @@ $_ANFS_DO_T
 EOF4
 $_ANFS_DO_R
 EOF5
+}
+
+# --- The check ----------------------------------------------------------------------------------
+
+# Usage: anfs_link_check <from> <to> <files-file>
+anfs_link_check() {
+  local from="$1" to="$2" tab='	' cfrom cto base list f d name dest text lastd="" up s i n=0 j
+  local -a st=() lk=() lx=() lf=() ld=() got=()
+  [ -d "$from" ] || { echo "anfs: link: no directory $from" >&2; return 2; }
+  _anfs_link_canon "$from"; cfrom="$_ANFS_P"
+  _anfs_link_canon "$to"; cto="$_ANFS_P"
+  base=$(anfs_relpath "$cto" "$cfrom")
+  list=$(cat "$3") || return 2
+
+  # Every file's state that needs no link text; each link queued, its index kept
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+      *"$tab"*) echo "anfs: link: a file name with a tab cannot be linked: $from/$f" >&2; return 2 ;;
+    esac
+    case "$f" in
+      */*) d="${f%/*}" name="${f##*/}" ;;
+      *) d=. name="$f" ;;
+    esac
+    if [ "$d" != "$lastd" ]; then
+      lastd="$d"
+      _anfs_link_dir "$cto" "$d" || _ANFS_D=""
+      up=""
+      if [ -n "$_ANFS_D" ]; then
+        s="${_ANFS_D#"$cto"}"
+        while [ -n "$s" ]; do up="../$up"; s="${s%/*}"; done
+      fi
+    fi
+    lf[$n]="$f"
+    if [ -z "$_ANFS_D" ]; then
+      st[$n]="in the way"
+    else
+      dest="$_ANFS_D/$name"
+      if [ -L "$dest" ]; then
+        text="$up$base/$f"
+        [ "$base" != . ] || text="$up$f"
+        st[$n]=link
+        lk[${#lk[@]}]="$dest" lx[${#lx[@]}]="$text" ld[${#ld[@]}]="$_ANFS_D"
+      elif [ -e "$dest" ]; then
+        st[$n]="in the way"
+      else
+        st[$n]=missing
+      fi
+    fi
+    n=$((n + 1))
+  done <<EOF
+$list
+EOF
+
+  # The links' texts, one readlink for all of them (a text with a newline would put the lines
+  # out of step: then each is read on its own)
+  if [ ${#lk[@]} -gt 0 ]; then
+    i=0
+    while IFS= read -r s; do got[$i]="$s"; i=$((i + 1)); done <<EOF
+$(printf '%s\0' "${lk[@]}" | xargs -0 readlink -- 2>/dev/null)
+EOF
+    if [ "$i" -ne ${#lk[@]} ]; then
+      got=()
+      i=0
+      while [ "$i" -lt ${#lk[@]} ]; do
+        got[$i]=$(readlink -- "${lk[$i]}" 2>/dev/null) || got[$i]=""
+        i=$((i + 1))
+      done
+    fi
+  fi
+
+  j=0
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    if [ "${st[$i]}" = link ]; then
+      s="${got[$j]}"
+      if [ "$s" = "${lx[$j]}" ]; then
+        st[$i]=ok
+      else
+        case "$s" in
+          /*) ;;
+          *) s="${ld[$j]}/$s" ;;
+        esac
+        _anfs_link_canon "$s"
+        if [ "$_ANFS_P" = "$cfrom/${lf[$i]}" ]; then st[$i]=ok; else st[$i]=wrong; fi
+      fi
+      j=$((j + 1))
+    fi
+    printf '%s\t%s\n' "${st[$i]}" "${lf[$i]}"
+    i=$((i + 1))
+  done
 }
 
 # --- Unlinking ----------------------------------------------------------------------------------

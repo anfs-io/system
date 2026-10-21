@@ -114,13 +114,55 @@ deps_of() { cat "$1/deps" 2>/dev/null || true; }
   [ "${ANFS_ORDER[*]}" = "hi/org" ]
 }
 
-@test "resolve: ANFS_NAME_PARTS=2 takes ws/name as a name, and source/ws/name as qualified" {
-  res hi main/tech main/org
+@test "find: ANFS_NAME_NEST takes the first segment as the source only when it is one" {
+  res hi main/tech
   res lo main/org
   anfs_sources things
-  ANFS_NAME_PARTS=2 run anfs_find things main/org
+  ANFS_NAME_NEST=true run anfs_find things main/org
+  [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 1 ]
   [[ "${lines[0]}" == 1$'\t'lo$'\t'* ]]
-  ANFS_NAME_PARTS=2 ANFS_RESOLVE_FIRST=true anfs_resolve things deps_of hi/main/tech
-  [ "${ANFS_ORDER[*]}" = "lo/main/org hi/main/tech" ]
+  ANFS_NAME_NEST=true run anfs_find things lo/main/org
+  [ "${lines[0]}" = 1$'\t'lo$'\t'"$T/sources/lo/things/main/org" ]
+  ANFS_NAME_NEST=true run anfs_find things hi/main/org
+  [ "$status" -ne 0 ]
+  # a source's alone is no name without a marker
+  ANFS_NAME_NEST=true run anfs_find things hi
+  [ "$status" -ne 0 ]
+}
+
+@test "find: ANFS_RESOLVE_MARKER skips a directory without it; the source alone is its own directory" {
+  res hi a/b/c
+  touch "$T/sources/hi/things/a/b/c/marker"
+  touch "$T/sources/hi/things/marker"
+  anfs_sources things
+  ANFS_NAME_NEST=true ANFS_RESOLVE_MARKER=marker run anfs_find things hi/a/b
+  [ "$status" -ne 0 ]
+  ANFS_NAME_NEST=true ANFS_RESOLVE_MARKER=marker run anfs_find things a/b/c
+  [[ "${lines[0]}" == 0$'\t'hi$'\t'"$T/sources/hi/things/a/b/c" ]]
+  ANFS_NAME_NEST=true ANFS_RESOLVE_MARKER=marker run anfs_find things hi
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = 0$'\t'hi$'\t'"$T/sources/hi/things" ]
+  ANFS_NAME_NEST=true ANFS_RESOLVE_MARKER=marker run anfs_find things mid
+  [ "$status" -ne 0 ]
+}
+
+@test "resolve: nested names order as source/path, and a source alone as its alias" {
+  res hi main/tech main/org lo
+  res lo main/org
+  touch "$T/sources/hi/things/main/tech/marker" "$T/sources/lo/things/main/org/marker" "$T/sources/lo/things/marker"
+  anfs_sources things
+  ANFS_NAME_NEST=true ANFS_RESOLVE_MARKER=marker ANFS_RESOLVE_FIRST=true anfs_resolve things deps_of hi/main/tech
+  [ "${ANFS_ORDER[*]}" = "lo/main/org lo hi/main/tech" ]
+  [ "${ANFS_ORDER_DIRS[1]}" = "$T/sources/lo/things" ]
+}
+
+@test "find: without ANFS_NAME_NEST a spec with a / is qualified, as before" {
+  res hi git
+  res lo git
+  anfs_sources things
+  run anfs_find things lo/git
+  [ "${#lines[@]}" -eq 1 ]
+  run anfs_find things git
+  [ "${#lines[@]}" -eq 2 ]
 }
