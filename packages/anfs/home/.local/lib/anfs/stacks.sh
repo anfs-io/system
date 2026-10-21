@@ -9,7 +9,7 @@
 #   stacks: [lgat/base]               # installed first; same or lower-priority source (ppm's rule)
 #   packages: [stack/ruby]            # each key a resource directory, its value a list of
 #   skills: [lgat/rails-conventions]  # source/name; an entry may be a one-key map with status:
-#   spaces:     [{ lgat/: { status: installed } }]    # installed|cloned
+#   spaces:     [{ lgat/: { status: installed } }]    # a wsm spec (an id or a prefix); installed|cloned
 #   containers: [{ core/anfs-ui: { status: running } }]  # running|stopped (machines too)
 #   machines: []
 #
@@ -203,18 +203,35 @@ stack_have_load() {
         yq -p json -r '.[] | select(.status == "running" or .status == "stopped") | .machine + "\t" + .status') || true ;;
       skills) STACK_HAVE[$kind]=$("$bin" list --json </dev/null 2>/dev/null |
         yq -p json -r '.[] | select(.status == "ok" or .status == "partial") | .skill + "\t" + (.status | sub("^ok$"; "installed"))') || true ;;
+      # Every space, installed or not: a prefix (lgat/) is installed when every space under it is
       spaces) STACK_HAVE[$kind]=$("$bin" list --json </dev/null 2>/dev/null |
-        yq -p json -r '.[] | select(.dir != null) | .space + "\tinstalled"') || true ;;
+        yq -p json -r '.[] | select(.status != "not in the source") | .space + "\t" + ((.status // "") | sub("^ok$"; "installed"))') || true ;;
     esac
   done
 }
 
 # The actual state of <resource> of <kind> into REPLY (a bare name matches any source's); false
-# when it is not there. After stack_have_load.
+# when it is not there. After stack_have_load. A spaces entry is a wsm spec: an id is its space's
+# state; a prefix (lgat/, a bare tech/) is installed when it has spaces and all are installed,
+# partial when some are, absent when none.
 stack_actual() {
-  local kind="$1" want="$2" r a
+  local kind="$1" want="$2" r a n=0 inst=0 some=0 p
+  if [[ "$kind" == spaces && "$want" == */ ]]; then
+    p="${want%/}"
+    while IFS=$'\t' read -r r a; do
+      [[ -n "$r" ]] || continue
+      [[ "$r" == "$p" || "$r" == "$p"/* || "$r" == */"$p" || "$r" == */"$p"/* ]] || continue
+      n=$((n + 1))
+      [[ "$a" != installed ]] || inst=$((inst + 1))
+      [[ -z "$a" ]] || some=$((some + 1))
+    done <<< "${STACK_HAVE[$kind]:-}"
+    REPLY=""
+    [[ $some -gt 0 ]] || return 1
+    if [[ $inst -eq $n ]]; then REPLY=installed; else REPLY=partial; fi
+    return 0
+  fi
   while IFS=$'\t' read -r r a; do
-    [[ -n "$r" ]] || continue
+    [[ -n "$r" && -n "$a" ]] || continue
     if [[ "$r" == "$want" || "$r" == */"$want" ]]; then REPLY="$a"; return 0; fi
   done <<< "${STACK_HAVE[$kind]:-}"
   REPLY=""
@@ -324,7 +341,8 @@ stack_install() {
     for line in "${rows[@]}"; do
       IFS="$_STACK_US" read -r kk r s f <<< "$line"
       [[ "$kk" == "$k" ]] || continue
-      if stack_actual "$k" "$r"; then there+=("$r"); else todo[$k]+="$r "; fi
+      # A partial spaces entry is installed again: wsm links what is missing
+      if stack_actual "$k" "$r" && [[ "$k:$REPLY" != spaces:partial ]]; then there+=("$r"); else todo[$k]+="$r "; fi
       list+=" $r${s:+ ($s)}"
     done
     printf '  %-11s %s%s\n' "$k" "$(stack_tool "$k")" "$list"
@@ -386,8 +404,6 @@ _stack_install_kind() {
   bin="$ANFS_BIN_DIR/$(stack_tool "$k")"
   case "$k" in
     # -y: a stack may hold a whole source (source/), which each tool asks about
-    # wsm installs one level per run
-    spaces) local rc=0; for r in "$@"; do "$bin" install -y "$r" || rc=1; done; return $rc ;;
     *) "$bin" install -y "$@" ;;
   esac
 }

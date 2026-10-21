@@ -29,6 +29,7 @@ setup() {
   mkdir -p "$SOURCES/lgat/packages" "$SOURCES/core/packages"
 
   for t in ppm psm wsm pcm pmm; do stub "$t"; done
+  printf 'lgat/main/tech\nlgat/main/org\n' > "$ST/wsm.spaces"
 
   stack core base <<'YML'
 version: 0.1.0
@@ -59,7 +60,8 @@ stack() {
 }
 
 # A tool stub: logs "<tool> <argv>"; install and remove keep $ST/<tool>.have ("name status" lines),
-# list --json prints it with the tool's keys
+# list --json prints it with the tool's keys. wsm's spaces are $ST/wsm.spaces (ids); a prefix
+# (lgat/) installs or removes every one under it, and list prints each, null when not installed.
 stub() {
   cat > "$HOME/.local/bin/$1" <<'SH'
 #!/bin/bash
@@ -67,7 +69,29 @@ t="${0##*/}" have="$ST/${0##*/}.have"
 touch "$have"
 case "$*" in *--json*) ;; *) echo "$t $*" >> "$LOG" ;; esac
 cmd="$1"; shift
+# wsm: a prefix stands for the spaces under it
+expand() {
+  local a
+  for a in "$@"; do
+    case "$t:$a" in
+      -*) ;;
+      wsm:*/) grep -E "^${a%/}(/|\$)" "$ST/wsm.spaces" || true ;;
+      *) echo "$a" ;;
+    esac
+  done
+}
 case "$t:$cmd" in
+  wsm:list)
+    printf '['; sep=""
+    while read -r n; do
+      if grep -qx "$n .*" "$have"; then s='"ok"'; d="\"/w/$n\""; else s=null; d=null; fi
+      printf '%s{"space":"%s","status":%s,"dir":%s}' "$sep" "$n" "$s" "$d"; sep=,
+    done < "$ST/wsm.spaces"
+    echo ']' ;;
+  wsm:install)
+    for a in $(expand "$@"); do grep -qx "$a .*" "$have" || echo "$a ok" >> "$have"; done ;;
+  wsm:remove)
+    for a in $(expand "$@"); do grep -vx "$a .*" "$have" > "$have.n" || true; mv "$have.n" "$have"; done ;;
   *:install)
     for a in "$@"; do
       case "$a" in -*) continue ;; esac
@@ -84,7 +108,6 @@ case "$t:$cmd" in
       case "$t" in
         ppm) printf '%s{"package":"%s","status":"installed","version":"0.1.0"}' "$sep" "$n" ;;
         psm) printf '%s{"skill":"%s","status":"%s"}' "$sep" "$n" "$s" ;;
-        wsm) printf '%s{"space":"%s","status":null,"level":"source","dir":"/w/%s"}' "$sep" "$n" "$n" ;;
         pcm) printf '%s{"container":"%s","status":"%s"}' "$sep" "$n" "$s" ;;
         pmm) printf '%s{"machine":"%s","status":"%s","image":null,"address":null}' "$sep" "$n" "$s" ;;
       esac
@@ -262,6 +285,28 @@ packages: [p/c]'
   [ "$(yq -r '.resources[] | select(.kind == "packages") | .resource' "$RECORDS/lgat/app.yml" | wc -l | tr -d ' ')" = 2 ]
 }
 
+@test "spaces: a prefix is installed when every space under it is, partial when some are" {
+  stack lgat sp <<'YML'
+spaces: [lgat/, lgat/main/tech, other/x]
+YML
+  printf 'lgat/main/tech\nlgat/main/org\nother/x\n' > "$ST/wsm.spaces"
+  run "$ANFS" show lgat/sp </dev/null
+  [[ "$output" == *$'spaces\tlgat/\t-\t-'* ]]
+  have wsm lgat/main/tech
+  run "$ANFS" show lgat/sp </dev/null
+  [[ "$output" == *$'spaces\tlgat/\t-\tpartial'* ]]
+  [[ "$output" == *$'spaces\tlgat/main/tech\t-\tinstalled'* ]]
+  # one wsm install for every space still missing; a partial prefix is installed again
+  run "$ANFS" install -y lgat/sp </dev/null
+  [ "$status" -eq 0 ]
+  run cat "$LOG"
+  [ "$output" = "wsm install -y lgat/ other/x" ]
+  run "$ANFS" show lgat/sp </dev/null
+  [[ "$output" == *$'spaces\tlgat/\t-\tinstalled'* ]]
+  run "$ANFS" list </dev/null
+  [[ "$output" == *$'lgat/sp\tinstalled'* ]]
+}
+
 # --- remove --------------------------------------------------------------------------------------
 
 @test "remove: only what this stack installed and no other record holds, in reverse order" {
@@ -376,6 +421,14 @@ packages: [p/c]'
 }
 
 # --- anfs src install ----------------------------------------------------------------------------
+
+@test "src install: several sources' spaces go to one wsm install" {
+  mkdir -p "$SOURCES/core/spaces" "$SOURCES/lgat/spaces"
+  run "$ANFS" src install -y lgat core </dev/null
+  [ "$status" -eq 0 ]
+  run grep '^wsm' "$LOG"
+  [ "$output" = "wsm install -y lgat/ core/" ]
+}
 
 @test "src install: every resource of a source, tool by tool" {
   mkdir -p "$SOURCES/core/skills"

@@ -6,7 +6,7 @@
 #   containers/  pcm   podman compose services
 #   machines/    pmm   machines, the images they run from and the networks they are on
 #   skills/      psm   agent skills
-#   spaces/      wsm   workspaces
+#   spaces/      wsm   spaces (any directory with a space.yml)
 #   stacks/      anfs  stacks: manifests of the others, applied together (lib/anfs/stacks.sh)
 # and the tools each read their own directory of every source. anfs's own resource is the stack;
 # it adds the commands that span the tools: install a whole source, and implode the whole toolkit.
@@ -33,7 +33,7 @@
 # sourced into anfs, and a declared command always wins.
 #
 # Cherry-picking within a source is each tool's business: ppm install lgat/rails,
-# pcm install lgat/postgres, wsm install lgat/main/tech.
+# pcm install lgat/postgres, wsm install lgat/tech.
 set -euo pipefail
 
 ANFS_LIB="$HOME/.local/lib/anfs"
@@ -146,7 +146,7 @@ _anfs_tool package   ppm "Packages: software and dotfiles"
 _anfs_tool container pcm "Containers: podman compose services"
 _anfs_tool machine   pmm "Machines, their images and networks"
 _anfs_tool skill     psm "Agent skills"
-_anfs_tool space     wsm "Workspaces of spaces"
+_anfs_tool space     wsm "Spaces"
 
 # Commands from packages: an executable anfs-<name> in ~/.local/bin, for a name anfs does not
 # declare. Read from the file names alone, so help and completion start no process.

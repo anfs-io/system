@@ -3,7 +3,7 @@
 #
 # A tool EMITS an event by calling anfs_callbacks_run at the end of a command. A LISTENER is
 # whatever registered a handler with that tool. ppm emits install/remove with the packages a run
-# touched (core/psm listens, to sync skills); wsm emits install/remove with the levels.
+# touched (core/psm listens, to sync skills); wsm emits install/remove with the spaces' ids.
 #
 #   anfs_callback_register   <tool> <name> <handler>   add or replace <name>'s registration
 #   anfs_callback_unregister <tool> <name>

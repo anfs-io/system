@@ -25,7 +25,7 @@
 #   <name> may be two words; its function is cmd_<name> with the space (and any dash) as _.
 #   --opt "-y --yes: Do not ask"       a flag: short form, long form, what help says. Either
 #                                      form may be left out.
-#   --opt "--to SPEC: The wsm level"   a word after the names: the option takes a value, and the
+#   --opt "--to SPEC: The wsm space"   a word after the names: the option takes a value, and the
 #                                      word is its kind.
 #   --arg "service..."  "[snapshot]"   positional arguments: [..] is optional, ... is one or more.
 #                                      The word is its kind.
