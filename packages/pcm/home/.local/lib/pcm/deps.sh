@@ -7,7 +7,7 @@
 # its hosts' edges run (edges.sh)
 service_deps() {
   local deps implicit
-  deps=$(yq eval '.["x-pcm"].depends_on | select(. != null) | ((select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "$(compose_file "$1")")
+  deps=$(declared_deps "$1")
   [[ -z "$deps" ]] || echo "$deps"
   has_ingress "$1" || return 0
   while IFS= read -r implicit; do
@@ -17,6 +17,12 @@ service_deps() {
     deps+=$'\n'"$implicit"
   done < <(ingress_dep "$1"; edge_deps "$1")
   return 0
+}
+
+# Only the services listed in x-pcm.depends_on, as written (`pcm run`: a one-off gets no route,
+# so it needs no proxy or edge)
+declared_deps() {
+  yq eval '.["x-pcm"].depends_on | select(. != null) | ((select(tag == "!!seq") | .[]), (select(tag == "!!map") | keys | .[]))' "$(compose_file "$1")"
 }
 
 # Ids of service $1's dependencies. Unknown ones are skipped.
@@ -95,11 +101,13 @@ provision() {
 }
 
 # Start and provision a service's x-pcm dependencies (recursively).
-# Leaves the provisioned env for the service in PROVISIONED.
+# Leaves the provisioned env for the service in PROVISIONED. $3 `declared`: only the ones
+# x-pcm.depends_on lists, for the service itself (`pcm run`); its dependencies' in full.
 start_deps() {
-  local service="$1" chain="${2:-}"
+  local service="$1" chain="${2:-}" lister=service_deps
   local -a specs=() collected=()
   local spec dep
+  [[ "${3:-}" == declared ]] && lister=declared_deps
 
   if [[ " $chain " == *" $service "* ]]; then
     anfs_warn "dependency cycle:$chain $service"
@@ -108,7 +116,7 @@ start_deps() {
 
   while IFS= read -r spec; do
     [[ -n "$spec" ]] && specs+=("$spec")
-  done < <(service_deps "$service")
+  done < <("$lister" "$service")
 
   for spec in ${specs[@]+"${specs[@]}"}; do
     if ! dep=$(canon "$spec"); then

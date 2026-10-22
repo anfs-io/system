@@ -30,12 +30,12 @@ snapshot_active_image() {
   [[ -n "$image" ]] && echo "$image"
 }
 
-# The container of compose service $2 (or the first one) of service $1
+# The container of compose service $2 (or the first one) of service $1; never a one-off (run.sh)
 _box_container() {
   local filter=()
   [[ -n "${2:-}" ]] && filter=(--filter "label=com.docker.compose.service=$2")
   podman ps --filter "label=$PCM_LABEL_NAME=$(svc_name "$1")" ${filter[@]+"${filter[@]}"} \
-    --format '{{.Names}}' | head -n1
+    --filter "label!=$PCM_LABEL_ONEOFF" --format '{{.Names}}' | head -n1
 }
 
 # Copy a data dir, keeping ownership: rootless podman's subuid-owned files need podman unshare
@@ -109,7 +109,8 @@ cmd_snapshot() {
   while IFS= read -r key; do
     [[ -n "$key" ]] || continue
     ctr=$(podman ps -a --filter "label=$PCM_LABEL_NAME=$(svc_name "$id")" \
-      --filter "label=com.docker.compose.service=$key" --format '{{.Names}}' | head -n1)
+      --filter "label=com.docker.compose.service=$key" --filter "label!=$PCM_LABEL_ONEOFF" \
+      --format '{{.Names}}' | head -n1)
     [[ -n "$ctr" ]] || continue
     image="localhost/pcm-snapshot/$(svc_name "$id")-$key:$snap"
     anfs_warn "committing $ctr -> $image"

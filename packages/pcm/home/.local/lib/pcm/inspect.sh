@@ -2,11 +2,12 @@
 # pcm library: inspecting what pcm runs; the ps and show commands
 # Sourced by ~/.local/bin/pcm; defines functions only.
 
-# Every container pcm created (running or not), one per line: id|name|state|pcm-id|status.
+# Every container pcm created for a service (running or not), one per line:
+# id|name|state|pcm-id|status. Not `pcm run`'s one-offs: they are not the service's state.
 # Fails when podman is unreachable, so callers can degrade instead of erroring.
 pcm_containers() {
   local json
-  json=$(podman ps -a --filter "label=$PCM_LABEL_ID" --format json 2>/dev/null) || return 1
+  json=$(podman ps -a --filter "label=$PCM_LABEL_ID" --filter "label!=$PCM_LABEL_ONEOFF" --format json 2>/dev/null) || return 1
   [[ -n "$json" ]] || return 0
   yq -p json -o tsv '.[] | [.Id, .Names[0], .State, .Labels["'"$PCM_LABEL_ID"'"], .Status] | join("|")' <<< "$json" |
     tr -d '\t'
@@ -103,6 +104,12 @@ schema_names() {
   done < "$schema"
 }
 
+# A container's mounts for `pcm show`, one per line: name<TAB>source -> destination [(ro)]. The
+# name is bound before the range: inside it `$` is the template's data, which podman 6 makes the
+# list of inspect results, so `{{$.Name}}` there fails
+PCM_SHOW_MOUNTS_FORMAT='{{$n := .Name}}{{range .Mounts}}{{$n}}	{{.Source}} -> {{.Destination}}{{if not .RW}} (ro){{end}}
+{{end}}'
+
 # `pcm show <service>`: the definition, its images, env names, dependencies, data, and its
 # containers with ports and mounts; when nothing is created yet, the ports and mounts it declares
 cmd_show() {
@@ -187,17 +194,20 @@ cmd_show() {
   done < <(mount_sets "$id")
   snaps=$(cmd_snapshot "$id" | paste -sd ' ' - | tr -s ' ')
   [[ -z "${snaps// /}" ]] || printf '  %-12s %s\n' snapshots "$snaps"
+  local oneoffs
+  oneoffs=$(oneoff_containers "$id" | paste -sd ' ' -)
+  [[ -z "$oneoffs" ]] || printf '  %-12s %s\n' one-offs "$oneoffs"
 
   if [[ -n "$state" ]]; then
     echo
     echo containers
-    podman ps -a --filter "label=$PCM_LABEL_NAME=$name" --format '  {{.Names}}\t{{.Status}}\t{{.Ports}}' |
+    podman ps -a --filter "label=$PCM_LABEL_NAME=$name" --filter "label!=$PCM_LABEL_ONEOFF" \
+      --format '  {{.Names}}\t{{.Status}}\t{{.Ports}}' |
       column -t -s $'\t'
     local c mounts
     mounts=$(
       while IFS= read -r c; do
-        podman inspect --format '{{range .Mounts}}{{$.Name}}	{{.Source}} -> {{.Destination}}{{if not .RW}} (ro){{end}}
-{{end}}' "$c"
+        podman inspect --format "$PCM_SHOW_MOUNTS_FORMAT" "$c"
       done < <(project_containers "$id" -a) | sed "s|$HOME|~|g; /^$/d; s/^/  /"
     )
     if [[ -n "$mounts" ]]; then

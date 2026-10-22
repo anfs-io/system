@@ -10,21 +10,25 @@ compose_file() {
 #   io.pcm.id      source/name of the definition it was started from
 #   io.pcm.name    the service name, its runtime identity
 #   io.pcm.source  the source
+#   io.pcm.oneoff  "true" on a one-off from `pcm run` (run.sh), and only there
 # and runs as compose project <name>: pcm passes -p, so a definition's `name:` is ignored.
 PCM_LABEL_ID=io.pcm.id
 PCM_LABEL_NAME=io.pcm.name
 PCM_LABEL_SOURCE=io.pcm.source
+PCM_LABEL_ONEOFF=io.pcm.oneoff
 
 # Compose project name: the service name
 project_name() {
   svc_name "$1"
 }
 
-# Names of the containers of service $1's name, whichever definition started them ([-a]: stopped too)
+# Names of the containers of service $1's name, whichever definition started them ([-a]: stopped
+# too). Its own containers: `pcm run`'s one-offs are not the service running
 project_containers() {
   local all=()
   [[ "${2:-}" == "-a" ]] && all=(-a)
-  podman ps ${all[@]+"${all[@]}"} --filter "label=$PCM_LABEL_NAME=$(svc_name "$1")" --format '{{.Names}}'
+  podman ps ${all[@]+"${all[@]}"} --filter "label=$PCM_LABEL_NAME=$(svc_name "$1")" \
+    --filter "label!=$PCM_LABEL_ONEOFF" --format '{{.Names}}'
 }
 
 # The pcm id a container was started from
@@ -44,13 +48,19 @@ check_not_running_elsewhere() {
   return 1
 }
 
-# The generated override for service $1
+# The generated override for service $1; a one-off's (PCM_ONEOFF=true, run.sh) is its own file,
+# so a concurrent up or down reads the service's
 override_file() {
-  echo "$PCM_CACHE_HOME/$(svc_name "$1").override.yml"
+  local kind=override
+  [[ "${PCM_ONEOFF:-}" == true ]] && kind=run.override
+  echo "$PCM_CACHE_HOME/$(svc_name "$1").$kind.yml"
 }
 
 # Resolve compose -f flags for a service into FLAGS: its compose.yml, then a generated override
-# that labels every compose service and, when attached, joins the shared network
+# that labels every compose service and, when attached, joins the shared network. With
+# PCM_ONEOFF=true (`pcm run`), the one-off's: labelled io.pcm.oneoff, and without the ingress
+# labels and the network alias, which would make the proxy and the network's DNS send the
+# service's traffic to it
 compose_flags() {
   local service="$1" name
   local file
@@ -79,8 +89,9 @@ compose_flags() {
   # A role provider is reachable on the shared network by its name (http://traefik:80 for an
   # edge), whatever the compose provider names its container. One compose service only, so the
   # alias is unambiguous.
-  local alias=""
-  if [[ -n "$network" && -n "$(service_role "$service")" && "$(yq eval '.services // {} | length' "$file")" == 1 ]]; then
+  local alias="" oneoff=false
+  [[ "${PCM_ONEOFF:-}" == true ]] && oneoff=true
+  if ! $oneoff && [[ -n "$network" && -n "$(service_role "$service")" && "$(yq eval '.services // {} | length' "$file")" == 1 ]]; then
     alias="$name"
   fi
 
@@ -96,7 +107,11 @@ compose_flags() {
       [[ -n "$key" ]] || continue
       printf '  %s:\n    labels:\n      %s: "%s"\n      %s: "%s"\n      %s: "%s"\n' "$key" \
         "$PCM_LABEL_ID" "$service" "$PCM_LABEL_NAME" "$name" "$PCM_LABEL_SOURCE" "$(svc_src "$service")"
-      ingress_labels "$service" "$key"
+      if $oneoff; then
+        printf '      %s: "true"\n' "$PCM_LABEL_ONEOFF"
+      else
+        ingress_labels "$service" "$key"
+      fi
       if [[ -n "$network" && -n "$alias" ]]; then
         printf '    networks:\n      default: {}\n      %s:\n        aliases:\n          - %s\n' "$network" "$alias"
       elif [[ -n "$network" ]]; then

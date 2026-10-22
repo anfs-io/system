@@ -23,6 +23,8 @@ remove_summary() {
   local containers
   containers=$(project_containers "$id" -a | paste -sd ' ' -) || true
   echo "  containers   ${containers:-none}"
+  containers=$(oneoff_containers "$id" | paste -sd ' ' -) || true
+  [[ -z "$containers" ]] || echo "  one-offs     $containers"
 
   data="$PCM_VOLUMES_HOME/$name"
   if [[ -d "$data" ]]; then
@@ -52,7 +54,7 @@ remove_summary() {
 }
 
 # `pcm remove <service>... [-y] [-f|--force]`: stop the services and delete everything pcm created
-# for them — containers, networks, anonymous volumes, images compose built, their data dir and
+# for them — containers (`pcm run`'s one-offs too), networks, anonymous volumes, images compose built, their data dir and
 # generated override, what pcm recorded for them (state.env) — and run each dependency's
 # deprovision hook. Running dependents are stopped first, which needs --force. The definition, its
 # local.env and its source are never touched.
@@ -91,7 +93,7 @@ cmd_remove() {
   $yes || anfs_confirm "remove deletes data" "Remove?"
 
   export_podman_socket "${ORDER[@]}"
-  local spec dep rc=0
+  local spec dep oneoffs rc=0
   for id in "${ORDER[@]}"; do
     PROVISIONED=()
     compose_flags "$id" || return 1
@@ -103,6 +105,9 @@ cmd_remove() {
     fi
 
     anfs_warn "removing $id"
+    # pcm run's one-offs first, whatever the compose provider's down does with them
+    oneoffs=$(oneoff_containers "$id" | paste -sd ' ' -) || true
+    [[ -z "$oneoffs" ]] || podman rm -f $oneoffs >/dev/null || { anfs_warn "failed to remove $id's one-offs: $oneoffs"; rc=1; }
     compose_run "$id" "${FLAGS[@]}" down --volumes --remove-orphans --rmi local || {
       anfs_warn "failed to remove $id's containers; its data is kept"
       rc=1
@@ -120,7 +125,7 @@ cmd_remove() {
     edges_unpublish "$id" || rc=1
 
     remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { anfs_warn "could not delete $id's data"; rc=1; }
-    rm -f "$(override_file "$id")"
+    rm -f "$(override_file "$id")" "$(PCM_ONEOFF=true override_file "$id")"
     # what pcm recorded for it (a tunnel token: fetched again on the next up)
     rm -rf "${PCM_STATE_HOME:?}/containers/$(svc_name "$id")"
     snapshot_forget "$id"

@@ -112,6 +112,14 @@ Runtime: every service runs as compose project <name> (a definition's top-level
 name: is ignored) and its containers carry the labels io.pcm.id (source/name),
 io.pcm.name and io.pcm.source; ps, list, show and remove find them by those.
 
+One-offs: `pcm run <service> [--] <cmd>...` runs a command in a new container
+of the service, as `podman compose run` does: its image, env (with local.env),
+network, mounts and labels, plus io.pcm.oneoff=true. It is removed on exit
+unless --keep. list, exec, shell and snapshot leave one-offs out; ps shows them
+(<name>-run-<hex>), show names the kept ones, remove and implode delete them.
+There is no `pcm run <image>`: for a throwaway run of a stock image, plain
+`podman run --rm <image>` is the right tool, not a way around pcm.
+
 Configuration: a service's .env.schema declares every variable its compose.yml
 uses, with types and defaults. pcm runs compose and provision hooks through
 `varlock run` from the service directory, so values resolve as

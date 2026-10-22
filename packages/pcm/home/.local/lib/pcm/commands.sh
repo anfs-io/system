@@ -23,6 +23,13 @@ cli_cmd ps "pcm's containers (podman ps; options go on to it)" --passthrough --a
 cli_cmd exec "Run a command in a running service's container: <service> -- <cmd>..." --passthrough \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" \
   --arg "service" --arg "word..."
+cli_cmd run "A one-off container of a service (compose run): its image, env,
+network, mounts and labels; removed on exit. No command runs what the service
+runs. Starts what it requires (x-pcm.depends_on, compose depends_on) as up
+does. For a stock image, plain podman run --rm <image> is the tool" --passthrough \
+  --opt "--keep: Keep the container when it exits" --opt "-u --user USER: As that user" \
+  --opt "-s --service NAME: Of that compose service (needed when there are several)" \
+  --arg "service" --arg "[cmd...]"
 cli_cmd shell "A login shell in a running service's container" \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" --arg "service"
 cli_cmd snapshot "Save the service as it is: containers committed to images,
