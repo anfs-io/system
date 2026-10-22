@@ -14,9 +14,9 @@
 #   scheme               https
 #   check                CLOUDFLARE_API_TOKEN must be set
 #   add <host> [k=v...]  find the zone; create the tunnel if missing; point its ingress at origin=;
-#                        write its token to $PCM_ENV_HOME/cloudflared.env (TUNNEL_TOKEN, which
-#                        cloudflared runs with); create the CNAME. Refuses to replace a record that
-#                        isn't this tunnel's.
+#                        write its token to $PCM_CONTAINERS_HOME/cloudflared/local.env
+#                        (TUNNEL_TOKEN, which cloudflared runs with); create the CNAME. Refuses to
+#                        replace a record that isn't this tunnel's.
 #   remove <host>        delete the CNAME if it points at this tunnel; the tunnel is kept
 #
 # CLOUDFLARE_API_TOKEN needs Zone:Read and DNS:Edit on the zones, and Account: Cloudflare Tunnel:
@@ -95,13 +95,15 @@ ensure_tunnel() {
   echo "$id"
 }
 
-# write_token ACCOUNT ID: TUNNEL_TOKEN in cloudflared's local env file, other lines kept
+# write_token ACCOUNT ID: TUNNEL_TOKEN in cloudflared's settings (pcm's pcm_local_env), other
+# lines kept (for now: a fetched token belongs in pcm's STATE, not CONFIG)
 write_token() {
-  local token out file="$PCM_ENV_HOME/$SERVICE.env" tmp
+  local token out dir="$PCM_CONTAINERS_HOME/$SERVICE" file tmp
+  file="$dir/local.env"
   out=$(api GET "/accounts/$1/cfd_tunnel/$2/token") || exit 1
   token=$(json '.result' "$out")
   [[ -n "$token" && "$token" != null ]] || die "no token for tunnel $2"
-  mkdir -p "$PCM_ENV_HOME"
+  mkdir -p "$dir"
   tmp=$(mktemp "$file.XXXXXX")
   chmod 600 "$tmp"
   { [[ -f "$file" ]] && grep -v '^TUNNEL_TOKEN=' "$file" || true; echo "TUNNEL_TOKEN=$token"; } > "$tmp"

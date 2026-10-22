@@ -104,8 +104,9 @@ service_ingress() {
 }
 
 # Service $1's hosts, expanded with its env and comma-separated; <name>.$PCM_INGRESS_DOMAIN when
-# none are set. The env is the environment, then $PCM_ENV_HOME/<name>.env (where `pcm expose`
-# writes hosts), then what load_env resolved; a subshell, so nothing leaks into the caller.
+# none are set. The env is the environment, then $PCM_CONTAINERS_HOME/<name>/local.env (this
+# machine's settings, pcm_local_env), then what load_env resolved; a subshell, so nothing leaks
+# into the caller.
 ingress_hosts() (
   local raw h out=""
   local -a list=()

@@ -25,7 +25,6 @@ anfs_tool_paths pcm
 anfs_gitsrc_env
 : "${PCM_CONTAINERS_HOME:=$PCM_CONFIG_HOME/containers}"
 : "${PCM_VOLUMES_HOME:=$PCM_DATA_HOME/volumes}"
-: "${PCM_ENV_HOME:=$PCM_CONFIG_HOME/env}"
 : "${PCM_HEALTH_TIMEOUT:=120}"
 : "${PCM_INGRESS_DOMAIN:=localhost}"
 export PCM_CONFIG_HOME PCM_CONTAINERS_HOME PCM_DATA_HOME PCM_VOLUMES_HOME
@@ -113,11 +112,12 @@ Configuration: a service's .env.schema declares every variable its compose.yml
 uses, with types and defaults. pcm runs compose and provision hooks through
 `varlock run` from the service directory, so values resolve as
 environment > .env > .env.schema defaults, and invalid values stop the command.
-Put local overrides in $PCM_ENV_HOME/<name>.env (KEY=VALUE lines), not next to
-the schema: definitions live in git clones. They are exported before varlock
-runs, below anything already in the environment. If fnox is installed and a
-fnox.toml is in the service directory or $PCM_CONFIG_HOME, the call is wrapped
-in `fnox exec` so its secrets are in the environment first.
+Put this machine's overrides in $PCM_CONTAINERS_HOME/<name>/local.env (KEY=VALUE
+lines), not next to the schema in a clone: they apply to whichever source's
+definition of <name> runs. They are exported before varlock runs, below anything
+already in the environment. If fnox is installed and a fnox.toml is in the
+service directory or $PCM_CONFIG_HOME, the call is wrapped in `fnox exec` so its
+secrets are in the environment first.
 
 Validation:
   errors    env that doesn't pass the service's .env.schema (or no schema when
@@ -142,7 +142,8 @@ Validation:
   VM on macOS) for services that reference it.
 
 Sources:
-  local     $PCM_CONTAINERS_HOME/<name>/compose.yml
+  local     $PCM_CONTAINERS_HOME/<name>/compose.yml (a directory there without
+            compose.yml is only settings, local.env, for a <name> defined elsewhere)
   anfs      ~/.local/share/anfs/sources/<source>/containers/<name>/compose.yml
             (every anfs source with a containers/ directory: anfs src list)
 EOF

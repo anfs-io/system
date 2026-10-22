@@ -158,7 +158,9 @@ cmd_show() {
   printf '  %-12s %s\n' "depends on" "$(ids_with_state "$containers" ${deps[@]+"${deps[@]}"})"
   printf '  %-12s %s\n' "used by" "$(ids_with_state "$containers" ${users[@]+"${users[@]}"})"
   printf '  %-12s %s\n' data "$(tilde "$data")${size:+  $size}$([[ -d "$data" ]] || echo '  (none yet)')"
-  [[ -f "$PCM_ENV_HOME/$name.env" ]] && printf '  %-12s %s\n' env "$(tilde "$PCM_ENV_HOME/$name.env")"
+  local settings
+  settings=$(pcm_local_env "$id")
+  [[ -f "$settings" ]] && printf '  %-12s %s\n' settings "$(tilde "$settings")"
   local names vars secrets
   names=$(schema_names "$id")
   vars=$(sed -n 's/^env|//p' <<< "$names" | paste -sd ' ' -)

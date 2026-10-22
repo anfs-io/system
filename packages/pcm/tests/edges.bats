@@ -9,7 +9,7 @@ setup() {
   pcm_setup
   add_source a
   unset PCM_PROXY CLOUDFLARE_API_TOKEN PCM_TUNNEL_NAME
-  mkdir -p "$PCM_CONFIG_HOME/edges" "$PCM_ENV_HOME"
+  mkdir -p "$PCM_CONFIG_HOME/edges" "$PCM_CONTAINERS_HOME/app"
   define "$T/src/a/containers" traefik 'services:
   traefik:
     image: docker.io/library/alpine:3
@@ -60,9 +60,9 @@ int.example.com: { provider: local }'
   [ -z "$(host_edge badexample.com)" ]
 }
 
-@test "hosts come from \$PCM_ENV_HOME/<name>.env, without varlock" {
+@test "hosts come from \$PCM_CONTAINERS_HOME/<name>/local.env, without varlock" {
   define_app
-  echo 'APP_HOSTS=crm.example.com, app.localhost' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=crm.example.com, app.localhost' > "$PCM_CONTAINERS_HOME/app/local.env"
   load_sources
   [ "$(ingress_hosts a/app)" = "crm.example.com,app.localhost" ]
   # and nothing leaks into the caller
@@ -75,9 +75,9 @@ int.example.com: { provider: local }'
   define_app
   load_sources
   [ "$(dep_ids a/app)" = "a/traefik" ]
-  echo 'APP_HOSTS=n8n.int.example.com' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=n8n.int.example.com' > "$PCM_CONTAINERS_HOME/app/local.env"
   [ "$(dep_ids a/app)" = "a/traefik" ]
-  echo 'APP_HOSTS=crm.example.com,app.localhost' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=crm.example.com,app.localhost' > "$PCM_CONTAINERS_HOME/app/local.env"
   [ "$(dep_ids a/app | paste -sd ' ' -)" = "a/traefik a/tun" ]
 }
 
@@ -89,7 +89,7 @@ int.example.com: { provider: local }'
   provision a/app a/traefik a/traefik
   [ "${PROVISIONED[0]}" = "PCM_INGRESS_URL=http://app.localhost:8088" ]
 
-  echo 'APP_HOSTS=crm.example.com,app.localhost' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=crm.example.com,app.localhost' > "$PCM_CONTAINERS_HOME/app/local.env"
   PROVISIONED=()
   provision a/app a/traefik a/traefik
   [ "${PROVISIONED[0]}" = "PCM_INGRESS_URL=https://crm.example.com" ]
@@ -98,7 +98,7 @@ int.example.com: { provider: local }'
 @test "edges_publish/unpublish: add/remove each published host with the origin and options" {
   edges_yml 'example.com: { provider: fake, tunnel: home }'
   define_app
-  echo 'APP_HOSTS=crm.example.com,app.localhost,www.example.com' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=crm.example.com,app.localhost,www.example.com' > "$PCM_CONTAINERS_HOME/app/local.env"
   load_sources
   edges_publish a/app 2>/dev/null
   edges_unpublish a/app 2>/dev/null
@@ -112,7 +112,7 @@ remove www.example.com origin=http://traefik:80 tunnel=home" ]
   edges_yml 'example.com: { provider: fake }
 example.org: { provider: nope }'
   define_app
-  echo 'APP_HOSTS=crm.example.com,www.example.org,app.example.net' > "$PCM_ENV_HOME/app.env"
+  echo 'APP_HOSTS=crm.example.com,www.example.org,app.example.net' > "$PCM_CONTAINERS_HOME/app/local.env"
   load_sources
   FAIL_CHECK=1 run validate_services a/app
   [ "$status" -eq 1 ]
@@ -190,13 +190,14 @@ cft() { "$PCM_LIB_DIR/edges/cloudflare-tunnel" "$@"; }
 
 @test "cloudflare-tunnel add: creates the tunnel, points it at the origin, writes the token, adds the CNAME" {
   fake_cloudflare
-  echo 'OTHER=kept' > "$PCM_ENV_HOME/cloudflared.env"
+  mkdir -p "$PCM_CONTAINERS_HOME/cloudflared"
+  echo 'OTHER=kept' > "$PCM_CONTAINERS_HOME/cloudflared/local.env"
   cft add crm.example.com origin=http://traefik:80 2>/dev/null
   grep -qF 'POST /accounts/A1/cfd_tunnel {"name":"pcm-test","config_src":"cloudflare"}' "$CF/log"
   grep -qF 'PUT /accounts/A1/cfd_tunnel/T1/configurations {"config":{"ingress":[{"service":"http://traefik:80"}]}}' "$CF/log"
-  grep -qx 'TUNNEL_TOKEN=tok-123' "$PCM_ENV_HOME/cloudflared.env"
-  grep -qx 'OTHER=kept' "$PCM_ENV_HOME/cloudflared.env"
-  [ "$(stat -f %Lp "$PCM_ENV_HOME/cloudflared.env" 2>/dev/null || stat -c %a "$PCM_ENV_HOME/cloudflared.env")" = 600 ]
+  grep -qx 'TUNNEL_TOKEN=tok-123' "$PCM_CONTAINERS_HOME/cloudflared/local.env"
+  grep -qx 'OTHER=kept' "$PCM_CONTAINERS_HOME/cloudflared/local.env"
+  [ "$(stat -f %Lp "$PCM_CONTAINERS_HOME/cloudflared/local.env" 2>/dev/null || stat -c %a "$PCM_CONTAINERS_HOME/cloudflared/local.env")" = 600 ]
   grep -q '|CNAME|crm.example.com|T1.cfargotunnel.com$' "$CF/records"
   grep -qF '"proxied":true' "$CF/log"
 }
@@ -207,7 +208,7 @@ cft() { "$PCM_LIB_DIR/edges/cloudflare-tunnel" "$@"; }
   cft add crm.example.com origin=http://traefik:80 2>/dev/null
   [ "$(grep -c 'POST /accounts/A1/cfd_tunnel ' "$CF/log")" -eq 1 ]
   [ "$(grep -c 'POST /zones/Z1/dns_records' "$CF/log")" -eq 1 ]
-  [ "$(grep -c 'TUNNEL_TOKEN=' "$PCM_ENV_HOME/cloudflared.env")" -eq 1 ]
+  [ "$(grep -c 'TUNNEL_TOKEN=' "$PCM_CONTAINERS_HOME/cloudflared/local.env")" -eq 1 ]
 }
 
 @test "cloudflare-tunnel add: never replaces someone else's record; an unknown zone fails" {

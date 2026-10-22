@@ -208,21 +208,23 @@ uses_fnox() {
   return 1
 }
 
-# Export the KEY=VALUE lines of $PCM_ENV_HOME/<name>.env for service $1, except variables
-# already in the environment: they sit where a .env would, below the environment
+# Service $1's settings on this machine: $PCM_CONTAINERS_HOME/<name>/local.env. Keyed by the
+# name, so it applies to whichever source's definition of the name wins; beside a local
+# definition's compose.yml it is the same file
+pcm_local_env() {
+  echo "$PCM_CONTAINERS_HOME/$(svc_name "$1")/local.env"
+}
+
+# Export service $1's local.env (KEY=VALUE lines, read by lib/anfs's anfs_conf_read, never
+# sourced; nothing expanded), except variables already in the environment: they sit where a .env
+# would, below the environment and above the .env.schema defaults
 export_env_overrides() {
-  local file line key val
-  file="$PCM_ENV_HOME/$(svc_name "$1").env"
+  local file key val
+  file=$(pcm_local_env "$1")
   [[ -f "$file" ]] || return 0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line#export }"
-    [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || continue
-    key="${line%%=*}"
-    val="${line#*=}"
-    if [[ "$val" == \"*\" || "$val" == \'*\' ]]; then val="${val:1:${#val}-2}"; fi
+  while IFS=$'\t' read -r key val; do
     [[ -n "${!key+x}" ]] || export "$key=$val"
-  done < "$file"
+  done < <(anfs_conf_read "$file")
 }
 
 # Run a command from service $1's directory with PROVISIONED and the local env overrides

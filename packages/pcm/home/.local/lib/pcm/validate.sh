@@ -411,9 +411,26 @@ validate_services() {
   [[ $VALIDATE_ERRORS -eq 0 ]]
 }
 
+# Directories in $PCM_CONTAINERS_HOME that are no definition (no compose.yml): local.env for a name
+# no source defines, or nothing pcm reads at all. Warnings only
+check_local_dirs() {
+  local d name
+  for d in "$PCM_CONTAINERS_HOME"/*/; do
+    [[ -d "$d" && ! -f "${d}compose.yml" ]] || continue
+    name=$(basename "$d")
+    if [[ -f "${d}local.env" ]]; then
+      canon "$name" >/dev/null || v_warn "$name" "local.env for a container no source defines"
+    else
+      v_warn "$name" "$(tilde "${d%/}") has neither compose.yml nor local.env"
+    fi
+  done
+  return 0
+}
+
 cmd_validate() {
   local -a services=()
   local svc id
+  check_local_dirs
   if [[ $# -eq 0 ]]; then
     while IFS= read -r svc; do
       [[ -n "$svc" ]] && services+=("$svc")

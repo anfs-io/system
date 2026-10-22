@@ -23,7 +23,7 @@ not_settings() {
     # the package being installed, debug, the run's skip list
     ppm) echo "PPM_CURRENT_PACKAGE PPM_DEBUG PPM_SKIP_FILE" ;;
     # computed at run time (the podman socket, the dependency a hook runs for), a test hook, paths
-    pcm) echo "PCM_PODMAN_SOCKET PCM_SERVICE PCM_TOOLKIT_OS PCM_CONTAINERS_HOME PCM_VOLUMES_HOME PCM_ENV_HOME" ;;
+    pcm) echo "PCM_PODMAN_SOCKET PCM_SERVICE PCM_TOOLKIT_OS PCM_CONTAINERS_HOME PCM_VOLUMES_HOME" ;;
     # host facts and the files pmm-network sets up (tests point them at a temp dir), tart's limit,
     # the ssh host a machine is reached on (per machine), the ssh config file, firmware probed,
     # local definition paths
