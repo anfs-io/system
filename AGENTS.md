@@ -178,8 +178,14 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
   `local.env` > the definition's `.env.schema` defaults (`export_env_overrides` exports it before
   varlock runs). `pcm show` prints `settings <file>` when it exists; `pcm validate` warns about a
   `local.env` for a name no source defines and a directory with neither file. A command that
-  writes a container's setting writes `local.env` (today only the cloudflare-tunnel edge's
-  `TUNNEL_TOKEN`, until it moves to STATE).
+  writes a container's setting for the person writes `local.env`; nothing does yet.
+- **What pcm records for a container** is `$PCM_STATE_HOME/containers/<name>/state.env`
+  (`pcm_state_env`): today the cloudflare-tunnel edge's `TUNNEL_TOKEN`, fetched on `pcm up` and
+  written mode 0600 in a 0700 directory (the edge gets `PCM_STATE_HOME` from `bin/pcm`'s
+  export). `export_env_overrides` reads it after `local.env`, each name only when unset:
+  environment > `local.env` > `state.env` > `.env.schema` defaults. `pcm show` prints `state
+  <file>` (never a value); `pcm remove` deletes the directory (the next `up` fetches it again);
+  `pcm implode` deletes `$PCM_STATE_HOME`. `pcm up` writes nothing under `~/.config/pcm`.
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
   port on `127.0.0.1` unless its `.env.schema`'s `ANFS_UI_BIND` says otherwise; `toolkit: write`.
@@ -243,9 +249,11 @@ machines/networks/<name>/      a network (network.yml)
   source/` builds the source's images, installs its networks, then its machines.
   `PMM_INSTALL=create` builds and makes but starts nothing, and `PMM_INSTALL=validate` only
   validates, which is what the round trips use (no KVM in a podman box).
-- **The sockets of running machines** (QMP, the guest agent) are in `PMM_SOCK_DIR`, by default
-  `/tmp/pmm-<uid>`, which `implode` deletes. Anything that runs pmm beside a real one (the bats
-  helper, the e2e) sets it to a directory of its own.
+- **The sockets of running machines** (QMP, the guest agent) are RUNTIME, in `PMM_SOCK_DIR`, by
+  default `$XDG_RUNTIME_DIR/pmm` on Linux when that is a directory, else (and on macOS)
+  `/tmp/pmm-<uid>` (`sock_dir_default`, `lib/pmm/core.sh`); `implode` deletes it. Anything that
+  runs pmm beside a real one (the bats helper, the e2e, `anfs work`) sets it to a directory of its
+  own; under bats both defaults are refused.
 - **Media and blank machines** (`lib/pmm/media.sh`). `media:` lists what a person would plug in:
   an `.iso` is a CD, any other file a USB drive (a Ventoy stick's image), each a path or an id in
   the ISO catalogue. `pmm iso` is that catalogue and its store (`lib/anfs/iso.sh`, the same group
@@ -491,8 +499,12 @@ domain: lab               # optional
   network create` does: its record (`$PMM_DATA_HOME/networks/<name>/state.yml`, which every
   installed network has) is all of it, and a machine's `interfaces:` names it like any other
   (`net_known`, `net_setting` in network.sh). It is listed with no source.
-- **`~/.ssh/config.d/05-pmm.conf`** holds a `Host` entry per running machine (any backend),
-  rewritten by up and down: `ssh web1` works where the config includes that directory (stack/ssh).
+- **`$PMM_STATE_HOME/ssh_config`** (`PMM_SSH_CONFIG`) holds a `Host` entry per running machine
+  (any backend), rewritten by up and down. core/pmm links `~/.ssh/config.d/05-pmm.conf`, one
+  `Include ~/.local/state/pmm/ssh_config` line, so `ssh web1` works where `~/.ssh/config`
+  includes that directory (stack/ssh) and pmm never writes into `~/.ssh`. implode deletes the
+  state file; `ppm remove core/pmm` unlinks the fragment. A moved `XDG_STATE_HOME` needs the
+  fragment claimed and pointed there (`ppm file claim`).
 - `PMM_NET_BACKEND` is `libvirt` on Linux and `none` elsewhere, where a machine with interfaces
   does not validate. The tests stub `virsh` (`tests/stubs/virsh`) and point `PMM_BRIDGE_CONF`,
   `PMM_BRIDGE_HELPER` and `PMM_SYS_NET` at a temp dir (`setup_net` in the helper).
@@ -772,9 +784,50 @@ The tools don't declare `depends: [anfs]` although they source `lib/anfs`: anfs 
 and like yq it is base software that is always present.
 
 Every tool, anfs included, keeps to `<dir>/<tool>`: `~/.local/bin/<tool>`, `~/.local/lib/<tool>/`,
-and `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>/` for its own files. Nothing is namespaced under
-anfs except anfs's own (the sources, the lists, `anfs.env`). A tool's settings are
-`~/.config/<tool>/<tool>.env` (Configuration).
+and `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>/` for its own files, each kind in its own
+directory ("Where files go", next). Nothing is namespaced under anfs except anfs's own (the
+sources, the lists, `anfs.env`). A tool's settings are `~/.config/<tool>/<tool>.env`
+(Configuration).
+
+## Where files go (the XDG rule)
+
+What a file is decides where it goes. A tool writes into a config directory only what the
+person declared.
+
+| Kind | Holds | Where | Examples |
+| --- | --- | --- | --- |
+| CONFIG | what the person declares: by hand, or by an explicit `set`/`add` command; **never** as a side effect of another command or an install. Also what a package links there (a declaration in a repo) and the local definition directories | `$XDG_CONFIG_HOME/<tool>` (`<TOOL>_CONFIG_HOME`) | `<tool>.env` (linked), `<tool>.local.env` (`config set`), `user.list` (`anfs src add`), `isos.yml` (`iso add`), pcm's `containers/` and pmm's `machines/` (the `local` source, like Quadlet's `~/.config/containers/systemd`) |
+| STATE | what a tool records about what it did | `$XDG_STATE_HOME/<tool>` | trackers, stack records, backups, a machine's run (`run/<name>/`, its pid with it), pmm's `ssh_config`, pcm's `containers/<name>/state.env` (a fetched tunnel token) |
+| DATA | content a tool manages | `$XDG_DATA_HOME/<tool>` | sources, volumes, disks, builds, keys, ruby's `default-gems` (a list packages add to) |
+| CACHE | what can be rebuilt | `$XDG_CACHE_HOME/<tool>` | compose overrides, ISOs, update stamps |
+| RUNTIME | sockets and temp files that die with the session | Linux: `$XDG_RUNTIME_DIR`; macOS: `/tmp` (socket paths are short) or `$TMPDIR`; always overridable for tests | pmm's sockets (`PMM_SOCK_DIR`, default `$XDG_RUNTIME_DIR/pmm` on Linux, `/tmp/pmm-<uid>` on macOS), anfs's RPC sockets (systemd's `%t`), ppm's message file (`$TMPDIR`) |
+
+- **A side effect never writes CONFIG.** An install hook makes no empty directory, seeds no
+  template and writes no default there; a command that runs (`up`, `install`) records what it
+  learned in STATE. A file another command needs is made by the command that writes it
+  (`anfs src add` makes `user.list`, `pmm image new` makes `machines/images/`), and every reader
+  takes a missing one as empty.
+- **Secrets a tool fetches are STATE** (mode 0600 in a 0700 directory), read below the person's
+  own file: pcm reads a container's `local.env`, then `state.env`.
+- **A config file someone else dictates is not written as it runs.** Where the location is fixed
+  (`~/.ssh/config.d/`), the package links a static file that includes the tool's STATE
+  (core/pmm's `05-pmm.conf`: `Include ~/.local/state/pmm/ssh_config`).
+- **Accepted exceptions**, each with its reason:
+  - platform locations the OS or another program dictates: the RPC listener's launchd plist and
+    systemd user units (core/anfs), podman's machine (`pcm up` on macOS);
+  - stack/ssh's one `Include config.d/*.conf` line appended to `~/.ssh/config` (it is what makes
+    `config.d/` work; idempotent), and stack/gam's `gam.cfg` (GAM fixes the place): future
+    `setup:` steps;
+  - stack/firstmate's trust entry in Claude Code's `~/.claude.json` (that tool's file, mostly its
+    state; its README says so);
+  - pmm's pid files stay with the record of the run they belong to (`$PMM_STATE_HOME/run/<name>/`),
+    guarded by `pid_alive`: moving them would split one record across two places;
+  - anfs-dev's git hooks under `~/.config/git/ppm-hooks` (in docs' BACKLOG).
+- **How it is held**: a new write into a config directory in review is held to this table. The
+  audit of every write (2026-10-22) is `units/config/05-xdg-rule/log.md` in anfs-io/docs; the
+  tests are `packages/anfs/tests/xdg.bats` (core's hooks), `pcm-local-env.bats` (the token),
+  `pmm-runtime.bats` (sockets, ssh) and `isolation.bats` (no suite names either live socket
+  directory).
 
 ## Configuration: `<tool>.env`
 
@@ -1385,7 +1438,7 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
 - `~/.config/anfs/system.list` — default sources, linked from `core/anfs` (don't edit: `anfs src
   ssh` switches a system source's clone `origin` and leaves the list, whose URL is only used for
   the first clone; `anfs src list` shows the origin)
-- `~/.config/anfs/user.list` — your sources (edited by `anfs src`); higher priority than system.list
+- `~/.config/anfs/user.list` — your sources (made and edited by `anfs src add/remove/ssh`, or a link into your repo); higher priority than system.list
 - `~/.local/share/anfs/sources/<alias>/` — one clone per source; a local-path source is a link here
 - `~/.cache/anfs/updated/<alias>` — each source's last successful clone/pull. `ppm install`,
   `pcm up`/`install` and `anfs install` auto-update only the sources older than
@@ -1407,7 +1460,10 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   (other packages write there)
 - `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `stack/ruby`'s `install_gem`) or, for now, commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (anfs-dev/dev's `ppm user`; new commands are `~/.local/bin/anfs-<name>`, run as `anfs <name>`)
 - `~/.cache/ppm/brew_last_update`
-- Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
+- `~/.local/state/pcm/containers/<name>/state.env` — what pcm recorded for a container (the tunnel token)
+- `~/.local/state/pmm/ssh_config` — pmm's running machines for ssh, included by `~/.ssh/config.d/05-pmm.conf`
+- Each tool keeps its own files in its own XDG dirs, each kind where "Where files go" says:
+  `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
 
 ## Shell Integration
 
@@ -1873,7 +1929,7 @@ packages/pmm/tests`); the tests use the variables when they are set:
   reads the real store.
 - tart allows two macOS guests in all: anfs-dev's `roundtrip-macos` takes `$ANFS_STATE_HOME/work/tart.lock`
   (exit 75 while another run holds it, naming the pid and the job).
-- **No test may name `/tmp/pmm-<uid>`, point a `*_HOME` at a real home, write under the real `~`,
+- **No test may name `/tmp/pmm-<uid>` (or Linux's `$XDG_RUNTIME_DIR/pmm`), point a `*_HOME` at a real home, write under the real `~`,
   or kill by pattern** (`pkill`, `killall`). `packages/anfs/tests/isolation.bats` greps every
   suite's bats files, helpers, stubs and e2e scripts for those; the round trips and the harness,
   whose `~` is a box's, are not covered. What no grep sees, a suite that never sets
