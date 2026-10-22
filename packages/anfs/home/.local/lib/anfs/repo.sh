@@ -98,7 +98,7 @@ anfs_repo_push() {
   ANFS_REPO_UPSTREAM=$(git -C "$dir" rev-parse -q --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) ||
     { ANFS_REPO_UPSTREAM=""; return 3; }
   ANFS_REPO_AHEAD=$(anfs_repo_ahead "$dir")
-  (( ${ANFS_REPO_AHEAD:-0} > 0 )) || return 2
+  (( ANFS_REPO_AHEAD > 0 )) || return 2
   ! $dry || return 0
   err=$(git -C "$dir" push -q 2>&1 >/dev/null) && return 0
   while IFS= read -r line; do
