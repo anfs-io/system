@@ -10,6 +10,25 @@ The `anfs` command and everything the tools share:
 | `~/.config/anfs/anfs.env` | anfs's own settings (`ANFS_*`, shared by the tools) and Homebrew's, each documented with its default; each tool ships its own `~/.config/<tool>/<tool>.env` |
 | `~/.config/sh/anfs.sh` | the shell wrapper that reloads the shell after `anfs install`, `remove` and `src install` |
 
+**Reporting a bug** in any anfs tool: `anfs report` (`lib/anfs/report.sh`). It builds the issue
+(title, what was expected, what happened, steps, and `anfs report diag`'s block: versions, each
+source's commit and state, installed packages, the log's recent failures) and files it where
+`ANFS_REPORT_TO` says: `github` (the default; the repo of the source owning `--package`, after a
+duplicate search and a yes) or a markdown file (appended as `## r-<date>-<n> <title>` with
+`Status: open`). It prints the report's id. Then:
+
+```bash
+anfs report check                       # can this machine file one (ok/fail per item; exit 1 on a fail)
+anfs report status <id>                 # open, fixed, or available (the fix is in this host's checkout)
+anfs report wait <id> --timeout 3600    # until available (0) or the timeout (1)
+anfs report close <id> --commit <sha>   # whoever merges the fix: recorded, and the issue closed
+```
+
+The core skill `anfs-bug-report` is how an agent uses it: it reproduces the bug minimally, runs
+`anfs report` with the fields (never choosing where it goes, never calling `gh`), keeps the id,
+runs `wait` in the background; invoked with no bug in hand (`/anfs-bug-report check`) it runs
+`anfs report check`. Install it like the other core skills: `psm install core/anfs-bug-report`.
+
 It depends on `ppm` (what `anfs src install` and the stacks run) and nothing else. The rest of
 the toolkit — `pcm`, `psm`, `wsm` and the `podman`, `varlock` and `node` they run on — is the stack
 `core/system`: `anfs install system` installs it (install.sh does), `anfs implode` removes it.

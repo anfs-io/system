@@ -1199,7 +1199,7 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
+   callbacks`, `anfs report check`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1225,6 +1225,7 @@ The keys, which are the interface:
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `<tool> config list` | `name`, `value` (the effective value; null: empty), `from` (`env`, `local`, `shipped`, `default`), `file` (the file it is from; the shipped one for `default`; null for `env`); with `anfs config list --all` a leading `tool` |
+| `anfs report check` | `check` (`report-to`, `file`, `gh`, `gh-auth`, `origin core`, `origin stack`, `skill`), `status` (`ok`, `fail`), `detail` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 
@@ -1258,6 +1259,9 @@ cli_dispatch "$@"
 
 - A two-word name is a sub-command; its function is `cmd_skills_remove`. A group on its own
   prints its sub-commands. No tool writes its own second-level `case`.
+- `cli_group <name> "<summary>" --default <sub>`: an option where the sub-command would be (not
+  `-h`/`--help`) goes to `<name> <sub>`, so `anfs report --title x` is `anfs report new --title
+  x`; the group alone still prints its sub-commands, and its help says where options go.
 - `--opt "-y --yes: help"` is a flag; a word after the names (`--to SPEC`) means it takes a value,
   and the word is its **kind**. `--arg "service..."`, `--arg "[snapshot]"`: `[..]` is optional,
   `...` is one or more, the word is its kind.
@@ -1440,6 +1444,37 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   [-f] [tool]` prints or follows it. Past 1 MB it becomes `anfs.log.1`.
 - `ANFS_LOG=off` writes no file. Test helpers set it; a test that sources a tool's libraries
   directly must source `log.sh` first (pmm's and ppm's do), since the tool's `warn`/`die` call it.
+
+## Reporting a bug: anfs report
+
+`lib/anfs/report.sh`. An agent (or a person) that hits a bug in an anfs tool describes it; where
+it goes is the machine's setting, so the caller never needs to know. The skill that tells an agent
+to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
+
+| Command | Does |
+| --- | --- |
+| `anfs report [new] --title T [--package PKG] [--expected] [--actual] [--steps] [--body-file F\|-] [-n] [-y]` | the report: `Package:`, the body file's text, the three sections, then `report diag`'s block; filed, its id printed. A group with a default: options and no sub-command are `new` |
+| `anfs report diag` | the diagnostics: anfs's version (and `ANFS_WORK`), platform, bash, git, podman, each source's short commit and `anfs_repo_status`, each ppm tracker's version, and the log's last 10 failures (an `error:` line, or a failed run's `start:` and non-zero `end:`) |
+| `anfs report check` | `CHECK STATUS DETAIL`, `ok`/`fail` per row; exit 1 when one fails. The value of `ANFS_REPORT_TO` and its FROM; a file target writable or creatable; or `gh`, `gh auth status` (its only network call), core's and stack's origins on GitHub; and the skill installed for every detected agent (`lib/anfs/skill.sh`, read-only) |
+| `anfs report status <id>` | `open`, `fixed` (closed; the commit not in this host's checkout), `available` (the commit an ancestor of HEAD in the source's live checkout, or with `ANFS_WORK` the job's worktree); exit 0 available, 1 otherwise, 2 an unknown id |
+| `anfs report close <id> --commit SHA [--source S]` | the fix recorded: a file's `Status:` line rewritten; GitHub: a `Fixed in <source> <sha>` comment, then `gh issue close` |
+| `anfs report wait <id> [--timeout 3600] [--interval 60]` | `status` until `available` (0) or the timeout (1); 2 an unknown id. An agent runs it in the background |
+
+- **`ANFS_REPORT_TO`** (anfs.env, commented: `github`): `github`, or a path (a leading `~/`
+  expanded; it must be absolute). Set per machine in `anfs.local.env`.
+- **A file**: appended, never rewritten: `## r-<YYYYMMDD>-<n> <title>`, `Status: open`, the body;
+  `<n>` is one past that day's highest in the file. `close` rewrites that section's `Status:` line
+  only (`fixed in <source> <sha> (<date>)`), atomically.
+- **github**: the owner is the `--package`'s source (core when none); its clone's `origin` must be
+  a GitHub URL (`git@github.com:`, `ssh://git@github.com/`, `https://github.com/`), else 1, saying
+  to set a file. Duplicates are searched (`gh issue list --search "<title> in:title"`) and shown,
+  then `anfs_confirm` (77 without a terminal or `-y`), then `gh issue create`. The id is
+  `owner/repo#N`; `status` reads `gh issue view`'s state and the last `Fixed in` comment.
+- `-n` calls no `gh` at all. `--json`: `new` is one object (`id`, `to`, `repo`, `file`, `url`,
+  `title`, `filed`, `duplicates` as `[{number, state, title, url}]`, `report`); `diag`
+  `{"diagnostics": ...}`; `status`, `wait` and `close` `anfs_result` objects.
+- ppm's trackers are read as files (as `onboard.sh` does): a report is wanted most when ppm is
+  what is broken.
 
 ## Key Files
 
@@ -1848,6 +1883,9 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
   catalog.sh   # the definitions of one kind across the sources (pcm's services, pmm's images):
                # catalog_load, catalog_canon, catalog_all_ids
+  report.sh    # anfs report (anfs_report_cli: new, diag, check, status, close, wait): the issue with its
+               # diagnostics, filed where ANFS_REPORT_TO says, and followed to its fix. See "Reporting a
+               # bug: anfs report"
   iso.sh       # install ISOs: the store ($ANFS_ISO_HOME, ~/.cache/anfs/isos), anfs_iso_fetch (resume,
                # mirrors, sha256 or the publisher's checksum file), and the catalogue layered over the
                # sources (isos/isos.yml, ~/.config/anfs/isos.yml first): anfs_iso_ids, anfs_iso_fetch_id.
@@ -1977,7 +2015,8 @@ bats packages/anfs/tests     # lib/anfs: paths.sh's settings (conf.bats; setting
                              # documents what it reads), sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, manifest.sh, files.sh,
                              # bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log,
-                             # move.sh (move.bats: fixture repositories, bare remotes over file://)
+                             # move.sh (move.bats: fixture repositories, bare remotes over file://),
+                             # report.sh (report.bats: gh, podman and npx stubbed; no network)
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:,

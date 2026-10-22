@@ -21,6 +21,9 @@
 #   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
 #                                      your own repo, and the steps installed packages bring
 #                                      (lib/anfs/onboard.sh; the contract is lib/ppm/onboard.sh)
+#   report [new|diag|check|status|close|wait]
+#                                      a bug in an anfs tool as an issue, with its diagnostics,
+#                                      filed where ANFS_REPORT_TO says (lib/anfs/report.sh)
 #   implode [-y] [--all]               the other stacks, the tools' implodes, the system stack,
 #                                      then anfs itself; --all also what
 #                                      install.sh added (Homebrew when it installed it)
@@ -70,6 +73,9 @@ CLI_TOOL=anfs
 if [[ -f "$ANFS_LIB_DIR/config.sh" ]]; then source "$ANFS_LIB_DIR/config.sh"; fi
 # shellcheck source=/dev/null
 if [[ -f "$ANFS_LIB_DIR/onboard.sh" ]]; then source "$ANFS_LIB_DIR/onboard.sh"; fi
+# anfs report (lib/anfs/report.sh), which sources platform.sh and skill.sh when it needs them
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB_DIR/report.sh" ]]; then source "$ANFS_LIB_DIR/report.sh"; fi
 cli_group src "The sources every tool reads"
 cli_cmd "src list" "The sources in priority order: status, and what each provides" --alias ls
 cli_cmd "src add" "Add a source to your list (and clone it)" \
@@ -137,6 +143,7 @@ answer per line on stdout (run, stream, yes, watch, version). Only
 the toolkit's tools, never a shell; a write needs --grant write" \
   --opt "--grant GRANT: read (the default) or write" \
   --opt "--token: The first line must be {\"token\":\"...\"}; the token is the grant (the listener's TCP mode)"
+! declare -F anfs_report_cli >/dev/null || anfs_report_cli
 ! declare -F anfs_config_declare >/dev/null || anfs_config_declare
 cli_standard
 

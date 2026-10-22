@@ -182,6 +182,14 @@ ppm install -f user/anfs
 - To read the script before running it, download it, `chmod +x` it and run it — the one-liners
   above are a convenience, not a requirement.
 
+## Reporting a Bug
+
+`anfs report --title "..." --actual "..." [--package core/pcm]` files an issue with the
+diagnostics a fixer needs (versions, each source's commit, the log's failures), on the owning
+repo's GitHub or in a file of your own (`ANFS_REPORT_TO` in `~/.config/anfs/anfs.local.env`).
+`anfs report check` says whether this machine can file one; `anfs report status <id>` and `wait`
+follow it until the fix is here. Agents use the `anfs-bug-report` skill, which runs it.
+
 ## Removing It All
 
 ```bash
