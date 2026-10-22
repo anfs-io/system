@@ -40,6 +40,7 @@ setup() {
   mkdir -p "$T/sources/hi/isos" "$T/sources/lo/isos"
   ANFS="$BATS_TEST_DIRNAME/../home/.local/bin/anfs"
   PMM="$BATS_TEST_DIRNAME/../../pmm/home/.local/bin/pmm"
+  export PMM_LIB_DIR="$BATS_TEST_DIRNAME/../../pmm/home/.local/lib/pmm"
   export PMM_SOCK_DIR="$T/sock"
 
   # curl: -o FILE and the URL are all that matter; https://host/<path> is $WEB/<path>
