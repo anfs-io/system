@@ -125,7 +125,7 @@ cmd_remove() {
     edges_unpublish "$id" || rc=1
 
     remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { anfs_warn "could not delete $id's data"; rc=1; }
-    rm -f "$(override_file "$id")" "$(PCM_ONEOFF=true override_file "$id")"
+    rm -f "$(override_file "$id")" "$(ONEOFF=true override_file "$id")"
     # what pcm recorded for it (a tunnel token: fetched again on the next up)
     rm -rf "${PCM_STATE_HOME:?}/containers/$(svc_name "$id")"
     snapshot_forget "$id"

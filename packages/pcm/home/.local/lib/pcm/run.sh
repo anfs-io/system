@@ -97,7 +97,7 @@ cmd_run() {
   $keep || args+=(--rm)
   [[ -z "$user" ]] || args+=(-u "$user")
   [[ -t 0 && -t 1 ]] || args+=(-T)
-  PCM_ONEOFF=true compose_flags "$id" || return 1
+  ONEOFF=true compose_flags "$id" || return 1
   compose_run "$id" "${FLAGS[@]}" "${args[@]}" "$csvc" "$@" || rc=$?
   ! $keep || anfs_warn "kept $name (pcm remove $(svc_name "$id") deletes it, or: podman rm $name)"
   return $rc

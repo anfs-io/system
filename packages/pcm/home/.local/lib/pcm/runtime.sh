@@ -48,17 +48,17 @@ check_not_running_elsewhere() {
   return 1
 }
 
-# The generated override for service $1; a one-off's (PCM_ONEOFF=true, run.sh) is its own file,
+# The generated override for service $1; a one-off's (ONEOFF=true, run.sh) is its own file,
 # so a concurrent up or down reads the service's
 override_file() {
   local kind=override
-  [[ "${PCM_ONEOFF:-}" == true ]] && kind=run.override
+  [[ "${ONEOFF:-}" == true ]] && kind=run.override
   echo "$PCM_CACHE_HOME/$(svc_name "$1").$kind.yml"
 }
 
 # Resolve compose -f flags for a service into FLAGS: its compose.yml, then a generated override
 # that labels every compose service and, when attached, joins the shared network. With
-# PCM_ONEOFF=true (`pcm run`), the one-off's: labelled io.pcm.oneoff, and without the ingress
+# ONEOFF=true (`pcm run`), the one-off's: labelled io.pcm.oneoff, and without the ingress
 # labels and the network alias, which would make the proxy and the network's DNS send the
 # service's traffic to it
 compose_flags() {
@@ -90,7 +90,7 @@ compose_flags() {
   # edge), whatever the compose provider names its container. One compose service only, so the
   # alias is unambiguous.
   local alias="" oneoff=false
-  [[ "${PCM_ONEOFF:-}" == true ]] && oneoff=true
+  [[ "${ONEOFF:-}" == true ]] && oneoff=true
   if ! $oneoff && [[ -n "$network" && -n "$(service_role "$service")" && "$(yq eval '.services // {} | length' "$file")" == 1 ]]; then
     alias="$name"
   fi
