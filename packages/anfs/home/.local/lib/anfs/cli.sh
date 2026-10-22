@@ -19,6 +19,8 @@
 # DECLARING
 #   cli_cmd <name> "<summary>" [--alias <name>]... [--opt "<spec>"]... [--arg "<spec>"]... [--passthrough]
 #   cli_group <name> "<summary>"       a command that only holds sub-commands
+#     [--default <sub>]                options with no sub-command go to <name> <sub>
+#                                      (`anfs report --title x` is `anfs report new --title x`)
 #   cli_section "<title>"              the top-level commands declared after it are listed under
 #                                      <title> in help, after the others (anfs: Tools)
 #
@@ -92,6 +94,8 @@ CLI_EX_TERMINAL=77
 CLI_COMMAND=""
 # Top-level name -> the help section it is listed under (cli_section); the sections in order
 declare -gA CLI_SECTION=()
+# group -> the sub-command its options go to when none is named (cli_group --default)
+declare -gA CLI_GROUP_DEFAULT=()
 CLI_SECTIONS=() _CLI_CUR_SECTION=""
 _CLI_US=$'\x1f'
 
@@ -132,6 +136,7 @@ cli_cmd() {
 
 cli_group() {
   CLI_KIND[$1]=group
+  [[ "${3:-}" != --default ]] || CLI_GROUP_DEFAULT[$1]="${4:?cli_group $1: --default needs a sub-command}"
   CLI_NAMES+=("$1") CLI_SUMMARIES+=("${2:-}")
   [[ -z "$_CLI_CUR_SECTION" ]] || CLI_SECTION[$1]="$_CLI_CUR_SECTION"
 }
@@ -454,6 +459,11 @@ _cli_find() {
   w1="${CLI_ALIAS_TO[$w1]:-$w1}"
   if [[ "${CLI_KIND[$w1]:-}" == group ]]; then
     _CLI_NAME="$w1" _CLI_SHIFT=1
+    # an option where the sub-command would be: the group's default takes it (not -h, --help)
+    if [[ "$w2" == -?* && "$w2" != -h && "$w2" != --help && -n "${CLI_GROUP_DEFAULT[$w1]:-}" ]]; then
+      _CLI_NAME="$w1 ${CLI_GROUP_DEFAULT[$w1]}"
+      return 0
+    fi
     [[ -n "$w2" && "$w2" != -* ]] || return 2
     w2="${CLI_ALIAS_TO[$w1 $w2]:-$w1 $w2}"
     [[ -n "${CLI_KIND[$w2]:-}" ]] || return 2
@@ -695,6 +705,8 @@ cli_help_command() {
   if [[ "${CLI_KIND[$name]:-}" == group ]]; then
     printf '\nCommands:\n'
     cli_help_commands "$name"
+    [[ -z "${CLI_GROUP_DEFAULT[$name]:-}" ]] ||
+      printf '\nOptions with no command go to %s %s.\n' "$name" "${CLI_GROUP_DEFAULT[$name]}"
     return 0
   fi
   while IFS="$_CLI_US" read -r short long kind help; do
@@ -796,8 +808,13 @@ _cli_complete() {
   name="$_CLI_NAME"
   words=("${words[@]:$_CLI_SHIFT}")
   if [[ "${CLI_KIND[$name]:-}" == group ]]; then
-    [[ ${#words[@]} -gt 0 ]] || _cli_complete_names "$name" "$cur"
-    return 0
+    # an option typed where the sub-command goes: the default's (cli_group --default)
+    if [[ ${#words[@]} -eq 0 && "$cur" == -* && -n "${CLI_GROUP_DEFAULT[$name]:-}" ]]; then
+      name="$name ${CLI_GROUP_DEFAULT[$name]}"
+    else
+      [[ ${#words[@]} -gt 0 ]] || _cli_complete_names "$name" "$cur"
+      return 0
+    fi
   fi
   if [[ "$name" == help ]]; then
     _cli_complete_names "${words[*]}" "$cur"

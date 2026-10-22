@@ -37,6 +37,11 @@ cli_cmd "link remove" "Unlink" --alias rm --arg "[dir]"
 cmd_link_remove() { show "\$@"; }
 cli_cmd "link list" "The links" --alias ls
 cmd_link_list() { echo links; }
+cli_group note "Notes" --default add
+cli_cmd "note add" "Add a note" --opt "--text TEXT: What it says" --opt "-q --quiet: Say nothing"
+cmd_note_add() { show "\$@"; }
+cli_cmd "note list" "The notes"
+cmd_note_list() { echo notes; }
 cmd_hidden() { echo "plumbing: \$*"; }
 cli_standard
 
@@ -85,6 +90,29 @@ SH
   [ "${lines[0]}" = "args: <thing> <--not-an-option> <-x>" ]
   run "$TOOL" run thing -
   [ "${lines[0]}" = "args: <thing> <->" ]
+}
+
+@test "a group's default sub-command takes options with no sub-command; alone or -h it is the group" {
+  run "$TOOL" note --text hi -q
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "args: <>" ]
+  [ "${lines[1]}" = "quiet=true" ]
+  [ "${lines[2]}" = "text=hi" ]
+  run "$TOOL" note list
+  [ "$output" = notes ]
+  run "$TOOL" note
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Usage: demo note <add|list>"* ]]
+  [[ "$output" == *"Options with no command go to note add."* ]]
+  run "$TOOL" note -h
+  [[ "$output" == *"Usage: demo note <add|list>"* ]]
+  run "$TOOL" note --bogus
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"usage: demo note add"* ]]
+  run "$TOOL" __complete note -
+  [[ "$output" == *"--text"* && "$output" == *"--quiet"* ]]
+  run "$TOOL" __complete note ""
+  [[ "$output" == *"add"* && "$output" == *"list"* ]]
 }
 
 @test "an alias runs the command, at the top level and in a group" {
@@ -533,7 +561,7 @@ SH
   local root="$BATS_TEST_DIRNAME/../.." line head bad=""
   local kinds=" PACKAGE CONTAINER MACHINE IMAGE NETWORK SKILL SPACE REPOSITORY SOURCE ISO STACK "
   # Lists that are not of a source's resources take only STATUS (AGENTS.md "Lists and --json")
-  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|NAME VALUE FROM|TOOL NAME VALUE FROM|"
+  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|CHECK STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|NAME VALUE FROM|TOOL NAME VALUE FROM|"
   while IFS= read -r line; do
     head="${line#*anfs_table \"}" head="${head%%\"*}"
     [[ " $head " != *" STATE "* ]] || bad+="$line"$'\n'
