@@ -6,6 +6,8 @@
 #
 # The re-exec cases need a bash below the floor, which is macOS's /bin/bash; elsewhere they skip.
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   LIB="$BATS_TEST_DIRNAME/../home/.local/lib/anfs"
@@ -96,7 +98,7 @@ need_old_bash() {
 @test "the bootstrap set parses under the older bash" {
   need_old_bash
   local f
-  for f in install.sh packages/anfs/home/.local/lib/anfs/{bash,platform,link,manifest,files}.sh \
+  for f in install.sh packages/anfs/home/.local/lib/anfs/{bash,work,platform,link,manifest,files}.sh \
            packages/ppm/home/.local/lib/ppm/{core,platform,file,installer}.sh; do
     "$OLD" -n "$REPO/$f" || { echo "$f does not parse under $("$OLD" -c 'echo $BASH_VERSION')"; return 1; }
   done

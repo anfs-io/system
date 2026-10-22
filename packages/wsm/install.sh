@@ -25,7 +25,7 @@ wsm_ppm_changed() {
   local event="$1" qualified any=false ids="" id kept
   shift
   # shellcheck source=/dev/null
-  declare -F anfs_skill_package_agents >/dev/null || source "$HOME/.local/lib/anfs/skill.sh"
+  declare -F anfs_skill_package_agents >/dev/null || source "${ANFS_LIB_DIR:-$HOME/.local/lib/anfs}/skill.sh"
   case "$event" in
     install)
       for qualified in "$@"; do

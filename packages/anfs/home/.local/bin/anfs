@@ -35,40 +35,41 @@
 # Cherry-picking within a source is each tool's business: ppm install lgat/rails,
 # pcm install lgat/postgres, wsm install lgat/tech.
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
-ANFS_LIB="$HOME/.local/lib/anfs"
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2 (lib/anfs/bash.sh).
 # Optional here only: anfs and ppm are what repair an install whose lib/anfs predates it
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/bash.sh" ]]; then source "$ANFS_LIB/bash.sh"; fi
+if [[ -f "$HOME/.local/lib/anfs/bash.sh" ]]; then source "$HOME/.local/lib/anfs/bash.sh"; fi
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # Messages, the log and callbacks. Optional for the same reason as bash.sh
 for _lib in log.sh callbacks.sh table.sh; do
   # shellcheck source=/dev/null
-  if [[ -f "$ANFS_LIB/$_lib" ]]; then source "$ANFS_LIB/$_lib"; fi
+  if [[ -f "$ANFS_LIB_DIR/$_lib" ]]; then source "$ANFS_LIB_DIR/$_lib"; fi
 done
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 anfs_gitsrc_env
 # shellcheck source=/dev/null
-source "$ANFS_LIB/resolve.sh"
+source "$ANFS_LIB_DIR/resolve.sh"
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/stacks.sh" ]]; then source "$ANFS_LIB/stacks.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/stacks.sh" ]]; then source "$ANFS_LIB_DIR/stacks.sh"; fi
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/iso.sh" ]]; then source "$ANFS_LIB/iso.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/iso.sh" ]]; then source "$ANFS_LIB_DIR/iso.sh"; fi
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/listener.sh" ]]; then source "$ANFS_LIB/listener.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/listener.sh" ]]; then source "$ANFS_LIB_DIR/listener.sh"; fi
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below
 # shellcheck source=/dev/null
-source "$ANFS_LIB/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 CLI_TOOL=anfs
 # The config group (lib/anfs/config.sh): anfs's own settings, and --all for every tool's
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/config.sh" ]]; then source "$ANFS_LIB/config.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/config.sh" ]]; then source "$ANFS_LIB_DIR/config.sh"; fi
 # shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/onboard.sh" ]]; then source "$ANFS_LIB/onboard.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/onboard.sh" ]]; then source "$ANFS_LIB_DIR/onboard.sh"; fi
 cli_group src "The sources every tool reads"
 cli_cmd "src list" "The sources in priority order: status, and what each provides" --alias ls
 cli_cmd "src add" "Add a source to your list (and clone it)" \
@@ -232,7 +233,7 @@ die() {
 # --- callbacks, log (lib/anfs/callbacks.sh, log.sh) ----------------------------------------------
 
 _need_lib() {
-  declare -F "$1" >/dev/null || die "$ANFS_LIB is out of date (no ${2}); install core/anfs again"
+  declare -F "$1" >/dev/null || die "$ANFS_LIB_DIR is out of date (no ${2}); install core/anfs again"
 }
 
 # ppm's handlers are functions of a package's install.sh, not commands: ok while the package that
@@ -423,7 +424,7 @@ cmd_implode() {
   _implode_tool ppm || rc=1
 
   local dir
-  for dir in "$ANFS_DATA_HOME" "$ANFS_CONFIG_HOME" "$ANFS_CACHE_HOME" "$ANFS_LIB_DIR"; do
+  for dir in "$ANFS_DATA_HOME" "$ANFS_CONFIG_HOME" "$ANFS_CACHE_HOME" "$ANFS_LIB_ROOT/anfs"; do
     [[ -e "$dir" ]] || continue
     echo "Deleting $(_tilde "$dir")"
     rm -rf "${dir:?}"

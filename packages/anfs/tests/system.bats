@@ -4,6 +4,8 @@
 # are stubs that log their argv (pmm is not installed, as on a default install).
 # Run: bats packages/anfs/tests/system.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 bats_require_minimum_version 1.5.0
 
 setup() {

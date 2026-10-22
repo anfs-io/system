@@ -21,6 +21,7 @@ _setup_home() {
   export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME ANFS_JSON ANFS_ISO_HOME PMM_DISPLAY DISPLAY WAYLAND_DISPLAY
   unset PMM_CONFIG_HOME PMM_DATA_HOME PMM_STATE_HOME PMM_CACHE_HOME PMM_MACHINES_HOME PMM_NETWORKS_HOME PMM_IMAGES_HOME
+  unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
   unset PMM_KVM_DEV
   mkdir -p "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources" "$HOME/.local/lib"
   export PMM_HOST_OS=darwin PMM_HOST_ARCH=arm64

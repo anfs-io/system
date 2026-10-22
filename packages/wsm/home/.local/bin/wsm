@@ -25,42 +25,43 @@
 #
 # Runs on the bash floor (5.2; lib/anfs/bash.sh gets it there from macOS's 3.2).
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
 WSM_VERSION=0.8.0
 
 # Paths, sources and the command line come from anfs
-ANFS_LIB="$HOME/.local/lib/anfs"
-if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
-  echo "wsm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "wsm: ~/.local/lib/anfs is missing or out of date; run: ppm install -f core/anfs" >&2
   exit 69
 fi
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
 # shellcheck source=/dev/null
-source "$ANFS_LIB/bash.sh"
+source "$HOME/.local/lib/anfs/bash.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/log.sh"
+source "$ANFS_LIB_DIR/log.sh"
 # The platform, the linker, the manifests (links:, files:), copies and agent skills. lib/anfs is
 # one link into core/anfs, so a library a pull brings is there at once
 for _wsm_lib in platform link manifest files skill; do
   # shellcheck source=/dev/null
-  source "$ANFS_LIB/$_wsm_lib.sh"
+  source "$ANFS_LIB_DIR/$_wsm_lib.sh"
 done
 # shellcheck source=/dev/null
-source "$ANFS_LIB/callbacks.sh"
+source "$ANFS_LIB_DIR/callbacks.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/resolve.sh"
+source "$ANFS_LIB_DIR/resolve.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/table.sh"
+source "$ANFS_LIB_DIR/table.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/config.sh"
+source "$ANFS_LIB_DIR/config.sh"
 anfs_gitsrc_env
 anfs_tool_paths wsm
 

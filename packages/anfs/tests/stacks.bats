@@ -4,6 +4,8 @@
 # their argv and keep what they "installed" in a file, which their `list --json` answers from.
 # Run: bats packages/anfs/tests/stacks.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 bats_require_minimum_version 1.5.0
 
 setup() {

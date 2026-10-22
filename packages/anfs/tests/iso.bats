@@ -5,6 +5,8 @@
 # and `iso prune` delete from it.
 # Run: bats packages/anfs/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   local lib="$BATS_TEST_DIRNAME/../home/.local/lib/anfs"
   export ANFS_LOG=off

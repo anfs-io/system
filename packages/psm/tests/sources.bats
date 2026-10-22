@@ -4,6 +4,8 @@
 # arguments) so nothing is installed and nothing touches the network.
 # Run: bats packages/psm/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   PSM="$BATS_TEST_DIRNAME/../home/.local/bin/psm"
   T="$BATS_TEST_TMPDIR"

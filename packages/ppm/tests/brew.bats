@@ -3,6 +3,8 @@
 # PPM_BREW_UPDATE_CACHE_DURATION seconds (ppm.env; default 86400). brew is a stub that logs.
 # Run: bats packages/ppm/tests/brew.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   local lib="$BATS_TEST_DIRNAME/../home/.local/lib/ppm"
   local anfs="$BATS_TEST_DIRNAME/../../anfs/home/.local/lib/anfs"

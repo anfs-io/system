@@ -17,17 +17,20 @@
 # core.sh holds the functions package hooks can call (install_dep, user_message, ...)
 # platform.sh locates Homebrew and its owner (platform() and os() are lib/anfs/platform.sh's)
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
 # Paths and settings: anfs's layout (sources, libraries, anfs.env) and ppm's own XDG dirs and ppm.env
-PPM_LIB_DIR="$HOME/.local/lib/ppm"
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2 (lib/anfs/bash.sh).
 # Optional here only: ppm is what links the file in when core/anfs is next installed
 if [[ -f "$HOME/.local/lib/anfs/bash.sh" ]]; then source "$HOME/.local/lib/anfs/bash.sh"; fi
 source "$HOME/.local/lib/anfs/paths.sh"
+# The installed lib/ppm, where package extensions are linked and look for their siblings
+PPM_LIB_DIR="$ANFS_LIB_ROOT/ppm"
 # Messages, the log and callbacks (debug and ppm_register_callback are over these). Optional for
 # the same reason as bash.sh; core.sh and installer.sh cope without them, as they do in install.sh
 for lib_file in log.sh callbacks.sh table.sh; do
-  if [[ -f "$HOME/.local/lib/anfs/$lib_file" ]]; then source "$HOME/.local/lib/anfs/$lib_file"; fi
+  if [[ -f "$ANFS_LIB_DIR/$lib_file" ]]; then source "$ANFS_LIB_DIR/$lib_file"; fi
 done
 anfs_tool_paths ppm
 # Installed state: per-package trackers, claims, protections
@@ -38,15 +41,15 @@ PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
 # The platform, the linker, the manifests (links:, files:, platforms:) and copies. lib/anfs is one
 # link into core/anfs (its links:), so a library a pull brings is there at once
 for lib_file in platform.sh link.sh manifest.sh files.sh; do
-  source "$HOME/.local/lib/anfs/$lib_file"
+  source "$ANFS_LIB_DIR/$lib_file"
 done
 
 # The command line: commands are cmd_<name> functions, registered here (and by extensions as they
 # are sourced) so help and completion are generated from what exists
-source "$HOME/.local/lib/anfs/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 CLI_TOOL=ppm
 # The config group (lib/anfs/config.sh); optional for the same reason as bash.sh
-if [[ -f "$HOME/.local/lib/anfs/config.sh" ]]; then source "$HOME/.local/lib/anfs/config.sh"; fi
+if [[ -f "$ANFS_LIB_DIR/config.sh" ]]; then source "$ANFS_LIB_DIR/config.sh"; fi
 cli_cmd list "Available packages, and the version installed (a filter narrows it;
 @category: its packages, @: the categories)" --alias ls \
   --opt "--installed: Only what is installed" --arg "[filter]"
@@ -116,10 +119,13 @@ _resolve_path() {
 
 # Source ppm's own libraries and any package-contributed extensions. Both live in
 # PPM_LIB_DIR: ppm's core libs are stowed there by the core/ppm package, alongside
-# extensions from other packages (e.g. dev's container.sh, user.sh).
-for lib_file in "$PPM_LIB_DIR"/*.sh; do
-  [[ -f "$lib_file" ]] && source "$lib_file"
+# extensions from other packages (e.g. dev's container.sh, user.sh). Under ANFS_WORK each is
+# the job's copy where the job has it (anfs_lib_files, lib/anfs/paths.sh).
+mapfile -t _ppm_libs < <(anfs_lib_files ppm)
+for lib_file in ${_ppm_libs[@]+"${_ppm_libs[@]}"}; do
+  source "$lib_file"
 done
+unset _ppm_libs
 
 # ppm's settings (ppm.env), then completion and help, after what the extensions declared
 ! declare -F anfs_config_declare >/dev/null || anfs_config_declare

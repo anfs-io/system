@@ -5,6 +5,8 @@
 # nothing here loads a unit or listens. The platform is ANFS_RPC_OS.
 # Run: bats packages/anfs/tests/listener.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 bats_require_minimum_version 1.5.0
 
 setup() {

@@ -3,6 +3,8 @@
 # Also `anfs callbacks` and `anfs log`, the commands over this and log.sh.
 # Run: bats packages/anfs/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   LIB="$BATS_TEST_DIRNAME/../home/.local/lib/anfs"
   export XDG_STATE_HOME="$BATS_TEST_TMPDIR/state"

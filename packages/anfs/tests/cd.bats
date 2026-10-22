@@ -5,6 +5,8 @@
 # moving, and no argument goes to the tool's default.
 # Run: bats packages/anfs/tests/cd.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   PKGS="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
   T="$BATS_TEST_TMPDIR"

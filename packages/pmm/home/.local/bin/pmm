@@ -1,29 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
 # Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
 # cloned once under ~/.local/share/anfs/sources; pmm reads the machines/
 # directory of each (machines, and below it images/ and networks/)
-ANFS_LIB="$HOME/.local/lib/anfs"
-if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
-  echo "pmm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "pmm: ~/.local/lib/anfs is missing or out of date; run: ppm install -f core/anfs" >&2
   exit 1
 fi
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
 # shellcheck source=/dev/null
-source "$ANFS_LIB/bash.sh"
+source "$HOME/.local/lib/anfs/bash.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/log.sh"
+source "$ANFS_LIB_DIR/log.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/callbacks.sh"
+source "$ANFS_LIB_DIR/callbacks.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/catalog.sh"
+source "$ANFS_LIB_DIR/catalog.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/iso.sh"
+source "$ANFS_LIB_DIR/iso.sh"
 anfs_tool_paths pmm
 anfs_gitsrc_env
 : "${PMM_MACHINES_HOME:=$PMM_CONFIG_HOME/machines}"
@@ -60,11 +61,11 @@ PMM_LOCAL_SOURCE=local
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pmm/; the
 # registry is the help, in this order, and the completion's command list
 # shellcheck source=/dev/null
-source "$ANFS_LIB/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/table.sh"
+source "$ANFS_LIB_DIR/table.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/config.sh"
+source "$ANFS_LIB_DIR/config.sh"
 CLI_TOOL=pmm
 # The commands are declared in lib/pmm/commands.sh, which the tests load too
 
@@ -217,22 +218,10 @@ cmd_cd() {
 }
 
 # pmm's own libraries: every *.sh in PMM_LIB_DIR (defaults/ below it holds the finalize step:
-# data, not sourced; provisioners/ the executables that run a provision step). The
-# stowed dir is preferred; next to this script's real path is the fallback (unstowed, or tests)
-pmm_lib_dir() {
-  local self="${BASH_SOURCE[0]}" dir link
-  if [[ -n "${PMM_LIB_DIR:-}" ]]; then echo "$PMM_LIB_DIR"; return; fi
-  if [[ -f "$HOME/.local/lib/pmm/commands.sh" ]]; then echo "$HOME/.local/lib/pmm"; return; fi
-  dir="$(cd "$(dirname "$self")" && pwd)"
-  while [[ -L "$self" ]]; do
-    link="$(readlink "$self")"
-    [[ "$link" == /* ]] || link="$dir/$link"
-    self="$link"
-    dir="$(cd "$(dirname "$self")" && pwd)"
-  done
-  echo "$dir/../lib/pmm"
-}
-PMM_LIB_DIR="$(pmm_lib_dir)"
+# data, not sourced; provisioners/ the executables that run a provision step). The installed
+# lib/pmm (one link into core/pmm), or the job's under ANFS_WORK (anfs_lib_dir); PMM_LIB_DIR set
+# wins (tests).
+PMM_LIB_DIR="${PMM_LIB_DIR:-$(anfs_lib_dir pmm)}"
 if [[ ! -f "$PMM_LIB_DIR/commands.sh" ]]; then
   echo "pmm: libraries not found in $PMM_LIB_DIR; run: ppm install -f core/pmm" >&2
   exit 1

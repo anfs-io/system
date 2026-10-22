@@ -3,6 +3,8 @@
 # libraries linked from this clone; nothing is installed or removed.
 # Run: bats packages/ppm/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   local pkgs
   pkgs="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"

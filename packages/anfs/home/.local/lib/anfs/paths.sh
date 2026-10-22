@@ -20,6 +20,26 @@
 #   ~/.local/state/anfs/bootstrap       what install.sh found on the machine and what it added
 #   $XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>  each tool's own files
 
+# The one place the installed library path is written: ~/.local/lib/<name> for each library
+# directory (anfs_lib_dir), lib/anfs this file's own
+ANFS_LIB_ROOT="$HOME/.local/lib"
+
+# ANFS_WORK=<job> (work.sh): the installed paths.sh hands over to the job's, which then is the
+# lib/anfs every tool sources the rest from (ANFS_LIB_DIR). Not set: nothing here runs.
+ANFS_WORK_DIR=""
+if [[ -n "${ANFS_WORK:-}" ]]; then
+  _ANFS_WORK_LOAD_ONLY=1
+  # shellcheck source=/dev/null
+  source "${BASH_SOURCE[0]%/*}/work.sh"
+  unset _ANFS_WORK_LOAD_ONLY
+  if anfs_work_job && [[ "${BASH_SOURCE[0]}" == "$ANFS_LIB_ROOT/anfs/paths.sh" ]] &&
+     anfs_work_map "$ANFS_LIB_ROOT/anfs" && [[ -f "$REPLY/paths.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$REPLY/paths.sh"
+    return
+  fi
+fi
+
 # An XDG variable that is set but empty counts as unset
 [[ -n "${XDG_CONFIG_HOME:-}" ]] || XDG_CONFIG_HOME="$HOME/.config"
 [[ -n "${XDG_DATA_HOME:-}" ]]   || XDG_DATA_HOME="$HOME/.local/share"
@@ -33,7 +53,8 @@
 ANFS_SOURCES_HOME="$ANFS_DATA_HOME/sources"
 ANFS_USER_LIST="$ANFS_CONFIG_HOME/user.list"
 ANFS_SYSTEM_LIST="$ANFS_CONFIG_HOME/system.list"
-ANFS_LIB_DIR="$HOME/.local/lib/anfs"
+# The lib/anfs the rest is sourced from: this file's directory (the job's, after a hand-over)
+ANFS_LIB_DIR="${BASH_SOURCE[0]%/*}"
 ANFS_BIN_DIR="$HOME/.local/bin"
 # What install.sh found and what it added (Homebrew, base formulas, ...), for anfs implode --all
 ANFS_BOOTSTRAP_RECORD="$ANFS_STATE_HOME/bootstrap"
@@ -76,6 +97,53 @@ anfs_tool_paths() {
     printf -v "$var" '%s' "$base/$tool"
   done
   anfs_load_conf "$tool"
+}
+
+# --- Library directories ------------------------------------------------------------------------
+# Installed, each is $ANFS_LIB_ROOT/<name>: one link into a source (ppm's links:), except lib/ppm,
+# which three packages fill file by file (core/ppm, anfs-dev/dev, stack/ruby). Under ANFS_WORK the
+# job's copy is used where the job has that source's worktree (work.sh's anfs_work_map).
+
+# A library directory: the job's copy of $ANFS_LIB_ROOT/<name>, else the installed one.
+# Usage: anfs_lib_dir <name>
+anfs_lib_dir() {
+  if [[ -n "$ANFS_WORK_DIR" ]] && anfs_work_map "$ANFS_LIB_ROOT/$1" && [[ -d "$REPLY" ]]; then
+    printf '%s\n' "$REPLY"
+  else
+    printf '%s\n' "$ANFS_LIB_ROOT/$1"
+  fi
+}
+
+# The *.sh of a directory filled file by file, one path per line, by basename: each installed
+# file, or the job's copy of it; then the files only the job has, in the job's directories that
+# hold the installed ones.
+# Usage: anfs_lib_files <name>   (ppm)
+anfs_lib_files() {
+  local f base
+  if [[ -z "$ANFS_WORK_DIR" ]]; then
+    for f in "$ANFS_LIB_ROOT/$1"/*.sh; do [[ -f "$f" ]] && printf '%s\n' "$f"; done
+    return 0
+  fi
+  local -A seen=() dirs=()
+  {
+    for f in "$ANFS_LIB_ROOT/$1"/*.sh; do
+      base="${f##*/}"
+      if anfs_work_where "$f"; then
+        dirs["${REPLY%/*}"]=1
+        [[ -f "$REPLY" ]] && f="$REPLY"
+      fi
+      [[ -f "$f" ]] || continue
+      seen[$base]=1
+      printf '%s\t%s\n' "$base" "$f"
+    done
+    for base in "${!dirs[@]}"; do
+      for f in "$base"/*.sh; do
+        [[ -f "$f" && -z "${seen[${f##*/}]:-}" ]] || continue
+        seen[${f##*/}]=1
+        printf '%s\t%s\n' "${f##*/}" "$f"
+      done
+    done
+  } | LC_ALL=C sort -t $'\t' -k1,1 | cut -f2-
 }
 
 # --- Settings -------------------------------------------------------------------------------------

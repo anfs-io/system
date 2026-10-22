@@ -5,6 +5,8 @@
 # temp dir.
 # Run: bats packages/ppm/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 teardown() { rm -f "${PPM_MSG_FILE:-}" "${PPM_SKIP_FILE:-}"; }
 
 setup() {

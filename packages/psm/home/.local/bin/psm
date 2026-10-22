@@ -1,29 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
 # Paths and sources come from anfs: every anfs source with a skills/ directory is a skill repo
 # psm syncs, named by its alias (anfs src list). ~/.config/psm/*.yml add third-party repos.
-ANFS_LIB="$HOME/.local/lib/anfs"
-if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
-  echo "psm: $ANFS_LIB is missing or out of date; run: ppm install -f core/anfs" >&2
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "psm: ~/.local/lib/anfs is missing or out of date; run: ppm install -f core/anfs" >&2
   exit 1
 fi
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
 # shellcheck source=/dev/null
-source "$ANFS_LIB/bash.sh"
+source "$HOME/.local/lib/anfs/bash.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/log.sh"
+source "$ANFS_LIB_DIR/log.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/callbacks.sh"
+source "$ANFS_LIB_DIR/callbacks.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/resolve.sh"
+source "$ANFS_LIB_DIR/resolve.sh"
 # The engine: agents, the skills CLI, rows, what is installed (the global scope, -g, here)
 # shellcheck source=/dev/null
-source "$ANFS_LIB/skill.sh"
+source "$ANFS_LIB_DIR/skill.sh"
 anfs_gitsrc_env
 anfs_tool_paths psm
 export PSM_CONFIG_HOME
@@ -32,9 +33,9 @@ export PSM_CONFIG_HOME
 # is the help, in this order, and the completion's command list. `path` is plumbing for the
 # `psm cd` shell function and stays out of both.
 # shellcheck source=/dev/null
-source "$ANFS_LIB/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/table.sh"
+source "$ANFS_LIB_DIR/table.sh"
 CLI_TOOL=psm
 cli_cmd install "Install a source's skills (source/) or one of them (\`anfs install\` uses this)" \
   --opt "-y --yes: Do not ask before installing a whole source/" --arg "skill-spec..."

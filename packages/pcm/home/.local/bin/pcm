@@ -1,26 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
 
 # Paths and sources come from anfs: one source list for every tool (`anfs src`), each source
 # cloned once under ~/.local/share/anfs/sources; pcm reads the containers/ directory of each
-ANFS_LIB="$HOME/.local/lib/anfs"
-if [[ ! -f "$ANFS_LIB/bash.sh" ]]; then
-  anfs_warn "$ANFS_LIB is missing or out of date; run: ppm install -f core/anfs"
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "pcm: ~/.local/lib/anfs is missing or out of date; run: ppm install -f core/anfs" >&2
   exit 1
 fi
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
 # shellcheck source=/dev/null
-source "$ANFS_LIB/bash.sh"
+source "$HOME/.local/lib/anfs/bash.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/log.sh"
+source "$ANFS_LIB_DIR/log.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/callbacks.sh"
+source "$ANFS_LIB_DIR/callbacks.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/catalog.sh"
+source "$ANFS_LIB_DIR/catalog.sh"
 anfs_tool_paths pcm
 anfs_gitsrc_env
 : "${PCM_CONTAINERS_HOME:=$PCM_CONFIG_HOME/containers}"
@@ -42,11 +43,11 @@ export VARLOCK_TELEMETRY_DISABLED
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function in lib/pcm/; the
 # registry below is the help, in this order, and the completion's command list
 # shellcheck source=/dev/null
-source "$ANFS_LIB/cli.sh"
+source "$ANFS_LIB_DIR/cli.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/table.sh"
+source "$ANFS_LIB_DIR/table.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/config.sh"
+source "$ANFS_LIB_DIR/config.sh"
 CLI_TOOL=pcm
 # The commands are declared in lib/pcm/commands.sh, which the tests load too
 
@@ -157,22 +158,9 @@ cmd_cd() {
 }
 
 # pcm's own libraries, plus any a package contributes: every *.sh in PCM_LIB_DIR. A function
-# named cmd_<name> there is the command `pcm <name>`. The stowed dir is preferred so contributed
-# libs load; next to this script's real path is the fallback (right after a pull, or unstowed).
-pcm_lib_dir() {
-  local self="${BASH_SOURCE[0]}" dir link
-  if [[ -n "${PCM_LIB_DIR:-}" ]]; then echo "$PCM_LIB_DIR"; return; fi
-  if [[ -f "$HOME/.local/lib/pcm/sources.sh" ]]; then echo "$HOME/.local/lib/pcm"; return; fi
-  dir="$(cd "$(dirname "$self")" && pwd)"
-  while [[ -L "$self" ]]; do
-    link="$(readlink "$self")"
-    [[ "$link" == /* ]] || link="$dir/$link"
-    self="$link"
-    dir="$(cd "$(dirname "$self")" && pwd)"
-  done
-  echo "$dir/../lib/pcm"
-}
-PCM_LIB_DIR="$(pcm_lib_dir)"
+# named cmd_<name> there is the command `pcm <name>`. The installed lib/pcm (one link into
+# core/pcm), or the job's under ANFS_WORK (anfs_lib_dir); PCM_LIB_DIR set wins (tests).
+PCM_LIB_DIR="${PCM_LIB_DIR:-$(anfs_lib_dir pcm)}"
 if [[ ! -f "$PCM_LIB_DIR/sources.sh" ]]; then
   anfs_warn "libraries not found in $PCM_LIB_DIR; run: ppm install -f core/pcm"
   exit 1

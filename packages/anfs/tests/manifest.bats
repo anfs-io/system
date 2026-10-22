@@ -2,6 +2,8 @@
 # lib/anfs/manifest.sh: links:, files: and platforms: read into one plan input; every refusal.
 # Temp dirs only. Run: bats packages/anfs/tests/manifest.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   LIBDIR="$BATS_TEST_DIRNAME/../home/.local/lib/anfs"
   T=$(mkdir -p "$BATS_TEST_TMPDIR/t" && cd -P "$BATS_TEST_TMPDIR/t" && pwd -P)

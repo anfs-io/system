@@ -26,13 +26,12 @@ set -euo pipefail
 # The bash floor: provisioners are their own processes, so each sources it (lib/anfs/bash.sh)
 # shellcheck source=/dev/null
 source "$HOME/.local/lib/anfs/bash.sh"
-ANFS_LIB="$HOME/.local/lib/anfs"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/paths.sh"
+source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/log.sh"
+source "$ANFS_LIB_DIR/log.sh"
 # shellcheck source=/dev/null
-source "$ANFS_LIB/sources.sh"
+source "$ANFS_LIB_DIR/sources.sh"
 anfs_gitsrc_env
 
 INSTALLER=https://raw.githubusercontent.com/anfs-io/system/refs/heads/main/install.sh

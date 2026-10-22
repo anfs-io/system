@@ -5,8 +5,8 @@
 # ppm sees the ones that have a packages/ directory, in priority order; the machinery is
 # lib/anfs/sources.sh (gitsrc_*) and lib/anfs/resolve.sh (anfs_sources), which every anfs tool uses.
 
-source "$HOME/.local/lib/anfs/sources.sh"
-source "$HOME/.local/lib/anfs/resolve.sh"
+source "$ANFS_LIB_DIR/sources.sh"
+source "$ANFS_LIB_DIR/resolve.sh"
 
 # Point gitsrc at anfs's lists and directories
 _ppm_gitsrc_env() {

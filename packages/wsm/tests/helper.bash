@@ -14,6 +14,7 @@ wsm_setup() {
   XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME
   unset WSM_CONFIG_HOME WSM_DATA_HOME WSM_STATE_HOME WSM_CACHE_HOME
+  unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
   WSM_SPACES_HOME="$HOME/spaces"
   export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME WSM_SPACES_HOME
   export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)

@@ -68,3 +68,15 @@ matches() {
   run bash -c 'while IFS= read -r f; do grep -nHF -- "$1/." "$f" || true; done' _ "$home" < <(covered)
   [ -z "$output" ] || { echo "$output"; return 1; }
 }
+
+@test "a suite that sets HOME unsets ANFS_WORK (lib/anfs/work.sh), or the helper it loads does" {
+  local f bad="" unset_re='^[[:space:]]*unset([[:space:]]+[A-Za-z0-9_]+)*[[:space:]]+ANFS_WORK([[:space:]]|$)'
+  while IFS= read -r f; do
+    [[ "$f" == *.bats || "$f" == *.bash ]] || continue
+    grep -v '^[[:space:]]*#' "$f" | grep -qE '(^|[^A-Za-z0-9_])HOME=' || continue
+    grep -qE "$unset_re" "$f" && continue
+    grep -qE '^[[:space:]]*load helper' "$f" && grep -qE "$unset_re" "${f%/*}/helper.bash" 2>/dev/null && continue
+    bad+="$f"$'\n'
+  done < <(covered)
+  [ -z "$bad" ] || { printf '%s' "$bad"; return 1; }
+}

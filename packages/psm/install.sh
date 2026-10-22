@@ -96,6 +96,6 @@ _psm_package_meta() {
 # Agent ids a package declares under meta.agent, one per line (lib/anfs/skill.sh)
 _psm_package_agents() {
   # shellcheck source=/dev/null
-  declare -F anfs_skill_package_agents >/dev/null || source "$HOME/.local/lib/anfs/skill.sh"
+  declare -F anfs_skill_package_agents >/dev/null || source "${ANFS_LIB_DIR:-$HOME/.local/lib/anfs}/skill.sh"
   anfs_skill_package_agents "$1"
 }

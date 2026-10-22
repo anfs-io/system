@@ -6,6 +6,8 @@
 # The steps real packages bring (git, ssh, op) are tested where they live, in the stack repo.
 # Run: bats packages/anfs/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 bats_require_minimum_version 1.5.0
 
 setup() {
