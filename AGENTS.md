@@ -1621,6 +1621,42 @@ Links are made by the toolkit itself (`lib/anfs/link.sh`); GNU Stow is not neede
 has it keeps it: nothing uninstalls the formula, and `stow -D` still undoes a package (the links
 are the ones it wrote).
 
+## Running a job's code: ANFS_WORK
+
+`ANFS_WORK=<job> <tool> ...` runs a job's copy of the tool (`~/work/<job>/`, anfs-dev's `anfs
+work`), with the job's libraries, on **live data**: this machine's sources, settings, state and
+machines. It is how a person tries a branch before it merges (`ANFS_WORK=config-03 pcm list`);
+anything the command changes, it changes for real. Tests never use it: they run a checkout's
+code by path under a temp `HOME`, and `anfs work run`/`env` and every test helper unset it.
+
+- **The preamble**: every entry script's first line after `set -euo pipefail` (a comment above it
+  says what it is), before `bash.sh`, so it runs under macOS's 3.2:
+
+  ```bash
+  [ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
+  ```
+
+- **`lib/anfs/work.sh`** (bootstrap set): only the copy run as `~/.local/bin/<tool>` hands over
+  (`$HOME` as given or canonical), so a job's copy, a test's or a checkout run by path never does:
+  no loop, no marker. The job is `${ANFS_WORK_HOME:-~/work}/$ANFS_WORK` with a `.job.yml`; none, or
+  a name with a `/` or a leading dot: `anfs: no job <job> in ~/work (anfs work list)`, exit 64. The
+  copy: the installed link's text reads `.../sources/<alias>/<rest>`, the copy is
+  `<job>/<alias>/<rest>` when the job has that worktree and the file; then `exec`, arguments
+  intact. No copy: the installed tool goes on. `anfs: running job <job>` once per run on stderr
+  (`ANFS_WORK_SAID` is exported so the tools it runs stay quiet), copy or not.
+- **Libraries** (`paths.sh`): the installed `paths.sh`, under `ANFS_WORK`, sources the job's copy of
+  itself and returns, so `ANFS_LIB_DIR` (the directory of the `paths.sh` that ran) is the job's
+  `lib/anfs` when the job has core. A tool sources `bash.sh` and `paths.sh` by their literal
+  installed path and everything else from `$ANFS_LIB_DIR`. Its own library directory is
+  `anfs_lib_dir <name>` (pcm, pmm, stack's tsm): the job's copy of the directory link
+  `$ANFS_LIB_ROOT/<name>`, else the installed one. `lib/ppm`, filled file by file by three packages,
+  is `anfs_lib_files ppm`: each installed file or its job copy, then the files only the job has.
+- A tool the job does not have runs as installed, with the job's `lib/anfs` when the job has core.
+- **Environment only**: `ANFS_WORK`, `ANFS_WORK_HOME` and `ANFS_WORK_TMP` in a settings file are
+  ignored with a warning (`anfs_conf_env_only`).
+- A new entry script starts with the preamble (`packages/anfs/tests/work.bats` holds core's, and
+  stack's, anfs-dev's and user's `pjm` when they sit beside core).
+
 ## Development
 
 Plans are in [anfs-io/docs](https://github.com/anfs-io/docs) (`units/`, cloned in the `anfs`
@@ -1643,6 +1679,9 @@ command lives in the lib file for its area, next to its helpers:
 packages/anfs/home/.local/lib/anfs/     what every tool sources
   bash.sh      # the bash floor (5.2): re-exec under a newer bash, or exit 69. Sourced first by
                # every entry point; bash 3.2, like link.sh
+  work.sh      # ANFS_WORK=<job> (bash 3.2, bootstrap set): the entry scripts' preamble sources it;
+               # anfs_work_handover, anfs_work_job, anfs_work_map/anfs_work_where. See "Running a
+               # job's code: ANFS_WORK"
   link.sh      # the linker (bash 3.2, in the bootstrap set): anfs_link_plan / anfs_link_apply
                # (<from> <to> <files-file> [skip-file]), anfs_link_check, anfs_unlink, anfs_unlink_tree,
                # anfs_link_one, anfs_link_owner, anfs_relpath, anfs_link_text, anfs_link_src_state,
@@ -1672,7 +1711,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # the tool's settings), the settings: anfs_load_conf [tool] (<tool>.local.env, then
                # <tool>.env; the environment wins; anfs's when sourced), anfs_conf_read <file>,
                # anfs_conf_files <tool>, anfs_conf_expand <value> (a leading ~), anfs_conf_env_only <name>,
-               # ANFS_CONF_LOADED (the names it exported)
+               # ANFS_CONF_LOADED (the names it exported).
+               # ANFS_LIB_ROOT (~/.local/lib, the one place it is written), ANFS_LIB_DIR (the lib/anfs
+               # the rest is sourced from), anfs_lib_dir <name>, anfs_lib_files <name> (lib/ppm); under
+               # ANFS_WORK it hands over to the job's paths.sh first
   config.sh    # the `config` group (Configuration): anfs_config_declare (cmd_config_list/get/set/
                # unset, complete_setting, complete_assignment), anfs_config_rows <tool>. A tool that
                # ships <tool>.env calls it among its declarations; stack's tools when core has it
@@ -1718,12 +1760,14 @@ packages/ppm/home/.local/lib/ppm/
 ```
 
 Rules for `lib/anfs`: it only defines functions (and paths.sh its variables), depends on no tool, takes its configuration from its own variables (`GITSRC_*`),
-and runs under `set -euo pipefail`. Every tool sources it from `~/.local/lib/anfs` and nowhere
-else.
+and runs under `set -euo pipefail`. Every tool sources `bash.sh` and `paths.sh` from
+`~/.local/lib/anfs`, by that literal path, and the rest from `$ANFS_LIB_DIR` (the job's under
+`ANFS_WORK`); nothing else names `~/.local/lib`.
 
 **The bash floor is 5.2.** The tools and `lib/anfs` are written for it: associative arrays,
 `mapfile`, namerefs. macOS ships 3.2 and always will, so `lib/anfs/bash.sh` is what makes the
-floor true there, and every entry point sources it first, at top level, before anything else:
+floor true there, and every entry point sources it first, at top level, before anything else
+(only the `ANFS_WORK` preamble comes before it):
 
 ```bash
 source "$HOME/.local/lib/anfs/bash.sh"
@@ -1742,8 +1786,8 @@ source "$HOME/.local/lib/anfs/bash.sh"
   file. It is one directory link now (core/anfs's `links:`), so a pulled library is there at once.
 - **The bootstrap set stays on 3.2**: `install.sh`, the four ppm libraries it sources
   (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`), lib/anfs's
-  `platform.sh`, `link.sh`, `manifest.sh` and `files.sh` (`ANFS_BOOTSTRAP_LIBS`) and `bash.sh`
-  itself.
+  `platform.sh`, `link.sh`, `manifest.sh` and `files.sh` (`ANFS_BOOTSTRAP_LIBS`), `bash.sh`
+  itself and `work.sh` (the preamble's, which runs before `bash.sh`).
   They run on a vanilla Mac before Homebrew's bash exists, so no bash 4+ syntax in them. Each says
   so in its header, and `packages/anfs/tests/bash.bats` parses them under `/bin/bash`. They may
   call functions from bash 5 libraries, as long as that only happens once the real `ppm` runs.
@@ -1758,7 +1802,7 @@ its commands where it defines them: `anfs-dev/dev`'s `container.sh` calls `cli_g
 `cli_cmd "container up" ...` next to `cmd_container_up`.
 
 Library sourcing in `ppm`: every `*.sh` in `$PPM_LIB_DIR` (`~/.local/lib/ppm/`) is
-sourced. That directory holds both ppm's own core libraries (stowed from `core/ppm`)
+sourced (`anfs_lib_files ppm`: under `ANFS_WORK`, the job's copies). That directory holds both ppm's own core libraries (stowed from `core/ppm`)
 and package-contributed extensions (e.g. anfs-dev/dev's `container.sh` and `vm.sh`). During a fresh
 install `install.sh` sources the core libs directly from the clone and stows `core/anfs` and `core/ppm`
 so they are present before `ppm` first runs.
