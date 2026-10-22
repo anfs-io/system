@@ -28,7 +28,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.5.0
+WSM_VERSION=0.6.0
 
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
@@ -115,6 +115,8 @@ cli_cmd "repo list" "Each repository under SPEC, and its git state" --alias ls -
 cli_cmd "repo install" "Clone what the installed spaces under SPEC declare and is missing, or
 the one REPOSITORY (as repo list names it); nothing is linked, nothing is pulled" \
   --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
+cli_cmd "repo ssh" "Switch the clones under SPEC from GitHub https to ssh (their origin);
+space.yml is the source's and is not edited" --arg "[spec]"
 cli_standard
 
 cmd_cd() {
@@ -139,6 +141,9 @@ directories stay real), then clones its repositories. A prefix (lgat/, lgat/tech
 at or under it; installing a space does not install the spaces above it. Re-running install links
 what is missing and removes the links whose file left the source; it never pulls. Anything in the
 way fails the space; -f moves it aside, and remove never puts it back.
+
+A repository is cloned when it is missing and never pulled or deleted: what is checked out is
+yours. repo ssh switches a clone's origin from GitHub https to ssh.
 
 Nothing is recorded: list reads the state off the links (ok, partial with what is missing, wrong,
 in the way or left over, or not in the source).
@@ -855,24 +860,14 @@ _repo_path_ok() {
   return 0
 }
 
-# The directory git clone would make for <url>, into REPLY: its last part, without a trailing /
-# or .git (git@host:org/app.git, https://host/org/app, /srv/app.git: app). Empty if it has none.
-_repo_name() {
-  local n="${1%/}"
-  n="${n%.git}" n="${n%/}"
-  n="${n##*/}" n="${n##*:}"
-  REPLY=""
-  [[ -z "$n" || "$n" == . || "$n" == .. ]] || REPLY="$n"
-}
-
 # The repositories a space.yml declares, three lines each: url, path, ref. A path left out is
-# the one git clone would use (_repo_name), and a trailing / is dropped.
+# the one git clone would use (anfs_repo_name, lib/anfs/repo.sh), and a trailing / is dropped.
 _repo_entries() {
   [[ -f "$1" ]] || return 0
   local url path ref
   while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
     [[ -n "$url$path" ]] || continue
-    [[ -n "$path" ]] || { _repo_name "$url"; path="$REPLY"; }
+    [[ -n "$path" ]] || { anfs_repo_name_reply "$url"; path="$REPLY"; }
     while [[ "$path" == */ ]]; do path="${path%/}"; done
     printf '%s\n%s\n%s\n' "$url" "$path" "$ref"
   done < <(yq -r '.repositories[]? | [(.url // ""), (.path // ""), (.ref // "")] | .[]' "$1" 2>/dev/null)
@@ -928,8 +923,9 @@ _space_repositories() {
     seen="$seen$path"$'\n'
 
     target="$root/$path"
+    # Deliberately never a pull (no anfs_repo_update): a pull can conflict or fail, and what is
+    # checked out is the user's
     if [[ -d "$target/.git" ]]; then
-      # Deliberately no pull: a pull can conflict or fail, and what is checked out is the user's
       echo "  present $path"
       present=$((present + 1))
       continue
@@ -945,16 +941,9 @@ _space_repositories() {
       continue
     fi
 
-    mkdir -p "$(dirname "$target")"
-    if ! git clone -q -- "$url" "$target"; then
-      warn "clone failed: $url"
-      rm -rf "$target"
-      failed=$((failed + 1))
-      continue
-    fi
-    # A ref is checked out after the clone rather than passed as --branch, so a commit SHA works
-    if [[ -n "$ref" ]] && ! git -C "$target" checkout -q "$ref"; then
-      warn "cloned $path but could not check out '$ref'"
+    # lib/anfs/repo.sh: a failed clone or checkout of the ref leaves nothing at the path
+    if ! anfs_repo_clone "$url" "$target" "$ref"; then
+      warn "clone failed: $url${ref:+ at '$ref'}"
       failed=$((failed + 1))
       continue
     fi
@@ -1306,9 +1295,9 @@ cmd_repo_list() {
       else
         _home_of "$id"
         d="$REPLY/$path"
-        state=$(gitsrc_dir_status "$d")
+        state=$(anfs_repo_status "$d")
         [[ "$state" != local ]] || state="not a repo"
-        ahead=$(gitsrc_dir_ahead "$d")
+        ahead=$(anfs_repo_ahead "$d")
       fi
       _row "$id/$path" "$state" "$url" "$ahead" "$id" "$path" "$d"
     done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
@@ -1348,6 +1337,41 @@ cmd_repo_install() {
     _space_repositories "$id" "$dry" || failed=$((failed + 1))
   done
   [[ $failed -eq 0 ]]
+}
+
+# `wsm repo ssh [SPEC]`: as `anfs src ssh`, the origin of each clone under SPEC from GitHub https
+# to ssh. space.yml is the source's and is not edited: an https URL in it is only noted.
+cmd_repo_ssh() {
+  local spec="${1:-}" id url path ref rid new noted any=false
+  [[ -z "$spec" ]] || _spec_ok "$spec"
+  _require_yq
+  _spaces_load
+  _root_load
+  [[ -z "$spec" ]] || _spec_parse "$spec"
+  _state_load false
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -z "$spec" ]] || _spec_match "$id" || continue
+    any=true
+    while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+      [[ -n "$path" ]] || continue
+      _repo_invalid "$id" "$path"
+      [[ -z "$REPLY" ]] || continue
+      rid="$id/$path" noted=false
+      if [[ "$url" == https://github.com/* ]]; then
+        echo "$rid: https in space.yml"
+        noted=true
+      fi
+      [[ -n "${INSTALLED[$id]:-}" ]] || continue
+      _home_of "$id"
+      [[ -d "$REPLY/$path/.git" ]] || continue
+      if new=$(anfs_repo_ssh "$REPLY/$path"); then
+        echo "$rid: origin -> $new"
+      elif ! $noted; then
+        echo "$rid: already SSH"
+      fi
+    done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
+  done
+  [[ -z "$spec" ]] || $any || fail "$EX_NOTFOUND" "no space '$spec' (wsm ls)"
 }
 
 # `wsm new SPACE`: SOURCE/PATH anywhere, or a PATH below where you are (in the tree, or in a source

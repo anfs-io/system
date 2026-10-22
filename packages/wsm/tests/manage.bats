@@ -261,6 +261,41 @@ YML
   [ "$status" -eq 1 ]
 }
 
+@test "repo ssh switches a clone's GitHub https origin, notes an https space.yml, edits nothing else" {
+  local a b yml before
+  a=$(mkbare alpha) b=$(mkbare beta)
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+    path: repos/alpha
+  - url: $b
+    path: repos/beta
+YML
+  space_def acme spikes/tech <<'YML'
+repositories:
+  - url: https://github.com/o/declared.git
+    path: declared
+YML
+  wsm install acme/main/tech >/dev/null
+  git -C "$HOME/spaces/acme/main/tech/repos/alpha" remote set-url origin https://github.com/o/alpha.git
+  yml="$BATS_TEST_TMPDIR/srcs/acme/spaces/main/tech/space.yml"
+  before=$(cat "$yml" "$BATS_TEST_TMPDIR/srcs/acme/spaces/spikes/tech/space.yml")
+  run wsm repo ssh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"acme/main/tech/repos/alpha: origin -> git@github.com:o/alpha.git"* ]]
+  [[ "$output" == *"acme/main/tech/repos/beta: already SSH"* ]]
+  [[ "$output" == *"acme/spikes/tech/declared: https in space.yml"* ]]
+  [ "$(git -C "$HOME/spaces/acme/main/tech/repos/alpha" remote get-url origin)" = git@github.com:o/alpha.git ]
+  [ "$(git -C "$HOME/spaces/acme/main/tech/repos/beta" remote get-url origin)" = "$b" ]
+  [ "$(cat "$yml" "$BATS_TEST_TMPDIR/srcs/acme/spaces/spikes/tech/space.yml")" = "$before" ]
+  [ ! -e "$HOME/spaces/acme/spikes" ]
+  run wsm repo ssh acme/main/tech
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"alpha: already SSH"* && "$output" != *declared* ]]
+  run wsm repo ssh acme/nope
+  [ "$status" -ne 0 ]
+}
+
 # --- path ----------------------------------------------------------------------------------
 
 @test "path resolves an id, then the end of one: one segment or two" {

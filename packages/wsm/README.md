@@ -45,6 +45,7 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm ls [SPEC]` | Every space the sources define, and the state of each installed one: `SPACE STATUS DIR NOTE` |
 | `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
 | `wsm repo install [SPEC\|REPOSITORY] [-n]` | Clones what the installed spaces under `SPEC` declare and is missing, or one repository; links nothing, pulls nothing (the clone half of `install`) |
+| `wsm repo ssh [SPEC]` | Switches the clones under `SPEC` whose origin is a GitHub https URL to ssh (`<id>: origin -> git@...`), as `anfs src ssh`. `space.yml` is the source's and is not edited: an https URL in it is noted (`<id>: https in space.yml`) |
 | `wsm install [SPEC...] [-n] [-f] [-y]` | Links spaces into `$WSM_SPACES_HOME/<id>` and clones their repositories, dependencies first. With no `SPEC`, the space at `.`, which must hold a `space.yml` |
 | `wsm remove [-y] SPEC...` | Asks, then unlinks installed spaces; cloned repos and your own files stay |
 | `wsm new [SOURCE/]PATH` | Creates a space in a source; installs it when the space around it is installed |
@@ -88,6 +89,10 @@ Nothing is recorded. What is installed is read off the links:
 `repo ls` reports each repository as `clean`, `dirty`, `unpushed`, `no upstream` (both may follow
 `dirty, `), `missing`, `not a repo`, `not installed`, `no path` or `invalid`; its `--json` adds
 `space`, `path` and `dir` (where it is cloned, null while its space is not installed).
+
+There is no `repo update`: a space's repositories are never pulled (what is checked out is
+yours), and no `repo add`/`remove`: a repository is declared in the source's `space.yml`. Cloning
+and the states are `lib/anfs/repo.sh`, shared with `anfs src`.
 
 ## Working in the tree
 
