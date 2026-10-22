@@ -21,7 +21,10 @@ Any git repo with this layout is a pcm source: `anfs src add <git-url> [alias]`.
 ## Local overrides
 
 Don't put a `.env` in a source's clone: it is git-ignored, so nothing would show it is there. Use
-`~/.config/pcm/env/<name>.env` instead: pcm exports it before varlock resolves the schema.
+`~/.config/pcm/containers/<name>/local.env` instead: pcm exports it before varlock resolves the
+schema (the environment > `local.env` > the schema's defaults), for whichever source's `<name>`
+runs. That directory holds a local definition only when it has a `compose.yml`; with only
+`local.env` it is settings, and `pcm show <name>` names the file.
 
 ## Validate
 

@@ -14,7 +14,8 @@ several compose services (twenty runs `server` and `worker`).
 pcm reads definitions from **sources**, in priority order; a plain name resolves to the first
 source that has it, and `source/name` picks one explicitly (`pcm list` shows shadowed ones):
 
-1. `local` — `$PCM_CONTAINERS_HOME/<name>/` = `~/.config/pcm/containers/<name>/`, not in git
+1. `local` — `$PCM_CONTAINERS_HOME/<name>/` = `~/.config/pcm/containers/<name>/` with a
+   `compose.yml`, not in git
 2. every anfs source holding a `containers/` directory, in anfs's order: `user.list` entries
    (`anfs src add <git-url> [alias]`), then `system.list` (shipped; `core` = the `core-pcm`
    repo, `pdt` has `dnsmasq` and `netboot`). `anfs src list` shows what each source provides.
@@ -31,7 +32,9 @@ each clone clean, dirty or unpushed. `pcm install <source>/` starts every defini
 - Runtime: pcm runs each definition as compose project `<name>` and labels its containers
   `io.pcm.id` (`source/name`), `io.pcm.name` and `io.pcm.source`. Don't set a top-level `name:`
   (it is ignored, and `validate` warns when it differs); don't set `container_name:`.
-- Local overrides: `~/.config/pcm/env/<name>.env`
+- Local overrides: `~/.config/pcm/containers/<name>/local.env` (KEY=VALUE lines), for whichever
+  source's `<name>` runs. A directory there with `compose.yml` is a local definition; with only
+  `local.env` it is settings, not a definition (no listing, no shadowing)
 - Shared settings: `PCM_SHARED_NETWORK` and `PCM_ATTACHED_SERVICES`, documented in
   `~/.config/pcm/pcm.env`; this machine's values in `~/.config/pcm/pcm.local.env`
 
@@ -50,8 +53,8 @@ both, several compose services), `dockge` (extra allowed mount).
 | `deprovision` | with `provision`, if it creates anything | Undoes `provision` when a dependent is removed |
 | `README.md` | recommended | What it is, how to start it, anything non-obvious |
 
-Never ship a `.env`: the user overrides defaults in `~/.config/pcm/env/<name>.env`, which
-pcm exports before varlock runs (a `.env` in a clone would dirty it).
+Never ship a `.env`: the user overrides defaults in `~/.config/pcm/containers/<name>/local.env`,
+which pcm exports before varlock runs (a `.env` in a clone would dirty it).
 
 ## compose.yml
 

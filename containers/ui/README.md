@@ -11,7 +11,7 @@ pcm up ui               # http://localhost:9292 (bound to 127.0.0.1 only)
 pcm down ui && pcm up ui   # after an edit outside views/
 ```
 
-Where it listens is `.env.schema` (`varlock load --path .` checks it). Overrides go in `~/.config/pcm/env/ui.env`, then `pcm up ui` (it recreates the container when its environment changed):
+Where it listens is `.env.schema` (`varlock load --path .` checks it). Overrides go in `~/.config/pcm/containers/ui/local.env`, then `pcm up ui` (it recreates the container when its environment changed):
 
 ```sh
 # every interface: the LAN can reach it. There is no login, so name what you browse to

@@ -167,6 +167,19 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
   `toolkit write`, never the token; validate errors on any other value. The code is
   `lib/pcm/runtime.sh` (`toolkit_*`).
 - The code is `lib/pcm/manifest.sh`.
+- **The local source and a container's settings**: `~/.config/pcm/containers/<name>/`
+  (`$PCM_CONTAINERS_HOME`) is the unversioned, highest-priority source, and a directory there is a
+  definition only when it has a `compose.yml`. This machine's settings for a container are
+  `~/.config/pcm/containers/<name>/local.env` (`pcm_local_env`, `KEY=value` lines read by
+  `anfs_conf_read`, never sourced, nothing expanded), keyed by the name, so they apply to whichever
+  source's definition of it runs. A directory with only `local.env` is settings, not a definition:
+  it is in no list, shadows nothing and is not completed; a name resolves through the sources.
+  Beside a local definition's `compose.yml` it is the same file. Precedence: the environment >
+  `local.env` > the definition's `.env.schema` defaults (`export_env_overrides` exports it before
+  varlock runs). `pcm show` prints `settings <file>` when it exists; `pcm validate` warns about a
+  `local.env` for a name no source defines and a directory with neither file. A command that
+  writes a container's setting writes `local.env` (today only the cloudflare-tunnel edge's
+  `TUNNEL_TOKEN`, until it moves to STATE).
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
   port on `127.0.0.1` unless its `.env.schema`'s `ANFS_UI_BIND` says otherwise; `toolkit: write`.
