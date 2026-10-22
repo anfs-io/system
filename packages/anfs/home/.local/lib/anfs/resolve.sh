@@ -34,7 +34,8 @@ anfs_sources() {
   gitsrc_collect
   for i in "${!GITSRC_NAMES[@]}"; do
     name="${GITSRC_NAMES[$i]}"
-    dir=$(gitsrc_dir "$name")
+    gitsrc_dir_reply "$name"
+    dir="$REPLY"
     [[ -d "$dir/$tld" ]] || continue
     ANFS_SRC_NAMES+=("$name")
     ANFS_SRC_DIRS+=("$dir")

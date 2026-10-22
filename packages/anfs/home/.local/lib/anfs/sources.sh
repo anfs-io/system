@@ -103,19 +103,24 @@ gitsrc_index() {
 # Directory holding source $1: the clone under GITSRC_REPOS_DIR, or with GITSRC_LINK_LOCAL the
 # local path itself. Uses the collected sources; an unknown alias maps to GITSRC_REPOS_DIR.
 gitsrc_dir() {
+  gitsrc_dir_reply "$1"
+  echo "$REPLY"
+}
+
+# gitsrc_dir into REPLY, in this shell (a loop over every source forks nothing)
+gitsrc_dir_reply() {
   local i url
-  if [[ "${GITSRC_LINK_LOCAL:-false}" == true ]]; then
-    i=$(gitsrc_index "$1")
-    if [[ "$i" != 9999 ]]; then
-      url="${GITSRC_URLS[$i]}"
-      if ! gitsrc_is_git_url "$url"; then
-        [[ "$url" == "~"* ]] && url="$HOME${url:1}"
-        echo "$url"
-        return 0
-      fi
-    fi
-  fi
-  echo "$GITSRC_REPOS_DIR/$1"
+  REPLY="$GITSRC_REPOS_DIR/$1"
+  [[ "${GITSRC_LINK_LOCAL:-false}" == true ]] || return 0
+  for i in "${!GITSRC_NAMES[@]}"; do
+    [[ "${GITSRC_NAMES[$i]}" == "$1" ]] || continue
+    url="${GITSRC_URLS[$i]}"
+    gitsrc_is_git_url "$url" && return 0
+    [[ "$url" != "~"* ]] || url="$HOME${url:1}"
+    REPLY="$url"
+    return 0
+  done
+  return 0
 }
 
 # State of a directory: clean, dirty (uncommitted or untracked changes), unpushed (commits its

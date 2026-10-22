@@ -32,7 +32,7 @@
 #
 #   anfs_link_plan   <from> <to> <files-file> [skip-file]   print the plan; 1 on any other or conflict
 #   anfs_link_apply  <from> <to> <files-file> [skip-file]   the plan, then the links; nothing on a conflict
-#   anfs_link_check  <from> <to> <files-file>               the state of each file's link; read-only
+#   anfs_link_check  <from> <to> <files-file>...            the state of each file's link; read-only
 #   anfs_unlink      <from> <to> <files-file>               remove each link that points into <from>
 #   anfs_unlink_tree <from> <to>                            the same for every file under <from>
 #   anfs_link_one    <from-file> <to-path>                  one relative link, parents made
@@ -48,8 +48,9 @@
 #   in the way  a file or a directory there, or a directory on the way that is a file or a link
 #               out of <to>
 # It forks a constant number of times however many files there are: tests in the shell, the
-# expected text built by string operations, and every link's text read with one readlink (through
-# xargs: BSD's and GNU's take many operands). Only a link whose text differs is resolved.
+# expected text built by string operations, and every link's text read with one readlink (BSD's
+# and GNU's take many operands), for one triplet or several. Only a link whose text differs is
+# resolved.
 #
 # Exit codes: 0 done; 1 other or conflict (nothing touched); 2 refused (a name with a newline or a
 # tab, or a path the list names that <from> does not have).
@@ -84,9 +85,22 @@ _anfs_link_canon() {
     p="${p%/*}"
     [ -n "$p" ] || p=/
   done
-  d=$(cd -P -- "$p" 2>/dev/null && pwd -P) || d="$p"
-  _ANFS_P="${d%/}$rest"
+  _anfs_link_physical "$p"
+  _ANFS_P="${_ANFS_PHYS%/}$rest"
   [ -n "$_ANFS_P" ] || _ANFS_P=/
+}
+
+# The physical path of existing directory <dir>, into _ANFS_PHYS (<dir> itself when it cannot be
+# entered). It changes directory in this shell and back, so it forks nothing: a check of a whole
+# tree resolves many. When the current directory cannot be returned to, a subshell does it.
+_anfs_link_physical() {
+  local here="$PWD"
+  if [ -n "$here" ] && [ -d "$here" ] && builtin cd -P -- "$1" 2>/dev/null; then
+    _ANFS_PHYS="$PWD"
+    builtin cd -- "$here" 2>/dev/null || builtin cd -P -- "$here" 2>/dev/null || true
+  else
+    _ANFS_PHYS=$(cd -P -- "$1" 2>/dev/null && pwd -P) || _ANFS_PHYS="$1"
+  fi
 }
 
 # Where link <link> points, canonical. <dir>, when given, is the link's directory already made
@@ -110,15 +124,21 @@ _anfs_link_resolve() {
 
 # <to> relative to directory <from>, both absolute and canonical
 anfs_relpath() {
+  _anfs_relpath "$1" "$2"
+  printf '%s\n' "$_ANFS_P"
+}
+
+# anfs_relpath into _ANFS_P, for the library's own use (no subshell)
+_anfs_relpath() {
   local from="${1%/}" to="${2%/}" up=""
   [ -n "$from" ] || from=/
-  [ "$from" != "$to" ] || { printf '.\n'; return 0; }
+  [ "$from" != "$to" ] || { _ANFS_P=.; return 0; }
   while [[ "$to" != "$from"/* ]]; do
-    [ "$from" != / ] || { printf '%s\n' "$up${to#/}"; return 0; }
+    [ "$from" != / ] || { _ANFS_P="$up${to#/}"; return 0; }
     from="${from%/*}" up="../$up"
     [ -n "$from" ] || from=/
   done
-  printf '%s\n' "$up${to#"$from"/}"
+  _ANFS_P="$up${to#"$from"/}"
 }
 
 # The canonical $ANFS_SOURCES_HOME, and the real directory of each source that is a link there (a
@@ -310,18 +330,25 @@ anfs_link_plan() {
 
 # Usage: anfs_link_apply <from> <to> <files-file> [skip-file]
 anfs_link_apply() {
-  local to="$2" rc=0 f t r
+  local to="$2" rc=0 f t r d cur=""
   _anfs_link_classify "$@" || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
   [ -n "$_ANFS_DO_F" ] || return 0
+  # A directory's links are made together: one mkdir, one rm of what is replaced, one ln (a link
+  # made into a directory is named for its text's last part, which is the file's name)
+  _ANFS_RM=() _ANFS_LN=()
   while IFS= read -r f <&3 && IFS= read -r t <&4 && IFS= read -r r <&5; do
     [ -n "$f" ] || continue
     case "$f" in
-      */*) mkdir -p -- "$to/${f%/*}" || return 1 ;;
-      *) mkdir -p -- "$to" || return 1 ;;
+      */*) d="$to/${f%/*}" ;;
+      *) d="$to" ;;
     esac
-    [ "$r" != true ] || rm -f -- "$to/$f"
-    ln -s -- "$t" "$to/$f" || return 1
+    if [ "$d" != "$cur" ]; then
+      [ -z "$cur" ] || _anfs_link_flush "$cur" || return 1
+      cur="$d"
+    fi
+    [ "$r" != true ] || _ANFS_RM[${#_ANFS_RM[@]}]="$to/$f"
+    _ANFS_LN[${#_ANFS_LN[@]}]="$t"
   done 3<<EOF3 4<<EOF4 5<<EOF5
 $_ANFS_DO_F
 EOF3
@@ -329,66 +356,87 @@ $_ANFS_DO_T
 EOF4
 $_ANFS_DO_R
 EOF5
+  [ -z "$cur" ] || _anfs_link_flush "$cur"
+}
+
+# The links queued for directory <dir> (_ANFS_RM, _ANFS_LN), made, and the queues emptied
+_anfs_link_flush() {
+  mkdir -p -- "$1" || return 1
+  [ ${#_ANFS_RM[@]} -eq 0 ] || rm -f -- "${_ANFS_RM[@]}"
+  ln -s -- "${_ANFS_LN[@]}" "$1/" || return 1
+  _ANFS_RM=() _ANFS_LN=()
 }
 
 # --- The check ----------------------------------------------------------------------------------
 
-# Usage: anfs_link_check <from> <to> <files-file>
+# Usage: anfs_link_check <from> <to> <files-file> [<from> <to> <files-file>]...
+# Several triplets are checked as one: their lines come out in order, triplet by triplet, and
+# the links of all of them are read with the one readlink. The states are also left in the array
+# _ANFS_ST, in the same order, for a caller that wants them without a subshell; _ANFS_ABS is set
+# at the index of an ok that is an absolute link (the plan's replace, where a relative one is keep).
 anfs_link_check() {
-  local from="$1" to="$2" tab='	' cfrom cto base list f d name dest text lastd="" up s i n=0 j
-  local -a st=() lk=() lx=() lf=() ld=() got=()
-  [ -d "$from" ] || { echo "anfs: link: no directory $from" >&2; return 2; }
-  _anfs_link_canon "$from"; cfrom="$_ANFS_P"
-  _anfs_link_canon "$to"; cto="$_ANFS_P"
-  base=$(anfs_relpath "$cto" "$cfrom")
-  list=$(cat "$3") || return 2
+  local from to tab='	' nl='
+' cfrom cto base f d name dest text lastd up s i n=0 j
+  local -a st=() lk=() lx=() lf=() ld=() lc=() got=()
+  _ANFS_ST=()
+  [ $(($# % 3)) -eq 0 ] && [ $# -gt 0 ] || { echo "anfs: link: check takes <from> <to> <files-file>, one or more" >&2; return 2; }
+  while [ $# -gt 0 ]; do
+    from="$1" to="$2"
+    [ -d "$from" ] || { echo "anfs: link: no directory $from" >&2; return 2; }
+    [ -r "$3" ] || return 2
+    _anfs_link_canon "$from"; cfrom="$_ANFS_P"
+    _anfs_link_canon "$to"; cto="$_ANFS_P"
+    _anfs_relpath "$cto" "$cfrom"; base="$_ANFS_P"
+    lastd=""
 
-  # Every file's state that needs no link text; each link queued, its index kept
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    case "$f" in
-      *"$tab"*) echo "anfs: link: a file name with a tab cannot be linked: $from/$f" >&2; return 2 ;;
-    esac
-    case "$f" in
-      */*) d="${f%/*}" name="${f##*/}" ;;
-      *) d=. name="$f" ;;
-    esac
-    if [ "$d" != "$lastd" ]; then
-      lastd="$d"
-      _anfs_link_dir "$cto" "$d" || _ANFS_D=""
-      up=""
-      if [ -n "$_ANFS_D" ]; then
-        s="${_ANFS_D#"$cto"}"
-        while [ -n "$s" ]; do up="../$up"; s="${s%/*}"; done
+    # Every file's state that needs no link text; each link queued, its index kept
+    while IFS= read -r f; do
+      [ -n "$f" ] || continue
+      case "$f" in
+        *"$tab"*) echo "anfs: link: a file name with a tab cannot be linked: $from/$f" >&2; return 2 ;;
+      esac
+      case "$f" in
+        */*) d="${f%/*}" name="${f##*/}" ;;
+        *) d=. name="$f" ;;
+      esac
+      if [ "$d" != "$lastd" ]; then
+        lastd="$d"
+        _anfs_link_dir "$cto" "$d" || _ANFS_D=""
+        up=""
+        if [ -n "$_ANFS_D" ]; then
+          s="${_ANFS_D#"$cto"}"
+          while [ -n "$s" ]; do up="../$up"; s="${s%/*}"; done
+        fi
       fi
-    fi
-    lf[$n]="$f"
-    if [ -z "$_ANFS_D" ]; then
-      st[$n]="in the way"
-    else
-      dest="$_ANFS_D/$name"
-      if [ -L "$dest" ]; then
-        text="$up$base/$f"
-        [ "$base" != . ] || text="$up$f"
-        st[$n]=link
-        lk[${#lk[@]}]="$dest" lx[${#lx[@]}]="$text" ld[${#ld[@]}]="$_ANFS_D"
-      elif [ -e "$dest" ]; then
+      lf[$n]="$f"
+      if [ -z "$_ANFS_D" ]; then
         st[$n]="in the way"
       else
-        st[$n]=missing
+        dest="$_ANFS_D/$name"
+        if [ -L "$dest" ]; then
+          text="$up$base/$f"
+          [ "$base" != . ] || text="$up$f"
+          st[$n]=link
+          j=${#lk[@]}
+          lk[$j]="$dest" lx[$j]="$text" ld[$j]="$_ANFS_D" lc[$j]="$cfrom"
+        elif [ -e "$dest" ]; then
+          st[$n]="in the way"
+        else
+          st[$n]=missing
+        fi
       fi
-    fi
-    n=$((n + 1))
-  done <<EOF
-$list
-EOF
+      n=$((n + 1))
+    done < "$3"
+    shift 3
+  done
 
-  # The links' texts, one readlink for all of them (a text with a newline would put the lines
-  # out of step: then each is read on its own)
+  # The links' texts, one readlink for all of them (through xargs past a few thousand, for the
+  # length of a command line); a text with a newline would put the lines out of step: then each
+  # is read on its own
   if [ ${#lk[@]} -gt 0 ]; then
     i=0
     while IFS= read -r s; do got[$i]="$s"; i=$((i + 1)); done <<EOF
-$(printf '%s\0' "${lk[@]}" | xargs -0 readlink -- 2>/dev/null)
+$(if [ ${#lk[@]} -le 2000 ]; then readlink -- "${lk[@]}" 2>/dev/null; else printf '%s\0' "${lk[@]}" | xargs -0 readlink -- 2>/dev/null; fi)
 EOF
     if [ "$i" -ne ${#lk[@]} ]; then
       got=()
@@ -402,22 +450,26 @@ EOF
 
   j=0
   i=0
+  _ANFS_ST=() _ANFS_ABS=()
   while [ "$i" -lt "$n" ]; do
-    if [ "${st[$i]}" = link ]; then
+    s="${st[$i]}"
+    if [ "$s" = link ]; then
       s="${got[$j]}"
       if [ "$s" = "${lx[$j]}" ]; then
-        st[$i]=ok
+        s=ok
       else
         case "$s" in
           /*) ;;
           *) s="${ld[$j]}/$s" ;;
         esac
+        case "$s" in /*) _ANFS_ABS[$i]=1 ;; esac
         _anfs_link_canon "$s"
-        if [ "$_ANFS_P" = "$cfrom/${lf[$i]}" ]; then st[$i]=ok; else st[$i]=wrong; fi
+        if [ "$_ANFS_P" = "${lc[$j]}/${lf[$i]}" ]; then s=ok; else s=wrong; fi
       fi
       j=$((j + 1))
     fi
-    printf '%s\t%s\n' "${st[$i]}" "${lf[$i]}"
+    _ANFS_ST[$i]="$s"
+    printf '%s\t%s\n' "$s" "${lf[$i]}"
     i=$((i + 1))
   done
 }

@@ -361,6 +361,40 @@ state_of() { awk -F'\t' -v p="$1" '$2 == p { print $1 }' <<< "$output"; }
   [ "$(wc -l < "$BATS_TEST_TMPDIR/readlinks" | tr -d ' ')" -eq 1 ]
 }
 
+@test "check: several triplets at once, in order, one readlink; the states in _ANFS_ST" {
+  local bin="$BATS_TEST_TMPDIR/bin" l2="$BATS_TEST_TMPDIR/list2"
+  list
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  echo o > "$OTHER/.config/tool/orc"
+  (cd "$OTHER" && find . -type f | sed 's|^\./||') > "$l2"
+  anfs_link_apply "$OTHER" "$T/o" "$l2" >/dev/null
+  rm "$T/.toolenv"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho x >> "%s/readlinks"\nexec %s "$@"\n' "$BATS_TEST_TMPDIR" "$(command -v readlink)" > "$bin/readlink"
+  chmod +x "$bin/readlink"
+  PATH="$bin:$PATH" anfs_link_check "$FROM" "$T" "$LIST" "$OTHER" "$T/o" "$l2" > "$BATS_TEST_TMPDIR/out"
+  [ "$(cat "$BATS_TEST_TMPDIR/out")" = $'ok\t.config/tool/rc\nmissing\t.toolenv\nok\t.config/tool/orc' ]
+  [ "${_ANFS_ST[*]}" = "ok missing ok" ]
+  [ "$(wc -l < "$BATS_TEST_TMPDIR/readlinks" | tr -d ' ')" -eq 1 ]
+  run anfs_link_check "$FROM" "$T"
+  [ "$status" -eq 2 ]
+}
+
+@test "apply: a directory's links made at once, as the plan says" {
+  local i
+  mkdir -p "$FROM/many"
+  for i in 1 2 3 4 5; do echo "$i" > "$FROM/many/f $i"; done
+  list
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  [ "$(readlink "$T/many/f 3")" = "../.local/share/anfs/sources/core/packages/tool/home/many/f 3" ]
+  [ "$(cat "$T/many/f 5")" = 5 ]
+  # replaced ones too: an absolute link to the file
+  rm "$T/many/f 2"; ln -s "$FROM/many/f 2" "$T/many/f 2"
+  run anfs_link_apply "$FROM" "$T" "$LIST"
+  [ "$(class_of "many/f 2")" = replace ]
+  [[ "$(readlink "$T/many/f 2")" == ../* ]]
+}
+
 @test "under macOS's bash 3.2: plan, apply, keep, unlink" {
   [[ -x /bin/bash ]] || skip "no /bin/bash"
   list

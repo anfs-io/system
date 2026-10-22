@@ -77,8 +77,11 @@ _wsm_emit() {
   [[ ${#removed[@]} -eq 0 ]] || anfs_callbacks_run wsm remove "${removed[@]}"
   [[ ${#installed[@]} -eq 0 ]] || anfs_callbacks_run wsm install "${installed[@]}"
 }
+# A directory for the run's own files (the lists the check reads), made when first needed
+WSM_TMP=""
+_wsm_tmp() { [[ -n "$WSM_TMP" ]] || WSM_TMP=$(mktemp -d "${TMPDIR:-/tmp}/wsm.XXXXXX"); }
 # On EXIT, so a run that installed some spaces and then failed still reports those
-trap _wsm_emit EXIT
+trap '_wsm_emit; [[ -z "$WSM_TMP" ]] || rm -rf -- "$WSM_TMP"' EXIT
 
 # Names are paths of any depth (lib/anfs resolve.sh): the first segment is the source when it is
 # one, and a resource is a directory holding a space.yml
@@ -261,7 +264,15 @@ _source_holding() {
 # The root every source is installed in: $WSM_SPACES_HOME, canonical (it may not exist yet)
 ROOT=""
 _root_load() {
-  [[ -n "$ROOT" ]] || ROOT=$(_canon_maybe "$(_abs "$(_spaces_home)")")
+  [[ -z "$ROOT" ]] || return 0
+  local d="${WSM_SPACES_HOME:-$HOME/spaces}"
+  case "$d" in
+    "~"|"~/"*)          d="$HOME${d#\~}" ;;
+    '$HOME'|'$HOME/'*)  d="$HOME${d#\$HOME}" ;;
+  esac
+  [[ "$d" == /* ]] || d="$PWD/$d"
+  _anfs_link_canon "$d"
+  ROOT="$_ANFS_P"
 }
 
 # --- The spaces, from the sources ---------------------------------------------------------
@@ -284,59 +295,93 @@ _spaces_load() {
   $SPACES_LOADED && return 0
   SPACES_LOADED=true
   anfs_sources spaces
-  local i src sd rel d p id f found nown=0 first=""
-  local -a files rels paths
-  local -A here
+  local i src sd rel d p id f found nown=0 first="" dir
+  local -a files=() starts=() rels=() paths=()
+  local -A here=() src_of=() src_idx=()
   for i in ${ANFS_SRC_NAMES[@]+"${!ANFS_SRC_NAMES[@]}"}; do
     src="${ANFS_SRC_NAMES[$i]}" sd="${ANFS_SRC_DIRS[$i]}/spaces"
-    SRC_SD[$src]="$sd"
+    SRC_SD[$src]="$sd" SRC_DIRSET["$src|"]=1 SRC_DIRS[$src]=$'\n'
+    src_of[$sd]="$src" src_idx[$src]="$i"
     # The trailing / follows a local-path source's link; BSD find then prints <sd>//<rel>
-    mapfile -t files < <(find "$sd/" \( -type f -o -type l \) ! -name .DS_Store -print 2>/dev/null | LC_ALL=C sort)
-    here=() rels=() paths=()
-    for f in ${files[@]+"${files[@]}"}; do
-      rel="${f#"$sd"/}" rel="${rel#/}"
-      [[ -n "$rel" ]] || continue
-      rels+=("$rel")
-      [[ "${rel##*/}" == space.yml ]] || continue
-      p=""
-      [[ "$rel" != */* ]] || p="${rel%/*}"
-      here["/$p"]=1 paths+=("$p")
-    done
-    if [[ ${#paths[@]} -gt 1 ]]; then
-      mapfile -t paths < <(printf '%s\n' "${paths[@]}" | LC_ALL=C sort)
+    starts+=("$sd/")
+  done
+  [[ ${#starts[@]} -gt 0 ]] || return 0
+  # One find for every source, one sort: <source>/<rel> per file (a path may not hold a newline)
+  # Sorted, a source's files are together: its directory is looked up once
+  local cur="" cursrc=""
+  local -a found_files=()
+  # mapfile, not a read loop: read takes a pipe a byte at a time
+  mapfile -t found_files < <(find "${starts[@]}" \( -type f -o -type l \) ! -name .DS_Store -print 2>/dev/null | LC_ALL=C sort)
+  for f in ${found_files[@]+"${found_files[@]}"}; do
+    if [[ -z "$cur" || "$f" != "$cur"/* ]]; then
+      cur=""
+      for dir in "${!src_of[@]}"; do
+        [[ "$f" == "$dir"/* ]] && { cur="$dir" cursrc="${src_of[$dir]}"; break; }
+      done
+      [[ -n "$cur" ]] || continue
     fi
-    for p in ${paths[@]+"${paths[@]}"}; do
+    rel="${f#"$cur"/}" rel="${rel#/}"
+    [[ -n "$rel" ]] && files+=("$cursrc/$rel")
+  done
+
+  # The spaces: every directory holding a space.yml, in the sources' order, then by path
+  for f in ${files[@]+"${files[@]}"}; do
+    [[ "${f##*/}" == space.yml ]] || continue
+    src="${f%%/*}" rel="${f#*/}" p=""
+    [[ "$rel" != */* ]] || p="${rel%/*}"
+    here["$src|$p"]=1
+    paths+=("${src_idx[$src]}"$'\t'"$src"$'\t'"$p")
+  done
+  if [[ ${#paths[@]} -gt 0 ]]; then
+    while IFS=$'\t' read -r i src p; do
       id="$src${p:+/$p}"
       SPACE_IDS+=("$id")
-      SPACE_SRC[$id]="$src" SPACE_PATH[$id]="$p" SPACE_DIR[$id]="$sd${p:+/$p}" SPACE_FILES[$id]=""
-    done
+      SPACE_SRC[$id]="$src" SPACE_PATH[$id]="$p" SPACE_DIR[$id]="${SRC_SD[$src]}${p:+/$p}" SPACE_FILES[$id]=""
+    done < <(printf '%s\n' "${paths[@]}" | LC_ALL=C sort -t$'\t' -k1,1n -k3,3)
+  fi
 
-    SRC_DIRSET["$src|"]=1 SRC_DIRS[$src]=$'\n'
-    for rel in ${rels[@]+"${rels[@]}"}; do
-      d=""
-      [[ "$rel" != */* ]] || d="${rel%/*}"
+  SPACES_ALL=(${files[@]+"${files[@]}"})
+}
+
+# Every file's space, the nearest enclosing one (SPACE_FILES, SRC_OWNER), and the source's
+# directories (SRC_DIRS, the walk's): what list, install and remove need, and path does not
+SPACES_ALL=() FILES_LOADED=false
+_files_load() {
+  $FILES_LOADED && return 0
+  FILES_LOADED=true
+  local src rel d p id f found nown=0 first="" lastd=$'\n' lastp=""
+  local -A here=()
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do here["${SPACE_SRC[$id]}|${SPACE_PATH[$id]}"]=1; done
+  # Sorted, a directory's files are together: its space is looked up once
+  for f in ${SPACES_ALL[@]+"${SPACES_ALL[@]}"}; do
+    src="${f%%/*}" rel="${f#*/}" d=""
+    [[ "$rel" != */* ]] || d="${rel%/*}"
+    if [[ "$src|$d" != "$lastd" ]]; then
+      lastd="$src|$d"
       p="$d"
       while [[ -z "${SRC_DIRSET["$src|$p"]:-}" ]]; do
         SRC_DIRSET["$src|$p"]=1 SRC_DIRS[$src]+="$p"$'\n'
         if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
       done
-      # The nearest enclosing space: the longest space path that holds the file's directory
       p="$d" found=false
       while :; do
-        if [[ -n "${here["/$p"]:-}" ]]; then found=true; break; fi
+        if [[ -n "${here["$src|$p"]:-}" ]]; then found=true; break; fi
         [[ -n "$p" ]] || break
         if [[ "$p" == */* ]]; then p="${p%/*}"; else p=""; fi
       done
-      if $found; then
-        id="$src${p:+/$p}"
-        if [[ -n "$p" ]]; then f="${rel#"$p"/}"; else f="$rel"; fi
-        SPACE_FILES[$id]+="$f"$'\n'
-        SRC_OWNER["$src|$rel"]="$id"
-      else
-        nown=$((nown + 1))
-        [[ -n "$first" ]] || first="$src/$rel"
-      fi
-    done
+      lastp="$p"
+    else
+      p="$lastp"
+    fi
+    if $found; then
+      id="$src${p:+/$p}"
+      if [[ -n "$p" ]]; then rel="${rel#"$p"/}"; fi
+      SPACE_FILES[$id]+="$rel"$'\n'
+      SRC_OWNER["$src|${f#*/}"]="$id"
+    else
+      nown=$((nown + 1))
+      [[ -n "$first" ]] || first="$f"
+    fi
   done
   if [[ $nown -gt 0 ]] && ! $UNOWNED_WARNED; then
     UNOWNED_WARNED=true
@@ -346,9 +391,9 @@ _spaces_load() {
 
 # Forget what was loaded (wsm new, after it creates a space)
 _spaces_reset() {
-  SPACES_LOADED=false SPACE_IDS=()
+  SPACES_LOADED=false FILES_LOADED=false SPACE_IDS=() SPACES_ALL=()
   SPACE_SRC=() SPACE_PATH=() SPACE_DIR=() SPACE_FILES=() SRC_SD=() SRC_DIRS=() SRC_DIRSET=() SRC_OWNER=()
-  INSTALLED=() FSTATE=() STATE_DONE=() SRC_LEFT=() VANISHED_IDS=() VANISHED_SRC=() VANISHED_PATH=()
+  INSTALLED=() FSTATE=() FABS=() STATE_DONE=() SRC_LEFT=() VANISHED_IDS=() VANISHED_SRC=() VANISHED_PATH=()
 }
 
 # The nearest space enclosing directory <dir> (below <src>'s spaces/), itself included, into
@@ -367,16 +412,6 @@ _space_of() {
   done
   REPLY=""
   return 1
-}
-
-# The spaces below <id> (its children at any depth), one per line
-_children_of() {
-  local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" c
-  for c in "${SPACE_IDS[@]}"; do
-    [[ "$c" != "$id" && "${SPACE_SRC[$c]}" == "$src" ]] || continue
-    [[ -z "$p" || "${SPACE_PATH[$c]}" == "$p"/* ]] && printf '%s\n' "$c"
-  done
-  return 0
 }
 
 # --- Specs --------------------------------------------------------------------------------
@@ -451,39 +486,65 @@ _specs_expand() {
 # Light (false) checks only the space.yml links, for path, cd, new, add and repo; full (true) every
 # file and the leftovers, for list, install and remove.
 
-declare -A INSTALLED=() FSTATE=() STATE_DONE=() SRC_LEFT=() VANISHED_SRC=() VANISHED_PATH=()
+declare -A INSTALLED=() FSTATE=() FABS=() STATE_DONE=() SRC_LEFT=() VANISHED_SRC=() VANISHED_PATH=()
 VANISHED_IDS=()
 
 # Usage: _state_load <full:true|false> [source...]   (after _spaces_load and _root_load)
+# One anfs_link_check for every source at once (one readlink for all their links); a source the
+# check refuses (a name with a tab) is warned about and reads as not installed.
 _state_load() {
-  local full="$1" src id p r out state f rc
+  local full="$1" src id p r state f rc=0 list k=0 i
   shift
-  local -a srcs=("$@")
+  [[ "$full" != true ]] || _files_load
+  local -a srcs=("$@") args=() done_srcs=() counts=() names=() files=()
   [[ ${#srcs[@]} -gt 0 ]] || srcs=(${ANFS_SRC_NAMES[@]+"${ANFS_SRC_NAMES[@]}"})
   for src in ${srcs[@]+"${srcs[@]}"}; do
     [[ -n "${SRC_SD[$src]:-}" ]] || continue
     [[ "${STATE_DONE[$src]:-}" != full ]] || continue
     ! [[ "$full" == false && -n "${STATE_DONE[$src]:-}" ]] || continue
-    STATE_DONE[$src]=$([[ "$full" == true ]] && echo full || echo light)
+    if [[ "$full" == true ]]; then STATE_DONE[$src]=full; else STATE_DONE[$src]=light; fi
     r="$ROOT/$src"
     [[ -d "$r" ]] || continue
-    rc=0
-    out=$(anfs_link_check "${SRC_SD[$src]}" "$r" <(
-      for id in "${SPACE_IDS[@]}"; do
-        [[ "${SPACE_SRC[$id]}" == "$src" ]] || continue
-        p="${SPACE_PATH[$id]}"
-        if [[ "$full" == true ]]; then
-          while IFS= read -r f; do
-            [[ -n "$f" ]] && printf '%s\n' "${p:+$p/}$f"
-          done <<< "${SPACE_FILES[$id]}"
-        else
-          printf '%s\n' "${p:+$p/}space.yml"
-        fi
-      done)) || rc=$?
-    [[ $rc -eq 0 ]] || { warn "cannot read what is installed of $src"; continue; }
-    while IFS=$'\t' read -r state f; do
-      [[ -n "$f" ]] && FSTATE["$src|$f"]="$state"
-    done <<< "$out"
+    list="" i=0
+    for id in "${SPACE_IDS[@]}"; do
+      [[ "${SPACE_SRC[$id]}" == "$src" ]] || continue
+      p="${SPACE_PATH[$id]}"
+      if [[ "$full" == true ]]; then
+        _files_of "$id"
+        for f in ${FILES[@]+"${FILES[@]}"}; do
+          list+="${p:+$p/}$f"$'\n' i=$((i + 1))
+          names+=("$src|${p:+$p/}$f")
+        done
+      else
+        list+="${p:+$p/}space.yml"$'\n' i=$((i + 1))
+        names+=("$src|${p:+$p/}space.yml")
+      fi
+    done
+    _wsm_tmp
+    printf '%s' "$list" > "$WSM_TMP/check.$k"
+    args+=("${SRC_SD[$src]}" "$r" "$WSM_TMP/check.$k")
+    done_srcs+=("$src") counts+=("$i")
+    k=$((k + 1))
+  done
+  [[ ${#args[@]} -gt 0 ]] || return 0
+  # The states come in the order of the lists (_ANFS_ST), triplet by triplet
+  if anfs_link_check "${args[@]}" >/dev/null 2>&1; then
+    for i in "${!names[@]}"; do FSTATE["${names[$i]}"]="${_ANFS_ST[$i]}"; done
+    for i in ${_ANFS_ABS[@]+"${!_ANFS_ABS[@]}"}; do FABS["${names[$i]}"]=1; done
+  else
+    # One at a time, to keep what can be read
+    k=0
+    for i in "${!done_srcs[@]}"; do
+      if anfs_link_check "${args[@]:$((i * 3)):3}" >/dev/null; then
+        for f in "${!_ANFS_ST[@]}"; do FSTATE["${names[$((k + f))]}"]="${_ANFS_ST[$f]}"; done
+        for f in ${_ANFS_ABS[@]+"${!_ANFS_ABS[@]}"}; do FABS["${names[$((k + f))]}"]=1; done
+      else
+        warn "cannot read what is installed of ${done_srcs[$i]}"
+      fi
+      k=$((k + counts[i]))
+    done
+  fi
+  for src in ${done_srcs[@]+"${done_srcs[@]}"}; do
     for id in "${SPACE_IDS[@]}"; do
       [[ "${SPACE_SRC[$id]}" == "$src" ]] || continue
       p="${SPACE_PATH[$id]}"
@@ -493,6 +554,7 @@ _state_load() {
   done
 }
 
+
 # The leftovers of <src> (SRC_LEFT, VANISHED_*): for every directory of the source's spaces/ whose
 # mirror under <root>/<src> is a real directory, its entries (bash globs, no find): a dangling link
 # there that is no file's of the source, and for an entry that is a real directory and no mirror,
@@ -501,7 +563,7 @@ _leftovers_scan() {
   local src="$1" r="$ROOT/$1" sd csd d m e rel t i n=0 id vp
   local -a cand=() crel=() texts=()
   sd="${SRC_SD[$src]}"
-  csd=$(_canon "$sd") || return 0
+  _anfs_link_canon "$sd"; csd="$_ANFS_P"
   SRC_LEFT[$src]=""
   while IFS= read -r d; do
     m="$r${d:+/$d}"
@@ -544,40 +606,57 @@ _leftovers_scan() {
 }
 
 # The leftovers that count against <id>: those whose nearest installed space (or <id>, as it is
-# being installed) it is, one per line, below the source's spaces/
+# being installed) it is, below the source's spaces/, into LEFT
+LEFT=()
 _leftovers_of() {
   local id="$1" src="${SPACE_SRC[$1]}" rel d
+  LEFT=()
   while IFS= read -r rel; do
     [[ -n "$rel" ]] || continue
     d=""
     [[ "$rel" != */* ]] || d="${rel%/*}"
-    _space_of "$src" "$d" true "$id" && [[ "$REPLY" == "$id" ]] && printf '%s\n' "$rel"
+    _space_of "$src" "$d" true "$id" && [[ "$REPLY" == "$id" ]] && LEFT+=("$rel")
   done <<< "${SRC_LEFT[$src]:-}"
   return 0
 }
 
-# The directory of space <id> under the root
-_space_home() {
+# The directory of space <id> under the root: _home_of into REPLY, _space_home printed
+_home_of() {
   local src="${SPACE_SRC[$1]:-${VANISHED_SRC[$1]:-}}" p="${SPACE_PATH[$1]:-${VANISHED_PATH[$1]:-}}"
-  printf '%s\n' "$ROOT/$src${p:+/$p}"
+  REPLY="$ROOT/$src${p:+/$p}"
 }
+_space_home() { _home_of "$1"; printf '%s\n' "$REPLY"; }
+
+# The files of space <id> into FILES (mapfile: a read loop takes a pipe a byte at a time)
+FILES=()
+_files_of() { FILES=(); [[ -z "${SPACE_FILES[$1]}" ]] || mapfile -t FILES <<< "${SPACE_FILES[$1]%$'\n'}"; }
+
+# A JSON string for <text> into REPLY, as table.sh's _anfs_json_str prints it
+_json() {
+  local t="$1"
+  t="${t//\\/\\\\}" t="${t//\"/\\\"}" t="${t//$'\t'/\\t}" t="${t//$'\r'/\\r}" t="${t//$'\n'/\\n}"
+  REPLY="\"$t\""
+}
+
+# One row of a list into ROWS, as anfs_row makes it, in this shell
+ROWS=""
+_row() { local IFS="$ANFS_US"; ROWS+="$*"$'\n'; }
 
 # The counts of an installed space: C_MISSING C_WRONG C_WAY C_LEFT; and the NOTE in REPLY
 C_MISSING=0 C_WRONG=0 C_WAY=0 C_LEFT=0
 _space_counts() {
   local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" f note=""
   C_MISSING=0 C_WRONG=0 C_WAY=0 C_LEFT=0
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
+  _files_of "$id"
+  for f in ${FILES[@]+"${FILES[@]}"}; do
     case "${FSTATE["$src|${p:+$p/}$f"]:-missing}" in
       missing) C_MISSING=$((C_MISSING + 1)) ;;
       wrong) C_WRONG=$((C_WRONG + 1)) ;;
       "in the way") C_WAY=$((C_WAY + 1)) ;;
     esac
-  done <<< "${SPACE_FILES[$id]}"
-  while IFS= read -r f; do
-    [[ -n "$f" ]] && C_LEFT=$((C_LEFT + 1))
-  done < <(_leftovers_of "$id")
+  done
+  _leftovers_of "$id"
+  C_LEFT=${#LEFT[@]}
   [[ $C_MISSING -eq 0 ]] || note+="${note:+, }$C_MISSING missing"
   [[ $C_WRONG -eq 0 ]] || note+="${note:+, }$C_WRONG wrong"
   [[ $C_WAY -eq 0 ]] || note+="${note:+, }$C_WAY in the way"
@@ -611,12 +690,47 @@ _install_space() {
   local plan class rest f why rc=0 made=0 total=0 conflicts=0 list
   local -a aside=() left=()
   sd="${SRC_SD[$src]}" r="$ROOT/$src" dir=$(_space_home "$id")
-  list=$(while IFS= read -r f; do [[ -n "$f" ]] && printf '%s\n' "${p:+$p/}$f"; done <<< "${SPACE_FILES[$id]}")
+  _files_of "$id"
+  list=""
+  for f in "${FILES[@]}"; do list+="${p:+$p/}$f"$'\n'; done
   echo "space $id -> $(_display "$dir")"
 
-  plan=$(anfs_link_plan "$sd" "$r" <(printf '%s\n' "$list")) || rc=$?
+  # Every link is as apply writes it (the check said so, relative): nothing to plan
+  local fresh=true
+  for f in "${FILES[@]}"; do
+    [[ "${FSTATE["$src|${p:+$p/}$f"]:-}" == ok && -z "${FABS["$src|${p:+$p/}$f"]:-}" ]] || { fresh=false; break; }
+  done
+  if $fresh && ! $force; then
+    _leftovers_of "$id"
+    left=(${LEFT[@]+"${LEFT[@]}"})
+    if ! $dry; then
+      for f in ${left[@]+"${left[@]}"}; do
+        rm -f -- "$r/$f"
+        [[ "$f" != */* ]] || _rmdir_empty_up "$r/${f%/*}" "$r"
+      done
+    fi
+    printf '  %s 0 of %d file(s)' "$($dry && echo "would link" || echo linked)" "${#FILES[@]}"
+    [[ ${#left[@]} -eq 0 ]] || printf ', %s %d leftover(s)' "$($dry && echo "would unlink" || echo unlinked)" "${#left[@]}"
+    printf '\n'
+    return 0
+  fi
+
+  # Not a dry run: apply at once, which links only when nothing is in the way, and prints the
+  # plan it carried out (one classification); else the plan alone
+  _wsm_tmp
+  printf '%s' "$list" > "$WSM_TMP/install.list"
+  local applied=false
+  if $dry; then
+    plan=$(anfs_link_plan "$sd" "$r" "$WSM_TMP/install.list") || rc=$?
+  else
+    plan=$(anfs_link_apply "$sd" "$r" "$WSM_TMP/install.list") || rc=$?
+    [[ $rc -ne 0 ]] || applied=true
+  fi
   [[ $rc -ne 2 ]] || return 1
-  while IFS=$'\t' read -r class rest; do
+  local -a plines=()
+  mapfile -t plines <<< "$plan"
+  for class in "${plines[@]}"; do
+    rest="${class#*$'\t'}" class="${class%%$'\t'*}"
     [[ -n "$class" ]] || continue
     f="${rest%%$'\t'*}" why=""
     [[ "$rest" != *$'\t'* ]] || why="${rest#*$'\t'}"
@@ -634,22 +748,23 @@ _install_space() {
         fi
         ;;
     esac
-  done <<< "$plan"
+  done
   if [[ $conflicts -gt 0 ]]; then
     $force || warn "wsm install -f $id moves them aside"
     return 1
   fi
-  mapfile -t left < <(_leftovers_of "$id")
+  _leftovers_of "$id"
+  left=(${LEFT[@]+"${LEFT[@]}"})
 
   if ! $dry; then
     for f in ${aside[@]+"${aside[@]}"}; do _backup "$src" "$f"; done
-    if [[ $made -gt 0 ]] && ! anfs_link_apply "$sd" "$r" <(printf '%s\n' "$list") >/dev/null; then
+    if ! $applied && [[ $made -gt 0 ]] && ! anfs_link_apply "$sd" "$r" "$WSM_TMP/install.list" >/dev/null; then
       warn "linking failed for $(_display "$dir")"
       return 1
     fi
     for f in ${left[@]+"${left[@]}"}; do
       rm -f -- "$r/$f"
-      _rmdir_empty_up "$(dirname -- "$r/$f")" "$r"
+      [[ "$f" != */* ]] || _rmdir_empty_up "$r/${f%/*}" "$r"
     done
   else
     for f in ${aside[@]+"${aside[@]}"}; do echo "  would move aside $(_display "$r/$f")"; done
@@ -668,17 +783,18 @@ _remove_space() {
   local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" r dir f
   local -a dirs=()
   r="$ROOT/$src" dir=$(_space_home "$id")
-  while IFS= read -r f; do
-    [[ -n "$f" && "$f" != space.yml ]] || continue
+  _files_of "$id"
+  for f in ${FILES[@]+"${FILES[@]}"}; do
+    [[ "$f" != space.yml ]] || continue
     [[ "${FSTATE["$src|${p:+$p/}$f"]:-}" == ok ]] || continue
     rm -f -- "$dir/$f"
-    dirs+=("$(dirname -- "$dir/$f")")
-  done <<< "${SPACE_FILES[$id]}"
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
+    [[ "$f" != */* ]] || dirs+=("$dir/${f%/*}")
+  done
+  _leftovers_of "$id"
+  for f in ${LEFT[@]+"${LEFT[@]}"}; do
     rm -f -- "$r/$f"
-    dirs+=("$(dirname -- "$r/$f")")
-  done < <(_leftovers_of "$id")
+    if [[ "$f" == */* ]]; then dirs+=("$r/${f%/*}"); else dirs+=("$r"); fi
+  done
   rm -f -- "$dir/space.yml"
   unset "INSTALLED[$id]"
   for f in ${dirs[@]+"${dirs[@]}"}; do _rmdir_empty_up "$f" "$ROOT"; done
@@ -739,14 +855,14 @@ _repo_path_ok() {
   return 0
 }
 
-# The directory git clone would make for <url>: its last part, without a trailing / or .git
-# (git@host:org/app.git, https://host/org/app, /srv/app.git: app). Nothing if it has none.
+# The directory git clone would make for <url>, into REPLY: its last part, without a trailing /
+# or .git (git@host:org/app.git, https://host/org/app, /srv/app.git: app). Empty if it has none.
 _repo_name() {
   local n="${1%/}"
   n="${n%.git}" n="${n%/}"
   n="${n##*/}" n="${n##*:}"
-  [[ -n "$n" && "$n" != . && "$n" != .. ]] && printf '%s\n' "$n"
-  return 0
+  REPLY=""
+  [[ -z "$n" || "$n" == . || "$n" == .. ]] || REPLY="$n"
 }
 
 # The repositories a space.yml declares, three lines each: url, path, ref. A path left out is
@@ -756,24 +872,27 @@ _repo_entries() {
   local url path ref
   while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
     [[ -n "$url$path" ]] || continue
-    [[ -n "$path" ]] || path=$(_repo_name "$url")
-    path=$(printf '%s' "$path" | sed 's|/*$||')
+    [[ -n "$path" ]] || { _repo_name "$url"; path="$REPLY"; }
+    while [[ "$path" == */ ]]; do path="${path%/}"; done
     printf '%s\n%s\n%s\n' "$url" "$path" "$ref"
   done < <(yq -r '.repositories[]? | [(.url // ""), (.path // ""), (.ref // "")] | .[]' "$1" 2>/dev/null)
 }
 
-# Why repository <path> of space <id> cannot be, or nothing: a path that leaves the space, or one
-# inside a child space or holding one
+# Why repository <path> of space <id> cannot be, into REPLY (empty when it can): a path that
+# leaves the space, or one inside a child space or holding one
 _repo_invalid() {
-  local id="$1" path="$2" c cp full
-  _repo_path_ok "$path" || { echo "a path inside the space is needed"; return 0; }
+  local id="$1" path="$2" c cp full src="${SPACE_SRC[$1]}"
+  REPLY=""
+  _repo_path_ok "$path" || { REPLY="a path inside the space is needed"; return 0; }
   full="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$path"
-  while IFS= read -r c; do
-    [[ -n "$c" ]] || continue
+  for c in "${SPACE_IDS[@]}"; do
+    [[ "$c" != "$id" && "${SPACE_SRC[$c]}" == "$src" ]] || continue
     cp="${SPACE_PATH[$c]}"
-    if [[ "$full" == "$cp" || "$full" == "$cp"/* ]]; then echo "inside the space $c"; return 0; fi
-    if [[ "$cp" == "$full"/* ]]; then echo "holds the space $c"; return 0; fi
-  done < <(_children_of "$id")
+    [[ -z "${SPACE_PATH[$id]}" || "$cp" == "${SPACE_PATH[$id]}"/* ]] || continue
+    if [[ "$full" == "$cp" || "$full" == "$cp"/* ]]; then REPLY="inside the space $c"; return 0; fi
+    if [[ "$cp" == "$full"/* ]]; then REPLY="holds the space $c"; return 0; fi
+  done
+  return 0
 }
 
 # Clone the repositories space <id> declares into its directory, or only the one at <only>
@@ -793,7 +912,8 @@ _space_repositories() {
       failed=$((failed + 1))
       continue
     fi
-    why=$(_repo_invalid "$id" "$path")
+    _repo_invalid "$id" "$path"
+    why="$REPLY"
     if [[ -n "$why" ]]; then
       warn "invalid repository $id/$path: $why"
       failed=$((failed + 1))
@@ -1082,7 +1202,8 @@ cmd_path() {
     here=$(_canon "$PWD") || here="$PWD"
     for id in "${SPACE_IDS[@]}"; do
       [[ -n "${INSTALLED[$id]:-}" ]] || continue
-      d=$(_space_home "$id")
+      _home_of "$id"
+      d="$REPLY"
       [[ "$here" == "$d" || "$here" == "$d"/* ]] || continue
       [[ ${#id} -le ${#best} ]] || best="$id"
     done
@@ -1103,7 +1224,8 @@ cmd_path() {
 # `wsm ls [SPEC]`: every space the sources define (under SPEC), its state when installed, then the
 # spaces the tree still has that the sources no longer define. `wsm ls <id> --json` adds the files.
 cmd_list() {
-  local spec="${1:-}" id rows="" json=false detail="" f note
+  local spec="${1:-}" id rows="" json=false detail="" f note status
+  ROWS=""
   [[ -z "$spec" ]] || _spec_ok "$spec"
   anfs_json_on && json=true
   _spaces_load
@@ -1120,18 +1242,21 @@ cmd_list() {
     [[ -z "$spec" ]] || _spec_match "$id" || continue
     [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
     if [[ -z "${INSTALLED[$id]:-}" ]]; then
-      rows+="$(anfs_row "$id" "" "" "" "" "" "" "")"$'\n'
+      _row "$id" "" "" "" "" "" "" ""
       continue
     fi
     _space_counts "$id"
     note="$REPLY"
-    rows+="$(anfs_row "$id" "$([[ -z "$note" ]] && echo ok || echo partial)" "$(_space_home "$id")" "$note" \
-      "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT")"$'\n'
+    _home_of "$id"
+    if [[ -z "$note" ]]; then status=ok; else status=partial; fi
+    _row "$id" "$status" "$REPLY" "$note" "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT"
   done
   for id in ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match_path "${VANISHED_SRC[$id]}" "${VANISHED_PATH[$id]}" || continue
-    rows+="$(anfs_row "$id" "not in the source" "$(_space_home "$id")" "" "" "" "" "")"$'\n'
+    _home_of "$id"
+    _row "$id" "not in the source" "$REPLY" "" "" "" "" ""
   done
+  rows="$ROWS"
   [[ -n "$rows" || -z "$spec" ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
 
   # The lists other tools read: with --json (lib/anfs/table.sh), never by column. The counts are
@@ -1144,22 +1269,24 @@ cmd_list() {
   out=$(printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "$keys")
   # One space by its id: its files and their states, relative to it
   local p="${SPACE_PATH[$detail]}" src="${SPACE_SRC[$detail]}" files="" sep=""
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    files+="$sep{\"file\":$(_anfs_json_str "$f"),\"status\":$(_anfs_json_str "${FSTATE["$src|${p:+$p/}$f"]:-missing}")}"
+  _files_of "$detail"
+  for f in ${FILES[@]+"${FILES[@]}"}; do
+    _json "$f"; files+="$sep{\"file\":$REPLY"
+    _json "${FSTATE["$src|${p:+$p/}$f"]:-missing}"; files+=",\"status\":$REPLY}"
     sep=,
-  done <<< "${SPACE_FILES[$detail]}"
-  while IFS= read -r f; do
-    [[ -n "$f" ]] || continue
-    files+="$sep{\"file\":$(_anfs_json_str "${f#"${p:+$p/}"}"),\"status\":\"leftover\"}"
+  done
+  _leftovers_of "$detail"
+  for f in ${LEFT[@]+"${LEFT[@]}"}; do
+    _json "${f#"${p:+$p/}"}"; files+="$sep{\"file\":$REPLY,\"status\":\"leftover\"}"
     sep=,
-  done < <(_leftovers_of "$detail")
+  done
   printf '%s,"files":[%s]}]\n' "${out%\}]}" "$files"
 }
 
 # `wsm repo ls [SPEC]`: the repositories the space.yml files under SPEC declare, and their state
 cmd_repo_list() {
-  local spec="${1:-}" id url path ref state ahead d rows=""
+  local spec="${1:-}" id url path ref state ahead d
+  ROWS=""
   [[ -z "$spec" ]] || _spec_ok "$spec"
   _require_yq
   _spaces_load
@@ -1172,20 +1299,21 @@ cmd_repo_list() {
       ahead="" d=""
       if [[ -z "$path" ]]; then
         state="no path"
-      elif [[ -n "$(_repo_invalid "$id" "$path")" ]]; then
+      elif _repo_invalid "$id" "$path" && [[ -n "$REPLY" ]]; then
         state=invalid
       elif [[ -z "${INSTALLED[$id]:-}" ]]; then
         state="not installed"
       else
-        d="$(_space_home "$id")/$path"
+        _home_of "$id"
+        d="$REPLY/$path"
         state=$(gitsrc_dir_status "$d")
         [[ "$state" != local ]] || state="not a repo"
         ahead=$(gitsrc_dir_ahead "$d")
       fi
-      rows+="$(anfs_row "$id/$path" "$state" "$url" "$ahead" "$id" "$path" "$d")"$'\n'
+      _row "$id/$path" "$state" "$url" "$ahead" "$id" "$path" "$d"
     done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
   done
-  printf '%s' "$rows" | anfs_table "REPOSITORY STATUS URL" "repository status url ahead space path dir"
+  printf '%s' "$ROWS" | anfs_table "REPOSITORY STATUS URL" "repository status url ahead space path dir"
 }
 
 # `wsm repo install [SPEC|REPOSITORY] [-n]`: the clone half of install, for the spaces already

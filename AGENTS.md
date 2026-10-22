@@ -1321,12 +1321,16 @@ directory into another, skipping a set, and says who a link points into.
   the plan has no `other` or `conflict`; it returns 1 and the caller decides: ppm moves them
   aside under `-f` (`stow_subdir`), and so does wsm (`_backup`); without `-f` both refuse. Every
   file in the way is reported, not the first.
-- **`anfs_link_check <from> <to> <files-file>`** is the read-only side: `<state>\t<file>` per file,
-  `ok` (the text apply writes, or any link that resolves to the file), `missing`, `wrong` (a link
-  to anything else), `in the way` (a file, a directory, or an obstacle on the way). A constant
-  number of forks however many files: tests in the shell, the expected text built as apply builds
-  it, every link's text read with one `readlink` (through `xargs -0`), and only a link whose text
-  differs resolved. wsm's whole state is this.
+- **`anfs_link_check <from> <to> <files-file>...`** is the read-only side: `<state>\t<file>` per
+  file, `ok` (the text apply writes, or any link that resolves to the file), `missing`, `wrong` (a
+  link to anything else), `in the way` (a file, a directory, or an obstacle on the way). It takes
+  several triplets at once (wsm checks every source in one call) and leaves the states in
+  `_ANFS_ST` too. A constant number of forks however many files: tests in the shell, the expected
+  text built as apply builds it, every link's text read with one `readlink`, and only a link whose
+  text differs resolved. wsm's whole state is this.
+- **No fork per file anywhere in the library**: a path is resolved by `cd -P` in the shell and
+  back (`_anfs_link_physical`), and `anfs_link_apply` makes a directory's links with one `mkdir`,
+  one `rm` and one `ln -s` (a link made into a directory is named for its text's last part).
 - **Names are data**: spaces, `+`, `(`, `[`, a leading `-`. A name with a newline or a tab is
   refused (exit 2), once. Paths are compared canonical (macOS's `/var` is `/private/var`).
 - **`anfs_link_owner <path>`** is the one answer to "is this ours": `<source>/<path in it>` for a
