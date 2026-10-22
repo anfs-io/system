@@ -33,7 +33,7 @@
 #                                               (packages/psm/AGENTS.md)
 #
 # Functions only, the bash floor. Messages go through log.sh (the caller's name). The version is
-# ANFS_SKILLS_CLI_VERSION (anfs.conf; default latest).
+# ANFS_SKILLS_CLI_VERSION (anfs.env; default latest).
 
 # The CLI. </dev/null: it reads stdin, which would otherwise swallow the rows of a loop feeding it.
 # With -g the flag goes before the first option: skill names come before -a, which is variadic.

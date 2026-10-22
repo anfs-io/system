@@ -68,7 +68,7 @@ resolve_proxy() {
   case ${#providers[@]} in
     0) echo "err|no service provides proxy (x-pcm.provides: proxy)" ;;
     1) echo "ok|${providers[0]}" ;;
-    *) echo "err|several services provide proxy (${providers[*]}); pick one with PCM_PROXY in anfs.conf" ;;
+    *) echo "err|several services provide proxy (${providers[*]}); pick one with PCM_PROXY in pcm.local.env" ;;
   esac
 }
 

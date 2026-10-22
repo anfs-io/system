@@ -483,7 +483,7 @@ gitsrc_update_stale() {
 
 # --- anfs --------------------------------------------------------------------------------------
 
-# Configure gitsrc for anfs's sources (paths.sh sets the ANFS_* paths and loads anfs.conf)
+# Configure gitsrc for anfs's sources (paths.sh sets the ANFS_* paths and loads anfs.env)
 anfs_gitsrc_env() {
   GITSRC_TOOL=anfs
   GITSRC_UPDATE_TTL="${ANFS_UPDATE_CACHE_DURATION:-86400}"

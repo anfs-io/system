@@ -4,7 +4,8 @@
 # ppm is one tool of the anfs toolkit, and like the others a package of the anfs repo (core/ppm):
 # this script and its libraries are stowed from packages/ppm/home/ into ~/.local/bin and
 # ~/.local/lib/ppm. Sources are anfs's (`anfs src`); ppm reads the packages/ directory of each.
-# Settings come from ~/.config/anfs/anfs.conf (loaded by lib/anfs/paths.sh).
+# Settings come from ~/.config/ppm/ppm.env and anfs's ~/.config/anfs/anfs.env, each with its
+# .local.env beside it (loaded by lib/anfs/paths.sh: anfs_tool_paths ppm).
 #
 # Commands are implemented in the libraries under ~/.local/lib/ppm/ (stowed from
 # packages/ppm/home/.local/lib/ppm/):
@@ -17,7 +18,7 @@
 # platform.sh locates Homebrew and its owner (platform() and os() are lib/anfs/platform.sh's)
 set -euo pipefail
 
-# Paths and settings: anfs's layout (sources, libraries, anfs.conf) and ppm's own XDG dirs
+# Paths and settings: anfs's layout (sources, libraries, anfs.env) and ppm's own XDG dirs and ppm.env
 PPM_LIB_DIR="$HOME/.local/lib/ppm"
 # The bash floor, first: re-execs under bash 5 when this is macOS's 3.2 (lib/anfs/bash.sh).
 # Optional here only: ppm is what links the file in when core/anfs is next installed

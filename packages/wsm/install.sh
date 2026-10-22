@@ -1,7 +1,7 @@
 # wsm
 #
 # Installs wsm (~/.local/bin/wsm), which puts the spaces anfs sources define (spaces/**/space.yml)
-# in place, under WSM_SPACES_HOME (anfs.conf; default ~/spaces). wsm keeps no record: what is
+# in place, under WSM_SPACES_HOME (wsm.env; default ~/spaces). wsm keeps no record: what is
 # installed is read off the links.
 
 post_install() {

@@ -20,13 +20,14 @@
 #      tracked dependencies. ppm links files itself (lib/anfs/link.sh): no GNU stow
 #   5. Clones anfs to ~/.local/share/anfs/sources/core (git is available now) and links its two
 #      base packages into $HOME as their package.yml says: anfs (the anfs command, the libraries
-#      every tool shares — ~/.local/lib/anfs, one directory link — and the default config,
-#      anfs.conf and system.list) and ppm (the ppm command, its libraries and shell integration).
+#      every tool shares — ~/.local/lib/anfs, one directory link — anfs's settings, anfs.env,
+#      and system.list) and ppm (the ppm command, its libraries, its settings, ppm.env, and shell
+#      integration).
 #      That is what puts ~/.local/bin/{anfs,ppm} on PATH. Files protected with `ppm file protect`
 #      are left alone.
 #   6. Adds GitHub's published SSH host keys to ~/.ssh/known_hosts
-#   7. Seeds an empty ~/.config/anfs/user.list (your sources) and ~/.config/anfs/anfs.local.conf
-#      (machine-local settings)
+#   7. Seeds an empty ~/.config/anfs/user.list (your sources). No settings file is written: a
+#      machine's own values are yours to put in ~/.config/<tool>/<tool>.local.env
 #   8. With --repo: adds your customization repo as the "user" source (highest priority) and
 #      installs its anfs package, which replaces the seeded user.list with a link into it
 #   9. Runs 'anfs src update', installs your login shell's package from stack (bash or zsh:
@@ -41,8 +42,8 @@
 #   ~/.local/lib/{anfs,ppm,pcm}/          their libraries; lib/anfs (one link) is what every tool shares
 #   ~/.config/anfs/system.list            default sources (linked from core/anfs)
 #   ~/.config/anfs/user.list              your sources (a link into your repo with --repo)
-#   ~/.config/anfs/anfs.conf              default settings for every tool (linked from core/anfs)
-#   ~/.config/anfs/anfs.local.conf        machine-local settings
+#   ~/.config/anfs/anfs.env               anfs's settings, documented (linked from core/anfs); each
+#                                         tool links its own ~/.config/<tool>/<tool>.env
 #   ~/.local/state/ppm/installed/         what ppm installed
 #
 # EXTERNAL FETCHES:
@@ -335,8 +336,8 @@ setup_known_hosts() {
 # `ppm file protect` detached, so
 # a re-run leaves protected files alone exactly as `ppm install` does. The plan keeps what is
 # already linked and replaces a dangling link into the sources (a file that moved out of a
-# package). A live link into any *other* package belongs to a higher-priority layer (user/anfs's
-# anfs.conf is the documented case) and stops the run as a conflict, as do plain files: the
+# package). A live link into any *other* package belongs to a higher-priority layer (a user/anfs
+# that ships its own anfs.env is the documented case) and stops the run as a conflict, as do plain files: the
 # bootstrap never force-removes.
 stow_base() {
   local pkg dir
@@ -349,24 +350,21 @@ stow_base() {
 }
 
 
-# Seed the machine's own config. anfs.conf and system.list are linked from core/anfs; here we
-# seed an empty user.list the user can add repos to, and an anfs.local.conf for machine-local
-# settings. A repo's package can later replace user.list with a link into that repo (install_repo).
+# Seed the machine's own config. anfs.env and system.list are linked from core/anfs; here we
+# seed an empty user.list the user can add repos to (the tools read the list, so it must exist). A
+# repo's package can later replace it with a link into that repo (install_repo). No settings file
+# is written: <tool>.local.env is the person's, made by hand (or a tool's config command).
 install_configs() {
   if [[ ! -e "$ANFS_USER_LIST" ]]; then
     printf '# Your anfs sources (highest priority). Add with: anfs src add <git-url> [alias]\n' \
       > "$ANFS_USER_LIST"
-  fi
-
-  if [[ ! -f "$ANFS_CONFIG_HOME/anfs.local.conf" ]]; then
-    printf '# Settings for this machine only; they win over anfs.conf\n' > "$ANFS_CONFIG_HOME/anfs.local.conf"
   fi
 }
 
 
 # --repo: your customization repo (see `anfs onboard`), always registered as the "user" source
 # (highest priority). Its anfs package is a layer of core/anfs; installing it with -f swaps the
-# seeded user.list for the repo's copy, which lists the repo itself, and puts its anfs.conf (if it
+# seeded user.list for the repo's copy, which lists the repo itself, and puts its anfs.env (if it
 # ships one) over the default.
 install_repo() {
   local alias="$PPM_USER_REPO_ALIAS"

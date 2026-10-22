@@ -218,7 +218,7 @@ _canon_file() {
   printf '%s/%s\n' "${d%/}" "$(basename -- "$1")"
 }
 
-# $WSM_SPACES_HOME, read from anfs.conf unexpanded, so ~ and $HOME are ours
+# $WSM_SPACES_HOME, read from wsm.env (or wsm.local.env) unexpanded, so ~ and $HOME are ours
 _spaces_home() {
   local d="${WSM_SPACES_HOME:-$HOME/spaces}"
   case "$d" in

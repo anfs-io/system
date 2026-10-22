@@ -12,7 +12,7 @@ export PCM_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/pcm"
 zcomp pcm
 
 cconf() {
-  local dir=$PCM_CONTAINERS_HOME file="../../anfs/anfs.local.conf" ext="compose.yml"
+  local dir=$PCM_CONTAINERS_HOME file="../pcm.local.env" ext="compose.yml"
   load_conf "$@"
 }
 

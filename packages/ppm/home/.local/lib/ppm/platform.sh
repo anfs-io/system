@@ -68,7 +68,7 @@ brew_require_owner() {
   return 1
 }
 
-# Refresh Homebrew's formula index at most every HOMEBREW_UPDATE_CACHE_DURATION seconds (owner only)
+# Refresh Homebrew's formula index at most every PPM_BREW_UPDATE_CACHE_DURATION seconds (owner only)
 update_brew_if_needed() {
   if ! command -v brew >/dev/null 2>&1; then
     debug "Homebrew not found; skipping brew update"
@@ -79,7 +79,7 @@ update_brew_if_needed() {
     return 0
   fi
 
-  local cache_duration="${HOMEBREW_UPDATE_CACHE_DURATION:-86400}" # default is 24 hours in seconds
+  local cache_duration="${PPM_BREW_UPDATE_CACHE_DURATION:-86400}" # default is 24 hours in seconds
   local cache_file="$PPM_CACHE_HOME/brew_last_update"
 
   if [[ ! -f "$cache_file" ]] || [[ $(($(date +%s) - $(cat "$cache_file"))) -gt $cache_duration ]]; then
