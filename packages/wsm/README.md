@@ -28,8 +28,8 @@ link per file (so the directories stay real and what you put in them stays yours
 repositories its `space.yml` declares. It installs the spaces it `depends:` on first, but not the
 spaces above it.
 
-There is one root, `WSM_SPACES_HOME` (default `~/spaces`). Set it in your `anfs.conf` or
-`anfs.local.conf`; `wsm help` prints the value in use. A source's spaces are always under
+There is one root, `WSM_SPACES_HOME` (default `~/spaces`). Set it in
+`~/.config/wsm/wsm.local.env` (`wsm.env` beside it documents it); `wsm help` prints the value in use. A source's spaces are always under
 `<root>/<source>/`.
 
 The tree you work in mirrors the source. `wsm new` and `wsm add` carry what you create there back
@@ -184,7 +184,7 @@ is `waiting` and no npx a warning: neither fails an install, and a space without
 runs npx. A space's skills are its own: a child space's install never installs its parent's.
 Installing an agent package (`ppm install`) installs every installed space's skills for it;
 removing one unlinks them from it. `remove` takes a space's declared skills first, never one you
-added by hand. The CLI version is `ANFS_SKILLS_CLI_VERSION` in `anfs.conf`.
+added by hand. The CLI version is `ANFS_SKILLS_CLI_VERSION` in `anfs.env`.
 
 Install never pulls: what is checked out is yours. Re-running it is how a space picks up files
 and repositories added since, and drops the links to files the source no longer has.

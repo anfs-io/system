@@ -7,7 +7,7 @@ the code and the usage text can't.
 The engine is `lib/anfs/skill.sh` (core/anfs): agent detection, the CLI with a
 scope, rows, what is installed. psm runs it with the global scope (`-g`); wsm
 runs it with a space's directory (`wsm skill`, core AGENTS.md "wsm: spaces").
-The CLI's version is `ANFS_SKILLS_CLI_VERSION` in `anfs.conf` (default
+The CLI's version is `ANFS_SKILLS_CLI_VERSION` in `anfs.env` (default
 `latest`), for both; `PSM_CLI_VERSION` is gone.
 
 ## Shipping a skill from a source

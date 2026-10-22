@@ -120,7 +120,8 @@ installs the irreducible prerequisites and then hands over to ppm itself:
 - GitHub's published SSH host keys, added to `~/.ssh/known_hosts`
 - anfs itself, by linking its two base packages, [`anfs`](packages/anfs/README.md) and
   [`ppm`](packages/ppm/README.md), which is what puts `anfs` and `ppm` on your PATH and seeds
-  `~/.config/anfs/` (your source list, `anfs.local.conf`)
+  `~/.config/anfs/` (your source list; each tool's settings are `~/.config/<tool>/<tool>.env`,
+  with this machine's values in `<tool>.local.env` beside it)
 - `anfs src update`, then the package for your login shell (`stack/bash` or `stack/zsh`: it is
   what puts Homebrew on the PATH of a new shell; `--no-shell` skips it), then `anfs install
   system`: the stack that is the rest of the toolkit — `pcm`, `psm`, `wsm` — and the software
@@ -197,7 +198,7 @@ also works on its own.
 
 | Package | What it is |
 | --- | --- |
-| [`anfs`](packages/anfs/README.md) | the anfs command, the libraries every tool shares, the source list and `anfs.conf`; depends on everything below |
+| [`anfs`](packages/anfs/README.md) | the anfs command, the libraries every tool shares, the source list and `anfs.env`; depends on everything below |
 | [`ppm`](packages/ppm/README.md) | the package manager: its command, libraries and shell integration |
 | [`pcm`](packages/pcm/README.md) | Personal Container Manager |
 | `psm` | Personal Skills Manager |

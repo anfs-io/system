@@ -582,7 +582,7 @@ help` documents the commands.
     `$WSM_STATE_HOME/backup/<source>/<path>` (`.1`, `.2` when taken). Nothing restores it, not
     `remove` (there is no record). An obstacle on the way (a file where a directory goes) is never
     moved.
-- **One root**: `WSM_SPACES_HOME` (`anfs.conf`, default `~/spaces`, `~` and `$HOME` expanded). A
+- **One root**: `WSM_SPACES_HOME` (`wsm.env`, default `~/spaces`, `~` and `$HOME` expanded). A
   source's spaces are always under `<root>/<source>/`; there is no DIR argument. A root inside a
   source checkout is refused.
 - **Nothing is recorded.** The sources' `spaces/` say what exists (one `find` per source per run,
@@ -718,7 +718,7 @@ Every source is cloned once under `~/.local/share/anfs/sources/`:
 This repo (`core/`) contains:
 - `packages/anfs/` — the toolkit's own package: the `anfs` command, the libraries every tool
   sources (`~/.local/lib/anfs`: paths, sources, resolve), the source list and the toolkit's
-  settings (`~/.config/anfs/{system.list,anfs.conf}`). It depends on what the `anfs` command runs
+  settings (`~/.config/anfs/{system.list,anfs.env}`). It depends on what the `anfs` command runs
   and nothing else (`ppm`); the whole toolkit is the stack `core/system` (`stacks/system/`). Its `tests/` hold the shared-lib bats
   suites (Testing; the round trips are anfs-dev's).
 - `packages/ppm/` — ppm itself: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
@@ -760,22 +760,53 @@ and like yq it is base software that is always present.
 
 Every tool, anfs included, keeps to `<dir>/<tool>`: `~/.local/bin/<tool>`, `~/.local/lib/<tool>/`,
 and `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>/` for its own files. Nothing is namespaced under
-anfs except anfs's own (the sources, the lists, `anfs.conf`).
+anfs except anfs's own (the sources, the lists, `anfs.env`). A tool's settings are
+`~/.config/<tool>/<tool>.env` (Configuration).
 
-## Configuration: anfs.conf
+## Configuration: `<tool>.env`
 
-One file configures the whole toolkit: `~/.config/anfs/anfs.conf` (shipped by `core/anfs`, so a
-higher layer — your `user/anfs` — can replace it) and `~/.config/anfs/anfs.local.conf` (this
-machine only; install.sh seeds it with a header line). Every tool loads them through
-`lib/anfs/paths.sh` (`anfs_load_conf`):
+Each tool owns its settings, beside its other config (`lib/anfs/paths.sh`, "Settings"):
 
-- Each variable is named for the tool that reads it: `PCM_HEALTH_TIMEOUT`, `HOMEBREW_*` (ppm);
-  `ANFS_` for what more than one tool shares (`ANFS_UPDATE_CACHE_DURATION`,
-  `ANFS_QUIET_SKIPPED_REPOS`, `ANFS_SKILLS_CLI_VERSION`: the skills CLI psm and wsm run).
-- **The environment wins**, then `anfs.local.conf`, then `anfs.conf`: a variable already set is
-  never overwritten, so `PCM_HEALTH_TIMEOUT=300 pcm up x` does what it says.
-- The files are read, not sourced: `NAME=value` lines, a value optionally quoted. A setting can't
-  run code or clobber a variable a tool set itself.
+- **`~/.config/<tool>/<tool>.env`**, shipped by the tool's package and linked like any file: every
+  setting the tool reads, each a comment saying what it does and then `#NAME=default` (the
+  documented built-in default), or `NAME=value` where the package sets one
+  (`ANFS_UPDATE_CACHE_DURATION`, Homebrew's two, `PPM_BREW_UPDATE_CACHE_DURATION`).
+  `packages/anfs/tests/settings.bats` holds each core tool to it: a `${<TOOL>_X:-…}` the code reads
+  with a default has its line, a line names something the code reads.
+- **`~/.config/<tool>/<tool>.local.env`** beside it: this machine's values. The person's file:
+  nothing writes it as a side effect (install.sh seeds no settings file); plan 02's `<tool> config
+  set` will be the one command that does.
+- **anfs's own** are `~/.config/anfs/anfs.env` and `anfs.local.env`: `ANFS_*` (what more than one
+  tool shares: the sources' TTL, `ANFS_SKILLS_CLI_VERSION` for psm and wsm, the API's port) and
+  Homebrew's `HOMEBREW_NO_AUTO_UPDATE`, `HOMEBREW_NO_ENV_HINTS`, which every tool runs brew with.
+- **Precedence**: the environment, then `<tool>.local.env`, then `<tool>.env`, then the code's
+  default. A variable already set is never overwritten, so `PCM_HEALTH_TIMEOUT=300 pcm up x` does
+  what it says.
+- **Who loads what**: sourcing `paths.sh` loads anfs's (every tool); `anfs_tool_paths <tool>` loads
+  the tool's. Nothing else: a tool not installed contributes nothing, and pcm's settings never
+  reach ppm. **A package hook that needs its tool's setting calls `anfs_load_conf <tool>` itself**
+  (hooks run inside ppm: stack/tailscale's `TSM_AUTOJOIN`). The values are exported, so what a
+  tool runs (pcm's edges, pmm's provisioners) sees them.
+- **Format**: `NAME=value` lines, read and never sourced: a setting can't run code or clobber a
+  variable a tool set itself. Blanks and `#` comments skipped, a leading `export ` allowed, one
+  pair of matching quotes stripped, nothing expanded (a tool that takes `~` in a path expands it
+  itself: `WSM_SPACES_HOME`).
+- **Environment-only** (`anfs_conf_env_only`): every `*_{CONFIG,DATA,STATE,CACHE}_HOME` (they
+  locate the files: `PCM_CONFIG_HOME` pointed at a temp dir moves pcm's two files there),
+  `ANFS_WORK`, `ANFS_WORK_HOME`, `ANFS_WORK_TMP`. A line naming one is ignored with a warning
+  (`anfs: <file>: <NAME> is read from the environment only`).
+- Names: a tool's settings carry its prefix (`PCM_`, `OPM_`); `ANFS_` is for what tools share.
+  Paths that locate a tree (`PCM_CONTAINERS_HOME`), test hooks and internal switches (`*_IN_FNOX`,
+  `*_BASH_REEXEC`, `*_LIB`, `*_BIN`) are not settings and are not listed.
+- The API, for code that reads or writes the files (plan 02's `config` command, pcm's
+  per-container settings): `anfs_conf_files <tool>` (the two paths, local first),
+  `anfs_conf_read <file>` (`NAME<TAB>value` per line, nothing exported), `anfs_conf_env_only
+  <name>`, `anfs_load_conf [tool]`.
+- A layer (`user/anfs`) may ship its own `anfs.env`, which replaces core's whole; a machine's
+  values belong in `anfs.local.env`. The one file for every tool's settings is gone: nothing
+  reads a settings file but the two of anfs's and the two of the running tool's.
+- `<tool> config` (`list`, `get`, `set`, `unset`) is plan 02's (`units/config.md`); until it lands,
+  the files are edited by hand.
 
 ## Package Structure
 
@@ -788,6 +819,9 @@ packages/<n>/
   install.sh      # optional: pre/post_install hooks, OS-specific install
   home/           # optional: linked into $HOME (the only directory of a package that is)
 ```
+
+A package that ships a tool with settings ships `home/.config/<tool>/<tool>.env` documenting every
+one of them (Configuration).
 
 A `macos/` or `linux/` beside `home/` is not linked and not warned about: what is per platform is
 said in `package.yml` (`links:`, below). `PPM_GROUP_ID` is gone.
@@ -1310,9 +1344,10 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   `pcm up`/`install` and `anfs install` auto-update only the sources older than
   `ANFS_UPDATE_CACHE_DURATION` (default 24h); a source skipped for uncommitted changes stays stale
   on its own and is rechecked next time. Install prints one `Not updated (uncommitted changes):
-  <repos>` line for them; `ANFS_QUIET_SKIPPED_REPOS=true` in `anfs.conf` moves it to `--debug`
-- `~/.config/anfs/anfs.conf` — settings for every tool (see Configuration)
-- `~/.config/anfs/anfs.local.conf` — machine-local settings (not committed)
+  <repos>` line for them; `ANFS_QUIET_SKIPPED_REPOS=true` in `anfs.local.env` moves it to `--debug`
+- `~/.config/anfs/anfs.env` — anfs's settings (`ANFS_*`, Homebrew's), linked from core/anfs (see
+  Configuration); `~/.config/<tool>/<tool>.env` each tool's, linked from its package
+- `~/.config/<tool>/<tool>.local.env` — this machine's values (yours, never shipped)
 - `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, linked `files` — a directory link is one —, `links` out of the tree, `installed_deps`, `resources`)
 - `~/.local/state/ppm/installed/callbacks.yml` — packages registered for post-run callbacks (`ppm_register_callback`)
 - `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into the installer's skip list so they are never re-linked
@@ -1502,7 +1537,7 @@ The alias `user` (`PPM_USER_REPO_ALIAS` in `core.sh`) is always your own repo:
   - **Run** by `ppm __onboard <repo/pkg> <function>`, one process per call, so steps share what they learn through a facts file that lasts for the run. Exit 0 is done, 1 is not done, anything else ends the walk (64: a question no option answered).
   - Nothing is recorded: a rerun does only what is missing. `-y` takes proposals but never installs an offer, authorizes a key, picks a vault or publishes a repo; those need their option.
   - `stack/git` (identity, github, publish), `stack/ssh` (key, access) and `stack/op` (pm, pm-key, pm-github) are the first to use it. Tests: `packages/anfs/tests/onboard.bats` (the runner, with a fixture source) and stack's `packages/git/tests/onboard.bats` (those steps, with `gh`, `op` and `ssh-add` stubbed).
-- Its `anfs` package is a layer of `core/anfs`, so files it ships win over the toolkit's defaults: its `user.list`, and its own `anfs.conf` for every tool's settings. One package is all a customization repo needs to configure the toolkit.
+- Its `anfs` package is a layer of `core/anfs`, so files it ships win over the toolkit's defaults: its `user.list`, and an `anfs.env` of its own if it wants one (it replaces core's whole; a machine's values belong in `anfs.local.env`, a tool's in `~/.config/<tool>/<tool>.local.env`).
 - `install.sh --repo <url>` registers that URL as `user` and installs `user/anfs` with `-f`.
 - `ppm file claim` defaults to it.
 - Local-path sources are never pulled: after pushing it, set the `user` line in `user.list` to the git URL.
@@ -1516,7 +1551,7 @@ Homebrew supports one owner per installation (`/opt/homebrew` on Apple silicon m
 Three levels of ownership for an individual file: ppm owns it (default), *you* own it in
 *your repo* (`claim`), or *you* own it locally with ppm detached (`protect`).
 
-- `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and links them from there (`anfs_link_one`, that file only). The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `anfs.conf`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
+- `ppm file claim <file...> [--repo REPO] [--package NAME]` copies files into `REPO/NAME/home/` and links them from there (`anfs_link_one`, that file only). The default repo is `$PPM_DEFAULT_REPO` (default `user`, settable in `ppm.local.env`). The default package has the same name as the owning package. A new package with a different name gets `depends: [<owner>]`.
 - `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Directories are always real with a link per file, so files a tool creates there later stay local until added too.
 - **Never put a space in a package**: a space is a directory with a `space.yml` under a source's `spaces/`, and wsm links it into `WSM_SPACES_HOME` (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
 - Protected files are refused by `claim`/`add` (unprotect first): claim would link them again.
@@ -1586,8 +1621,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # and every file it names would be a stray. A filename with a / is never used
   table.sh     # anfs_row, anfs_table (aligned on a terminal, tab-separated piped, --json),
                # anfs_result, anfs_json_on
-  paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),
-               # anfs_load_conf (anfs.local.conf, anfs.conf; the environment wins)
+  paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME, then
+               # the tool's settings), the settings: anfs_load_conf [tool] (<tool>.local.env, then
+               # <tool>.env; the environment wins; anfs's when sourced), anfs_conf_read <file>,
+               # anfs_conf_files <tool>, anfs_conf_env_only <name>
   skill.sh     # agent skills through the skills CLI (npx skills@$ANFS_SKILLS_CLI_VERSION) with a
                # scope, -g or a directory: anfs_skill_cli, _require, _agents (ppm's meta.agent),
                # _package_agents, _display/_id, _dir_skills, _load, _has, _status, _sync_rows,
@@ -1685,12 +1722,14 @@ change. Their helpers skip every test and `tests/all` leaves them out; the perso
 hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, manifest.sh, files.sh,
+bats packages/anfs/tests     # lib/anfs: paths.sh's settings (conf.bats; settings.bats: each tool's <tool>.env
+                             # documents what it reads), sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, manifest.sh, files.sh,
                              # bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
-bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:
+bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:,
+                             # brew update's interval (brew.bats)
                              # (manifest.bats: platform, brew and mise stubbed)
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)

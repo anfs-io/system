@@ -3,7 +3,10 @@
 This package *is* ppm: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
 integration all live under `home/` and are linked onto the machine exactly like any other
 package's files. It is one of the anfs toolkit's two base packages, with
-[`anfs`](../anfs/README.md), which holds the source list and `anfs.conf` ppm reads.
+[`anfs`](../anfs/README.md), which holds the source list and the libraries ppm reads. ppm's settings are
+`~/.config/ppm/ppm.env` (shipped, every setting with its default) and `ppm.local.env` beside it
+(this machine's): `PPM_BREW_UPDATE_CACHE_DURATION` (seconds between `brew update` runs) and
+`PPM_DEFAULT_REPO` (where `ppm file claim` copies to).
 
 That is deliberate. ppm has no separate update mechanism, no self-updater and no special case in
 the installer beyond the first bootstrap: `ppm install core/ppm` (or `anfs install system`, the whole toolkit) is how ppm updates itself, and a

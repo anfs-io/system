@@ -32,7 +32,8 @@ each clone clean, dirty or unpushed. `pcm install <source>/` starts every defini
   `io.pcm.id` (`source/name`), `io.pcm.name` and `io.pcm.source`. Don't set a top-level `name:`
   (it is ignored, and `validate` warns when it differs); don't set `container_name:`.
 - Local overrides: `~/.config/pcm/env/<name>.env`
-- Shared settings: `PCM_SHARED_NETWORK` and `PCM_ATTACHED_SERVICES` in `~/.config/anfs/anfs.conf`
+- Shared settings: `PCM_SHARED_NETWORK` and `PCM_ATTACHED_SERVICES`, documented in
+  `~/.config/pcm/pcm.env`; this machine's values in `~/.config/pcm/pcm.local.env`
 
 Before writing a new one, read an existing definition as a model:
 `postgres` and `valkey` (shared dependencies with provision hooks), `twenty` (depends on
