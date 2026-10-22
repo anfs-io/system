@@ -110,6 +110,7 @@ need_old_bash() {
   done
   # repo.sh among them: sources.sh loads it, so every tool that sources sources.sh does
   [ -f "$LIB/repo.sh" ]
+  [ -f "$LIB/config.sh" ]
   (( n >= 15 ))
 }
 

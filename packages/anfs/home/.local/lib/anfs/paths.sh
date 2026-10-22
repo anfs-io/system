@@ -100,6 +100,8 @@ anfs_tool_paths() {
 #   anfs_conf_expand <value>   the value as the loader exports it (~ and ~/ to $HOME), into REPLY
 #   anfs_conf_env_only <name>  0 for a name only the environment may set (anfs_load_conf skips it)
 #   anfs_load_conf [tool]      export the tool's settings (no tool, or anfs: anfs's own)
+#   ANFS_CONF_LOADED           the names anfs_load_conf exported in this process, space-separated
+#                              (not exported): config.sh tells the environment's from the files'
 
 # Into REPLY: the config directory of a tool's settings
 _anfs_conf_dir() {
@@ -188,6 +190,7 @@ anfs_load_conf() {
       [[ -n "${!name+x}" ]] && continue
       anfs_conf_expand "${_ANFS_CONF_VALUES[$i]}"
       export "$name=$REPLY"
+      ANFS_CONF_LOADED+=" $name"
     done
   done
 }
@@ -209,4 +212,6 @@ anfs_display() {
 anfs_canon() { (cd -P -- "$1" 2>/dev/null && pwd -P); }
 
 # anfs's own settings, for every tool (ANFS_*, HOMEBREW_*); the tool's own come with anfs_tool_paths
+[[ -v ANFS_CONF_LOADED ]] || ANFS_CONF_LOADED=""
+export -n ANFS_CONF_LOADED
 anfs_load_conf

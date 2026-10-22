@@ -45,6 +45,8 @@ export VARLOCK_TELEMETRY_DISABLED
 source "$ANFS_LIB/cli.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/table.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/config.sh"
 CLI_TOOL=pcm
 # The commands are declared in lib/pcm/commands.sh, which the tests load too
 
@@ -194,7 +196,7 @@ shift 2>/dev/null || true
 # up and install pull stale sources first, like ppm install
 [[ "$cmd" == "up" || "$cmd" == "install" ]] && { gitsrc_update_stale >&2 || true; }
 case "$cmd" in
-  completion|help|-h|--help) ;;
+  completion|help|-h|--help|config) ;;
   *) load_sources ;;
 esac
 

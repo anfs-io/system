@@ -17,7 +17,9 @@ the toolkit — `pcm`, `psm`, `wsm` and the `podman`, `varlock` and `node` they 
 **Customizing it.** Your own repo's `anfs` package (`user/anfs`, which `anfs onboard` creates) is
 a layer of this one: its `user.list` holds your sources (and an `anfs.env` there would replace this
 one whole). This machine's values go in `~/.config/anfs/anfs.local.env` (each tool's in
-`~/.config/<tool>/<tool>.local.env`). The environment wins over both files.
+`~/.config/<tool>/<tool>.local.env`). The environment wins over both files. `anfs config list`
+shows anfs's settings and where each is from, `anfs config list --all` every installed tool's, and
+`<tool> config set NAME=value` writes that tool's local file.
 
 `tests/` holds the bats suites for `lib/anfs` (see AGENTS.md, Testing); the end-to-end round
 trips are in the anfs-dev source.

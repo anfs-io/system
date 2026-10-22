@@ -63,6 +63,8 @@ PMM_LOCAL_SOURCE=local
 source "$ANFS_LIB/cli.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/table.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/config.sh"
 CLI_TOOL=pmm
 # The commands are declared in lib/pmm/commands.sh, which the tests load too
 
@@ -251,7 +253,7 @@ shift 2>/dev/null || true
 # One catalogue per process (lib/anfs/catalog.sh): images for the image commands, machines for
 # the rest. A tab press reads file names only and loads neither.
 case "$cmd" in
-  completion|__complete|help|-h|--help|--version|iso) ;;
+  completion|__complete|help|-h|--help|--version|iso|config) ;;
   image) load_images ;;
   *) load_machines ;;
 esac

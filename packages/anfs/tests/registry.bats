@@ -531,11 +531,28 @@ SH
   local root="$BATS_TEST_DIRNAME/../.." line head bad=""
   local kinds=" PACKAGE CONTAINER MACHINE IMAGE NETWORK SKILL SPACE REPOSITORY SOURCE ISO STACK "
   # Lists that are not of a source's resources take only STATUS (AGENTS.md "Lists and --json")
-  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|"
+  local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|NAME VALUE FROM|TOOL NAME VALUE FROM|"
   while IFS= read -r line; do
     head="${line#*anfs_table \"}" head="${head%%\"*}"
     [[ " $head " != *" STATE "* ]] || bad+="$line"$'\n'
     [[ "$kinds" == *" ${head%% *} "* || "$others" == *"|$head|"* ]] || bad+="$line"$'\n'
   done < <(grep -rh 'anfs_table "' "$root"/*/home | grep -v '^[[:space:]]*#')
   [ -z "$bad" ] || { printf '%s' "$bad"; false; }
+}
+
+@test "a core tool ships its <tool>.env if and only if it declares the config group" {
+  local root="$BATS_TEST_DIRNAME/../.." dir t bad=""
+  for dir in "$root"/*/home/.local/bin; do
+    t="${dir%/home/.local/bin}" t="${t##*/}"
+    [[ -f "$dir/$t" ]] || continue
+    if [[ -f "$root/$t/home/.config/$t/$t.env" ]]; then
+      grep -rqs anfs_config_declare "$dir/$t" "$root/$t/home/.local/lib/$t" || bad+="$t ships $t.env and declares no config group"$'\n'
+    else
+      ! grep -rqs anfs_config_declare "$dir/$t" "$root/$t/home/.local/lib/$t" || bad+="$t declares the config group and ships no $t.env"$'\n'
+    fi
+  done
+  [ -z "$bad" ] || { printf '%s' "$bad"; false; }
+  # the five with settings, psm without
+  for t in anfs ppm pcm pmm wsm; do grep -rqs anfs_config_declare "$root/$t/home/.local"; done
+  ! grep -rqs anfs_config_declare "$root/psm/home/.local"
 }

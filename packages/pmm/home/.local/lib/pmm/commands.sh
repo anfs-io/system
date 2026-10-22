@@ -86,4 +86,5 @@ its images are built, its networks installed, then its machines (\`anfs
 install\` uses this). PMM_INSTALL=create starts nothing, PMM_INSTALL=validate
 only validates" --opt "-y --yes: Do not ask before installing a whole source/" --arg "machine-spec..."
 cli_cmd implode "Stop every machine and delete everything pmm created: machines, builds, networks" --opt "-y --yes: Do not ask before imploding"
+anfs_config_declare
 cli_standard

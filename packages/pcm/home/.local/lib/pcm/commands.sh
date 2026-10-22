@@ -38,4 +38,5 @@ runs needs (container.yml memory:) plus headroom. Confirms when containers run" 
   --opt "-y --yes: Do not ask before stopping running containers" --arg "[size]"
 cli_cmd implode "Delete every container, network, volume and directory pcm
 created, whichever definition it came from" --opt "-y --yes: Do not ask before imploding"
+anfs_config_declare
 cli_standard

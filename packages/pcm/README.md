@@ -4,7 +4,8 @@ pcm, the Personal Container Manager: podman compose services, with their configu
 dependencies. Container definitions live in the `containers/` directory of any anfs source
 ([stack](https://github.com/anfs-io/stack/tree/main/containers) ships the defaults), and resolve
 like packages: `pcm up postgres` runs `stack/postgres` unless a higher-priority source defines
-`postgres`. `pcm help` lists the commands.
+`postgres`. `pcm help` lists the commands. pcm's own settings are `~/.config/pcm/pcm.env`
+(shipped) and `pcm.local.env` beside it: `pcm config list` shows them, `pcm config set` writes.
 
 ## Layout
 

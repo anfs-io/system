@@ -45,6 +45,8 @@ done
 # are sourced) so help and completion are generated from what exists
 source "$HOME/.local/lib/anfs/cli.sh"
 CLI_TOOL=ppm
+# The config group (lib/anfs/config.sh); optional for the same reason as bash.sh
+if [[ -f "$HOME/.local/lib/anfs/config.sh" ]]; then source "$HOME/.local/lib/anfs/config.sh"; fi
 cli_cmd list "Available packages, and the version installed (a filter narrows it;
 @category: its packages, @: the categories)" --alias ls \
   --opt "--installed: Only what is installed" --arg "[filter]"
@@ -119,7 +121,8 @@ for lib_file in "$PPM_LIB_DIR"/*.sh; do
   [[ -f "$lib_file" ]] && source "$lib_file"
 done
 
-# completion and help, after what the extensions declared
+# ppm's settings (ppm.env), then completion and help, after what the extensions declared
+! declare -F anfs_config_declare >/dev/null || anfs_config_declare
 cli_standard
 
 # Callback registrations moved to anfs's place for them (lib/anfs/callbacks.sh); once
@@ -155,9 +158,9 @@ cli_globals "$@"
 set -- "${CLI_ARGS[@]}"
 case "${ANFS_DEBUG:-}" in ""|0|false|no|off) ;; *) PPM_DEBUG=true ;; esac
 
-# No source list is needed for help, a tab press, or the version
+# No source list is needed for help, a tab press, the version or the settings
 case "${1:-}" in
-  ""|help|-h|--help|--version|__complete|completion) cli_dispatch "$@" ;;
+  ""|help|-h|--help|--version|__complete|completion|config) cli_dispatch "$@" ;;
   src) echo "Sources are managed by anfs: anfs src ${*:2}" >&2; exit 1 ;;
   *) main "$@" ;;
 esac

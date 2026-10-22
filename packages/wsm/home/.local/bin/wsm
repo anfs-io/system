@@ -59,6 +59,8 @@ source "$ANFS_LIB/resolve.sh"
 source "$ANFS_LIB/cli.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/table.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB/config.sh"
 anfs_gitsrc_env
 anfs_tool_paths wsm
 
@@ -123,6 +125,7 @@ directories, for every detected agent (wsm install does this too)" \
 cli_cmd "skill remove" "Remove a space's declared skills from it (a SPEC), or one of them
 (<space id>/<name>); skills it does not declare stay" \
   --alias rm --opt "-y --yes: Do not ask before removing" --arg "spec..."
+anfs_config_declare
 cli_standard
 
 cmd_cd() {

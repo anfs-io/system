@@ -29,7 +29,7 @@ repositories its `space.yml` declares. It installs the spaces it `depends:` on f
 spaces above it.
 
 There is one root, `WSM_SPACES_HOME` (default `~/spaces`). Set it in
-`~/.config/wsm/wsm.local.env` (`wsm.env` beside it documents it); `wsm help` prints the value in use. A source's spaces are always under
+`~/.config/wsm/wsm.local.env` (`wsm.env` beside it documents it), or with `wsm config set WSM_SPACES_HOME=<dir>`; `wsm help` prints the value in use. A source's spaces are always under
 `<root>/<source>/`.
 
 The tree you work in mirrors the source. `wsm new` and `wsm add` carry what you create there back

@@ -200,3 +200,13 @@ I=~x" ]
 $HOME
 x~/" ]
 }
+
+@test "ANFS_CONF_LOADED: the names the loader exported, not those the environment had; not exported" {
+  printf 'ANFS_UPDATE_CACHE_DURATION=5\nANFS_QUIET_SKIPPED_REPOS=true\n' > "$XDG_CONFIG_HOME/anfs/anfs.env"
+  printf 'PCM_HEALTH_TIMEOUT=7\n' > "$XDG_CONFIG_HOME/pcm/pcm.env"
+  export ANFS_QUIET_SKIPPED_REPOS=false
+  in_paths 'anfs_tool_paths pcm; echo "[$ANFS_CONF_LOADED]"; bash -c "echo \"[\${ANFS_CONF_LOADED-unset}]\""'
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "[ ANFS_UPDATE_CACHE_DURATION PCM_HEALTH_TIMEOUT]" ]
+  [ "${lines[1]}" = "[unset]" ]
+}

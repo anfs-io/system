@@ -48,7 +48,7 @@ _setup_home() {
   ln -sfn "$anfs" "$HOME/.local/lib/anfs"
   PMM="$BATS_TEST_DIRNAME/../home/.local/bin/pmm"
   # shellcheck source=/dev/null
-  source "$anfs/paths.sh"; source "$anfs/log.sh"; source "$anfs/sources.sh"; source "$anfs/catalog.sh"; source "$anfs/iso.sh"; source "$anfs/cli.sh"; source "$anfs/table.sh"
+  source "$anfs/paths.sh"; source "$anfs/log.sh"; source "$anfs/sources.sh"; source "$anfs/catalog.sh"; source "$anfs/iso.sh"; source "$anfs/cli.sh"; source "$anfs/config.sh"; source "$anfs/table.sh"
   CLI_TOOL=pmm
   anfs_tool_paths pmm
   anfs_gitsrc_env

@@ -64,6 +64,9 @@ if [[ -f "$ANFS_LIB/listener.sh" ]]; then source "$ANFS_LIB/listener.sh"; fi
 # shellcheck source=/dev/null
 source "$ANFS_LIB/cli.sh"
 CLI_TOOL=anfs
+# The config group (lib/anfs/config.sh): anfs's own settings, and --all for every tool's
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/config.sh" ]]; then source "$ANFS_LIB/config.sh"; fi
 # shellcheck source=/dev/null
 if [[ -f "$ANFS_LIB/onboard.sh" ]]; then source "$ANFS_LIB/onboard.sh"; fi
 cli_group src "The sources every tool reads"
@@ -133,6 +136,7 @@ answer per line on stdout (run, stream, yes, watch, version). Only
 the toolkit's tools, never a shell; a write needs --grant write" \
   --opt "--grant GRANT: read (the default) or write" \
   --opt "--token: The first line must be {\"token\":\"...\"}; the token is the grant (the listener's TCP mode)"
+! declare -F anfs_config_declare >/dev/null || anfs_config_declare
 cli_standard
 
 # The tools, by what each manages: the whole line goes to the tool (_anfs_forward)
