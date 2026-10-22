@@ -104,3 +104,12 @@ STUB
   [ "$status" -eq 1 ]
   [ ! -e "$NPX_LOG" ]
 }
+
+@test "has: a universal agent the list leaves out counts when the copy is in .agents/skills" {
+  export NPX_LIST='[{"name":"a","agents":["Claude Code"],"path":"/s/.agents/skills/a"},{"name":"b","agents":["Claude Code"],"path":"/s/.claude/skills/b"}]'
+  anfs_skill_load -g
+  [ "$(anfs_skill_status a pi,claude-code)" = ok ]
+  [ "$(anfs_skill_status a opencode)" = ok ]
+  [ "$(anfs_skill_status b pi,claude-code)" = partial ]
+  [ "$(anfs_skill_status a hermes-agent)" = partial ]
+}

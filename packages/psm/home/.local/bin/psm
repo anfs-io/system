@@ -335,12 +335,12 @@ cmd_agents_remove() {
   require_npx
   _load_installed
 
-  local id display name agents source failed=0
+  local id display name agents source _path failed=0
   local -a names
   for id in "$@"; do
     display=$(_agent_display "$id") || { warn "unknown agent '$id'"; failed=$((failed + 1)); continue; }
     names=()
-    while IFS='|' read -r name agents source; do
+    while IFS='|' read -r name agents source _path; do
       [[ -n "$name" && ",$agents," == *",$display,"* ]] && names+=("$name")
     done <<< "$INSTALLED"
 
@@ -461,9 +461,9 @@ cmd_prune() {
     [[ ",$skills," == *",*,"* ]] && globs+="$repo"$'\n'
   done < <(_config_sources)
 
-  local name source
+  local name source _path
   local -a orphans=()
-  while IFS='|' read -r name agents source; do
+  while IFS='|' read -r name agents source _path; do
     [[ -n "$name" ]] || continue
     grep -qxF "$name" <<< "$declared" && continue
     [[ -n "$source" ]] && grep -qxF "$source" <<< "$globs" && continue
@@ -519,12 +519,12 @@ cmd_implode() {
   local yes=${CLI_OPT[yes]:-false}
 
   local -a names=()
-  local name agents source have_cli=false
+  local name agents source _path have_cli=false
   if command -v npx &>/dev/null || command -v mise &>/dev/null; then
     require_npx
     have_cli=true
     _load_installed
-    while IFS='|' read -r name agents source; do
+    while IFS='|' read -r name agents source _path; do
       [[ -n "$name" ]] && names+=("$name")
     done <<< "$INSTALLED"
   fi

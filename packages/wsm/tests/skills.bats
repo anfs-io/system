@@ -142,14 +142,14 @@ EOF
   [ ! -s "$NPX_LOG" ]
   run wsm skill rm -y acme/tech/b
   [ "$status" -eq 0 ]
-  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove b -y" ]
+  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove b -y -a pi" ]
   run wsm skill rm -y acme/tech/mine
   [ "$status" -eq 1 ]
   [[ "$output" == *"acme/tech declares no skill mine"* ]]
   : > "$NPX_LOG"
   run wsm skill rm -y acme/tech
   [ "$status" -eq 0 ]
-  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove a b -y" ]
+  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove a b -y -a pi" ]
 }
 
 @test "skill remove of a remote *: what skills-lock.json says came from that repo" {
@@ -159,7 +159,7 @@ EOF
   export NPX_LIST='[{"name":"x","agents":["Pi"]},{"name":"y","agents":["Pi"]}]'
   : > "$NPX_LOG"
   wsm skill rm -y acme/tech >/dev/null
-  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove x -y" ]
+  [ "$(cat "$NPX_LOG")" = "$HOME/spaces/acme/tech|remove x -y -a pi" ]
 }
 
 @test "wsm remove: the space's skills first, the empty lock and skill dirs go, a skill it did not declare stays" {
@@ -172,7 +172,7 @@ EOF
   : > "$NPX_LOG"
   run wsm remove -y acme/tech
   [ "$status" -eq 0 ]
-  [ "$(cat "$NPX_LOG")" = "$h|remove a -y" ]
+  [ "$(cat "$NPX_LOG")" = "$h|remove a -y -a pi" ]
   [ ! -e "$h" ]
 }
 
@@ -216,8 +216,8 @@ EOF
   : > "$NPX_LOG"
   wsm implode -y >/dev/null 2>&1
   run sort "$NPX_LOG"
-  [ "${lines[0]}" = "$HOME/spaces/acme/a|remove x -y" ]
-  [ "${lines[1]}" = "$HOME/spaces/acme/b|remove y -y" ]
+  [ "${lines[0]}" = "$HOME/spaces/acme/a|remove x -y -a pi" ]
+  [ "${lines[1]}" = "$HOME/spaces/acme/b|remove y -y -a pi" ]
 }
 
 # --- the ppm callback (install.sh) ---------------------------------------------------------
@@ -280,4 +280,23 @@ callback() {
   run wsm skill rm -y acme/tech
   [ ! -s "$NPX_LOG" ]
   [ -z "$(ls_field acme/tech status | grep -v null)" ]
+}
+
+@test "remove is never unscoped: -a for the agents it is installed for; wsm drops the shared copy and lock entry, nothing else" {
+  agent claude claude-code
+  space_def acme tech <<<'skills: [{repo: o/r, skills: [a]}]'
+  wsm install acme/tech >/dev/null
+  local h="$HOME/spaces/acme/tech"
+  mkdir -p "$h/.agents/skills/a" "$h/skills/a"
+  echo copy > "$h/.agents/skills/a/SKILL.md"
+  echo mine > "$h/skills/a/SKILL.md"
+  printf '{"version":1,"skills":{"a":{"source":"o/r"},"keep":{"source":"x/y"}}}\n' > "$h/skills-lock.json"
+  export NPX_LIST='[{"name":"a","agents":["OpenCode","Claude Code","Unknown Agent"]}]'
+  : > "$NPX_LOG"
+  run wsm skill rm -y acme/tech
+  [ "$status" -eq 0 ]
+  [ "$(cat "$NPX_LOG")" = "$h|remove a -y -a claude-code pi opencode" ]
+  [ ! -e "$h/.agents/skills/a" ]
+  [ "$(cat "$h/skills/a/SKILL.md")" = mine ]
+  [ "$(yq -p json -r '.skills | keys | join(",")' "$h/skills-lock.json")" = keep ]
 }

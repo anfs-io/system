@@ -13,9 +13,10 @@
 #                                               (meta.agent), csv
 #   anfs_skill_package_agents <repo/pkg>        one package's ids, one per line
 #   anfs_skill_display    <id>                  the CLI's display name for an id, or 1
+#   anfs_skill_id         <display name>        the id for a display name, or 1
 #   anfs_skill_dir_skills <dir>                 the <name>/SKILL.md directly under <dir>, names
 #   anfs_skill_load       <scope>               what is installed there: ANFS_SKILL_INSTALLED rows
-#                                               <name>|<agent display names csv>|<source>
+#                                               <name>|<agent display names csv>|<source>|<path>
 #   anfs_skill_has        <name> <agents csv>   installed for every one of them (after load)
 #   anfs_skill_status     <name> <agents csv>   ok, partial, missing (after load)
 #   anfs_skill_sync_rows  <scope> <force_local> <detected>   install the rows on stdin,
@@ -23,6 +24,10 @@
 #                                               in ANFS_SKILL_SYNCED/_CURRENT/_FAILED/_WAITING
 #   anfs_skill_remove     <scope> <name>...     remove for every agent
 #   anfs_skill_unlink     <scope> <agent> <name>...   remove for one agent
+#   anfs_skill_remove_for <scope> <agents csv> <name>...  remove for those agents only. In a project
+#                                               scope a remove without -a sweeps every agent's
+#                                               directory, skills/<name> and data/skills/<name>
+#                                               among them (packages/psm/AGENTS.md)
 #
 # Functions only, the bash floor. Messages go through log.sh (the caller's name). The version is
 # ANFS_SKILLS_CLI_VERSION (anfs.conf; default latest).
@@ -89,6 +94,18 @@ anfs_skill_display() {
   esac
 }
 
+anfs_skill_id() {
+  case "$1" in
+    "Claude Code")     echo claude-code ;;
+    OpenCode)          echo opencode ;;
+    Pi)                echo pi ;;
+    "Hermes Agent")    echo hermes-agent ;;
+    Antigravity)       echo antigravity ;;
+    "Antigravity CLI") echo antigravity-cli ;;
+    *)                 return 1 ;;
+  esac
+}
+
 # Skill names in a directory, one per line: every <name>/SKILL.md directly under it. Not -type f:
 # ppm and wsm link SKILL.md.
 anfs_skill_dir_skills() {
@@ -116,7 +133,7 @@ anfs_skill_is_local() {
 ANFS_SKILL_INSTALLED=""
 anfs_skill_load() {
   ANFS_SKILL_INSTALLED=$(anfs_skill_cli "$1" list --json 2>/dev/null \
-    | yq -p json -r '.[] | [.name, ((.agents // []) | join(",")), (.source // "")] | join("|")' 2>/dev/null) || true
+    | yq -p json -r '.[] | [.name, ((.agents // []) | join(",")), (.source // ""), (.path // "")] | join("|")' 2>/dev/null) || true
 }
 
 # The agent display names <name> is installed for (after load); 1 when it is not installed
@@ -124,12 +141,25 @@ anfs_skill_installed_agents() {
   awk -F'|' -v n="$1" '$1 == n { print $2; found = 1; exit } END { exit !found }' <<< "$ANFS_SKILL_INSTALLED"
 }
 
+# Universal agents read the shared copy in .agents/skills themselves; the CLI's project-scope list
+# leaves Pi out of a skill's agents (checked 2026-10-21, skills 1.7.4), so one counts as installed
+# when the copy is there
+anfs_skill_universal() { [[ "$1" == opencode || "$1" == pi ]]; }
+
+# The path the CLI lists for <name> (after load)
+anfs_skill_path() {
+  awk -F'|' -v n="$1" '$1 == n { print $4; exit }' <<< "$ANFS_SKILL_INSTALLED"
+}
+
 anfs_skill_has() {
-  local have agent display
+  local have agent display path=""
   have=$(anfs_skill_installed_agents "$1") || return 1
   for agent in ${2//,/ }; do
     display=$(anfs_skill_display "$agent") || return 1
-    [[ ",$have," == *",$display,"* ]] || return 1
+    [[ ",$have," != *",$display,"* ]] || continue
+    anfs_skill_universal "$agent" || return 1
+    [[ -n "$path" ]] || path=$(anfs_skill_path "$1")
+    [[ "$path" == */.agents/skills/"$1" ]] || return 1
   done
 }
 
@@ -195,4 +225,13 @@ anfs_skill_unlink() {
   shift 2
   [[ $# -gt 0 ]] || return 0
   anfs_skill_cli "$scope" remove "$@" -y -a "$agent"
+}
+
+anfs_skill_remove_for() {
+  local scope="$1" agents="$2" a
+  shift 2
+  [[ $# -gt 0 && -n "$agents" ]] || return 0
+  local -a args=(remove "$@" -y -a)
+  for a in ${agents//,/ }; do args+=("$a"); done
+  anfs_skill_cli "$scope" "${args[@]}"
 }

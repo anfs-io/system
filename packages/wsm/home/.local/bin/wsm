@@ -1362,11 +1362,15 @@ _skills_tidy() {
   done
 }
 
-# Remove from space <id>'s directory the skills it declares that are installed there (the CLI
-# removes each for every agent), then tidy. Without npx they stay, said once.
+# Remove from space <id>'s directory the skills it declares that are installed there, then tidy.
+# Never an unscoped `skills remove`: in a project it sweeps every agent's directory, skills/<name>
+# and data/skills/<name> included, which may be the space's own files or the user's. So the CLI
+# removes each for the agents it is installed for (-a, the ids known), and wsm then deletes what the
+# CLI keeps for universal agents: the copy in .agents/skills/<name> and its skills-lock.json entry,
+# both the CLI's for a skill this space declares. Without npx they stay, said once.
 # Usage: _remove_skills <id> [name...]   (the names: only those, if declared)
 _remove_skills() {
-  local id="$1" home n
+  local id="$1" home n have d a agents=""
   shift
   local -a want=("$@") gone=()
   _skill_names "$id"
@@ -1375,19 +1379,35 @@ _remove_skills() {
   home="$REPLY"
   _home_ok "$home" || return 0
   _npx_ok || return 0
+  _agents
+  agents=",$AGENTS,"
   anfs_skill_load "$home"
   for n in "${SK_NAMES[@]}"; do
     [[ ${#want[@]} -eq 0 ]] || _in_list "$n" "${want[@]}" || continue
-    anfs_skill_installed_agents "$n" >/dev/null || continue
-    _in_list "$n" ${gone[@]+"${gone[@]}"} || gone+=("$n")
+    have=$(anfs_skill_installed_agents "$n") || continue
+    _in_list "$n" ${gone[@]+"${gone[@]}"} && continue
+    gone+=("$n")
+    while IFS= read -r d; do
+      a=$(anfs_skill_id "$d") || continue
+      [[ "$agents" == *",$a,"* ]] || agents+="$a,"
+    done < <(tr ',' '\n' <<< "$have")
   done
-  if [[ ${#gone[@]} -gt 0 ]]; then
-    if ! anfs_skill_remove "$home" "${gone[@]}" >/dev/null; then
-      warn "skills remove in $id failed: ${gone[*]}"
-      return 1
-    fi
-    echo "  removed skills ${gone[*]} from $id"
+  [[ ${#gone[@]} -gt 0 ]] || { _skills_tidy "$home"; return 0; }
+  agents="${agents#,}" agents="${agents%,}"
+  if [[ -n "$agents" ]] && ! anfs_skill_remove_for "$home" "$agents" "${gone[@]}" >/dev/null; then
+    warn "skills remove in $id failed: ${gone[*]}"
+    return 1
   fi
+  for n in "${gone[@]}"; do
+    d="$home/.agents/skills/$n"
+    [[ -n "$n" && "$n" != */* && "$n" != . && "$n" != .. ]] || continue
+    if [[ -d "$d" && ! -L "$d" ]]; then rm -rf -- "$d"; fi
+    if [[ -f "$home/skills-lock.json" ]]; then
+      WSM_N="$n" yq -i -p json -o json 'del(.skills[strenv(WSM_N)])' "$home/skills-lock.json" 2>/dev/null ||
+        warn "cannot update $(_display "$home/skills-lock.json")"
+    fi
+  done
+  echo "  removed skills ${gone[*]} from $id"
   _skills_tidy "$home"
 }
 

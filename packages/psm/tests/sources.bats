@@ -198,3 +198,12 @@ psm() { "$PSM" "$@"; }
   ANFS_SKILLS_CLI_VERSION=1.7.4 psm sync >/dev/null
   [ "$(cat "$NPX_VER")" = skills@1.7.4 ]
 }
+
+@test "prune keeps what a * repo installed (the CLI's source), whatever the path" {
+  mkdir -p "$HOME/.config/psm"
+  printf 'sources:\n  - repo: o/r\n    skills: ["*"]\n' > "$HOME/.config/psm/r.yml"
+  export NPX_LIST='[{"name":"x","agents":["Pi"],"source":"o/r","path":"/h/.agents/skills/x"}]'
+  run psm prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Nothing to prune"* ]]
+}
