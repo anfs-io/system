@@ -569,6 +569,11 @@ _pkg_plan() {
     fi
     _PPM_PLAN+="src"$'\t'"$st"$'\t'"$dest"$'\t'"$src"$'\n'
   done <<< "$ANFS_MF_SRCS"
+  # a src: entry wrong on its own (an unset variable...): invalid, skipped; the rest is placed
+  local why
+  while IFS=$'\t' read -r dest src why; do
+    [[ -z "$dest" ]] || _PPM_PLAN+="src"$'\t'"invalid"$'\t'"$dest"$'\t'"$why (src: $src)"$'\n'
+  done <<< "$ANFS_MF_INVALID"
   return 0
 }
 
@@ -636,6 +641,10 @@ stow_package() {
   fi
   while IFS=$'\t' read -r kind class rel why; do
     [[ "$kind" == src && "$class" != skip ]] || continue
+    if [[ "$class" == invalid ]]; then
+      ppm_fail "invalid link ~/$rel, skipped: $why" || true
+      continue
+    fi
     STOWED_SRCS+="$rel"$'\t'"$why"$'\n'
     case "$class" in
       ok) ;;
@@ -736,6 +745,7 @@ plan_package() {
         ${force:-false} || stop=true
         ;;
       src:skip) why="" ;;
+      src:invalid) why="$why; skipped" ;;
     esac
     printf '  %-9s %s%s\n' "$word" "~/$rel" "${why:+  ($why)}"
   done <<< "$_PPM_PLAN"

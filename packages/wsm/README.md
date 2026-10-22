@@ -151,8 +151,9 @@ core's AGENTS.md, "package.yml", has the table and every refusal). A refused one
 `invalid` in `wsm ls` (the first error is its note) and `wsm install` says every error and links
 nothing: a `links:` path without a trailing `/`, a path not in the space, a directory link that
 holds, is or lies in a child space or a repository, a directory link at a hidden directory when the
-space declares `skills:` (the skills CLI writes there), `space.yml` in `files:`, an unset variable
-in a `src`, a `dest` that leaves the space, and the rest of the list.
+space declares `skills:` (the skills CLI writes there), `space.yml` in `files:`, and the rest of
+the list. A `src:` entry wrong on its own (an unset variable, a `dest` that leaves the space) is
+only that entry: `invalid`, warned and skipped while the rest installs (`wsm install` exits 1).
 
 `depends` resolves the way ppm's package dependencies do: an id names its source (by its alias on
 this machine), and a bare path is the declaring source's, else a lower-priority one's. Spaces do
@@ -166,7 +167,7 @@ always its space. Two repositories of one `space.yml` may not share a path.
 shares nothing but `/` with the space, another volume). One made absolute before reads `ok` and is
 left as it is. `wsm ls <id> --json`'s `links` has each one's state: `ok`, `missing`, `missing src`
 (said, not made, not a failure: the target may come later), `wrong` (a link elsewhere), `in the
-way`. `wrong` and `in the way` fail install; `-f` moves them aside as for files. `remove` takes a
+way`, `invalid`. `wrong` and `in the way` fail install; `-f` moves them aside as for files. `remove` takes a
 link only while it still points at its `src`.
 
 **`files:`** are copied when missing at install (after the files are linked, before the clones),

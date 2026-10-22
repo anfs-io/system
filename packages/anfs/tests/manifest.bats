@@ -92,12 +92,32 @@ has() { case $'\n'"$1" in *$'\n'"$2"$'\n'*) return 0 ;; esac; return 1; }
   ! has "$ANFS_MF_LINKS" apex
 }
 
-@test "a relative src is from ANFS_MF_SRC_BASE, refused without it" {
+@test "a src: entry wrong on its own is that entry only: invalid, the rest planned" {
+  unset ANFS_T_UNSET
+  yml "links:" \
+    "  - {src: \$ANFS_T_UNSET/x}" \
+    "  - {src: /opt/z, dest: ../out}" \
+    "  - {src: /opt/w, dest: /abs}" \
+    "  - {src: /opt/ok, dest: good}" \
+    "  - .local/lib/x/"
+  plan
+  [ -z "$ANFS_MF_ERR" ]
+  [ "$ANFS_MF_SRCS" = "good	/opt/ok"$'\n' ]
+  has "$ANFS_MF_LINKS" .local/lib/x
+  has "$ANFS_MF_INVALID" 'x	$ANFS_T_UNSET/x	$ANFS_T_UNSET is not set'
+  has "$ANFS_MF_INVALID" "../out	/opt/z	dest must stay inside the target: '../out'"
+  has "$ANFS_MF_INVALID" "/abs	/opt/w	dest must stay inside the target: '/abs'"
+  # another platform's entry is only off, whatever is wrong with it
+  yml "links: [{src: \$ANFS_T_UNSET/x, platforms: [linux]}]"
+  plan macos
+  [ -z "$ANFS_MF_INVALID" ] && has "$ANFS_MF_OFF" $'x\tlinux'
+}
+
+@test "a relative src is from ANFS_MF_SRC_BASE, an invalid entry without it" {
   yml "links: [{src: ../shared, dest: shared}]"
-  run plan
-  [ "$status" -eq 2 ]
-  plan || true
-  [[ "$ANFS_MF_ERR" == *"a src: here is absolute, or starts with ~ or a variable: ../shared"* ]]
+  plan
+  [ -z "$ANFS_MF_ERR$ANFS_MF_SRCS" ]
+  [[ "$ANFS_MF_INVALID" == *"a src: here is absolute, or starts with ~ or a variable"* ]]
   ANFS_MF_SRC_BASE="$T/spaces/acme/team"
   plan
   [ "$ANFS_MF_SRCS" = "shared	$T/spaces/acme/shared"$'\n' ]
@@ -138,9 +158,6 @@ has() { case $'\n'"$1" in *$'\n'"$2"$'\n'*) return 0 ;; esac; return 1; }
     "  - {path: x, src: /y}" \
     "  - {dest: z}" \
     "  - {path: system.list, platforms: [macos], color: red}" \
-    "  - {src: /opt/z, dest: ../out}" \
-    "  - {src: /opt/w, dest: /abs}" \
-    "  - {src: \$ANFS_T_UNSET/x}" \
     "  - {path: .toolrc}" \
     "files:" \
     "  - .local/lib/x/b.sh" \
@@ -164,9 +181,6 @@ has() { case $'\n'"$1" in *$'\n'"$2"$'\n'*) return 0 ;; esac; return 1; }
   [[ "$e" == *"an entry has a path or a src, not both: x, /y"* ]]
   [[ "$e" == *"a links: entry needs a path or a src"* ]]
   [[ "$e" == *"unknown key (color)"* ]]
-  [[ "$e" == *"dest must stay inside the target: '../out'"* ]]
-  [[ "$e" == *"dest must stay inside the target: '/abs'"* ]]
-  [[ "$e" == *'$ANFS_T_UNSET is not set'* ]]
   [[ "$e" == *"{path: .toolrc} without platforms says nothing the default does not"* ]]
   [[ "$e" == *"the same path twice: .local/lib/x"* ]]
   [[ "$e" == *"files: a directory is not a file: docs/sub"* || "$e" == *"the same path twice: docs/sub"* ]]

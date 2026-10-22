@@ -1108,7 +1108,7 @@ _in_repository() {
 #   MF_LINKS MF_SRCS MF_COPIES MF_OFF MF_DIRS MF_ERR [id]   its plan (_mf_plan), as ANFS_MF_*
 
 declare -A MF_ROWS=() META_SKILLS=() META_DONE=() MF_DONE=()
-declare -A MF_LINKS=() MF_SRCS=() MF_COPIES=() MF_OFF=() MF_DIRS=() MF_ERR=()
+declare -A MF_LINKS=() MF_SRCS=() MF_COPIES=() MF_OFF=() MF_DIRS=() MF_ERR=() MF_INVALID=()
 WSM_PLATFORM=""
 _meta_load() {
   local id f i line rest sep="$ANFS_US"
@@ -1144,7 +1144,7 @@ _mf_plan() {
   [[ -z "${MF_DONE[$id]:-}" ]] || return 0
   MF_DONE[$id]=1
   _meta_load "$id"
-  MF_SRCS[$id]="" MF_COPIES[$id]="" MF_OFF[$id]="" MF_DIRS[$id]="" MF_ERR[$id]=""
+  MF_SRCS[$id]="" MF_COPIES[$id]="" MF_OFF[$id]="" MF_DIRS[$id]="" MF_ERR[$id]="" MF_INVALID[$id]=""
   if [[ -z "${MF_ROWS[$id]}" ]]; then
     MF_LINKS[$id]="${SPACE_FILES[$id]}"
     return 0
@@ -1187,7 +1187,7 @@ _mf_plan() {
     return 0
   fi
   MF_LINKS[$id]="$ANFS_MF_LINKS" MF_SRCS[$id]="$ANFS_MF_SRCS" MF_COPIES[$id]="$ANFS_MF_COPIES"
-  MF_OFF[$id]="$ANFS_MF_OFF" MF_DIRS[$id]="$ANFS_MF_DIRS"
+  MF_OFF[$id]="$ANFS_MF_OFF" MF_DIRS[$id]="$ANFS_MF_DIRS" MF_INVALID[$id]="$ANFS_MF_INVALID"
 }
 
 # Whether <home> is a space's directory wsm may act in: set, absolute, strictly below the root (which
@@ -1204,19 +1204,23 @@ _home_ok() {
 
 # The links out of the tree of space <id> (its manifest's src: entries for this platform):
 # LK_SRC, LK_DEST (relative to the space's directory) and LK_STATE (anfs_link_src_state: ok,
-# missing, missing src, wrong, in the way)
-LK_SRC=() LK_DEST=() LK_STATE=()
+# missing, missing src, wrong, in the way; invalid: an entry wrong on its own, an unset variable
+# and the like, its src as written and LK_WHY why: skipped, the rest made)
+LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
 _links_eval() {
-  local id="$1" home dest src
-  LK_SRC=() LK_DEST=() LK_STATE=()
+  local id="$1" home dest src why
+  LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
   _mf_plan "$id"
-  [[ -n "${MF_SRCS[$id]:-}" ]] || return 0
   _home_of "$id"
   home="$REPLY"
   while IFS=$'\t' read -r dest src; do
     [[ -n "$dest" ]] || continue
-    LK_SRC+=("$src") LK_DEST+=("$dest") LK_STATE+=("$(anfs_link_src_state "$home/$dest" "$src")")
-  done <<< "${MF_SRCS[$id]}"
+    LK_SRC+=("$src") LK_DEST+=("$dest") LK_STATE+=("$(anfs_link_src_state "$home/$dest" "$src")") LK_WHY+=("")
+  done <<< "${MF_SRCS[$id]:-}"
+  while IFS=$'\t' read -r dest src why; do
+    [[ -n "$dest" ]] || continue
+    LK_SRC+=("$src") LK_DEST+=("$dest") LK_STATE+=(invalid) LK_WHY+=("$why")
+  done <<< "${MF_INVALID[$id]:-}"
 }
 
 # Make the links out of the tree of space <id>, relative (anfs_link_one). What is there and right
@@ -1239,6 +1243,11 @@ _space_links() {
     rel="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$d"
     case "$st" in
       ok) continue ;;
+      invalid)
+        warn "invalid link in $id, skipped: ${LK_WHY[$i]} (src: ${LK_SRC[$i]})"
+        failed=$((failed + 1))
+        continue
+        ;;
       "missing src")
         echo "  missing src $d -> $(_display "${LK_SRC[$i]}") (not linked)"
         continue
@@ -1274,6 +1283,7 @@ _remove_links() {
   home="$REPLY"
   _home_ok "$home" || return 0
   for i in "${!LK_DEST[@]}"; do
+    [[ "${LK_STATE[$i]}" != invalid ]] || continue
     anfs_unlink_src "$home/${LK_DEST[$i]}" "${LK_SRC[$i]}"
     [[ "${LK_DEST[$i]}" != */* ]] || _rmdir_empty_up "$home/${LK_DEST[$i]%/*}" "$home"
   done

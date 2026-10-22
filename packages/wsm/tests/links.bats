@@ -39,23 +39,31 @@ EOF
   [[ "$output" == *$'\tok\t'* ]]
 }
 
-@test "an unset variable, a dest with .. or a leading / make the space invalid; nothing is linked" {
+@test "an unset variable, a dest with .. or a leading /: that entry invalid and skipped, the rest installed; exit 1" {
   unset WSM_T_NOPE
-  space_def acme tech <<'EOF'
+  space_def acme tech <<EOF
 links:
-  - src: $WSM_T_NOPE/x
+  - src: \$WSM_T_NOPE/x
   - {src: /tmp, dest: ../out}
   - {src: /tmp, dest: /abs}
+  - {src: $T/target, dest: good}
 EOF
   run wsm install acme/tech
   [ "$status" -eq 1 ]
-  [[ "$output" == *"invalid space.yml, acme/tech not installed:"* ]]
-  [[ "$output" == *'$WSM_T_NOPE is not set'* ]]
+  [[ "$output" == *'invalid link in acme/tech, skipped: $WSM_T_NOPE is not set'* ]]
   [[ "$output" == *"dest must stay inside the target: '../out'"* ]]
   [[ "$output" == *"dest must stay inside the target: '/abs'"* ]]
-  [ ! -e "$T/out" ] && [ ! -e /abs ] && [ ! -e "$H/space.yml" ]
+  [ ! -e "$T/out" ] && [ ! -e /abs ]
+  [ -L "$H/space.yml" ]
+  points "$H/good" "$T/target"
+  # list: the space ok (an invalid entry is not counted), the entry invalid in --json
   run wsm ls acme/tech
-  [[ "$output" == *$'\tinvalid\t'* ]]
+  [[ "$output" == *$'\tok\t'* ]]
+  run links_json
+  [ "${lines[0]}" = "good|$T/target|ok" ]
+  [ "${lines[1]}" = 'x|$WSM_T_NOPE/x|invalid' ]
+  wsm remove -y acme/tech >/dev/null
+  [ ! -L "$H/good" ]
 }
 
 @test "a relative src is from the space's directory; the link is relative" {

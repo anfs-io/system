@@ -22,12 +22,13 @@
 #   platforms: macos, linux (any distro), debian, fedora; on the manifest it is the whole
 #     package's (the tool's business), on an entry that entry's
 #
+# One src: entry that cannot be (an unset variable, a relative src in a package.yml, a dest outside
+# the target, a link to /) is only that entry: ANFS_MF_INVALID, skipped, the rest placed.
 # Refused (every one listed, ANFS_MF_ERR; the manifest is invalid): a links: string without a
 # trailing /; a path or files: entry not in the tree, absolute or with ..; a trailing / on what is
 # not a directory; a files: entry that is a directory; a directory link inside another, a platform
 # entry or a files: entry inside a directory link; the same path twice; an unknown platform or
-# platforms: []; a map with both path and src or neither, or another key; a dest outside the
-# target; a relative src where ANFS_MF_SRC_BASE is not set (a package.yml); a kind the tool does not
+# platforms: []; a map with both path and src or neither, or another key; a kind the tool does not
 # take (ANFS_MF_KINDS, default "dir path src file": each tool says which it accepts).
 #
 #   anfs_manifest_read  <yml>...       one yq over all of them (one at a time only if that fails);
@@ -49,6 +50,9 @@
 #   ANFS_MF_COPIES   paths for files.sh
 #   ANFS_MF_OFF      "<path>\t<platforms>" filtered out on this platform (a directory with its /)
 #   ANFS_MF_DIRS     the directory links that apply here, alone
+#   ANFS_MF_INVALID  "<dest>\t<src as written>\t<why>": a src: entry wrong on its own (an unset
+#                    variable, a relative src where none may be, a dest outside the target, a link
+#                    to /): skipped and said by the tool, while the rest is placed
 #   ANFS_MF_ERR      one line per refusal; the plan returns 2 when there is any (the rest unset)
 
 ANFS_MF_PLATFORMS="macos linux debian fedora"
@@ -207,7 +211,7 @@ anfs_manifest_plan() {
   local rows="$1" tree="$2" plat="$3" ff="${4:-}" nl='
 ' tab='	'
   local line kind p dest pcsv i c x seen="$nl" dirs="" inside="" offp="" excl="$nl" kinds what
-  ANFS_MF_LINKS="" ANFS_MF_SRCS="" ANFS_MF_COPIES="" ANFS_MF_OFF="" ANFS_MF_DIRS="" ANFS_MF_ERR=""
+  ANFS_MF_LINKS="" ANFS_MF_SRCS="" ANFS_MF_COPIES="" ANFS_MF_OFF="" ANFS_MF_DIRS="" ANFS_MF_ERR="" ANFS_MF_INVALID=""
   kinds=" ${ANFS_MF_KINDS:-dir path src file} "
 
   while IFS= read -r line; do
@@ -335,13 +339,23 @@ _anfs_mf_err() {
 }
 
 # One src: entry checked, made absolute and normalised, its dest worked out; ANFS_MF_SRCS or
-# ANFS_MF_OFF gets it. _ANFS_P is the dest. 1 on a refusal.
+# ANFS_MF_OFF gets it. _ANFS_P is the dest. What is wrong with this one entry (an unset variable, a
+# relative src where none may be, a dest outside the target, a link to /) does not refuse the
+# manifest: the entry goes to ANFS_MF_INVALID, skipped, and the rest is placed. 1 when it is not
+# placed.
 # Usage: _anfs_mf_src <src> <dest> <platforms csv> <platform> <seen>
 _anfs_mf_src() {
-  local raw="$1" dest="$2" pcsv="$3" plat="$4" seen="$5" src nl='
+  local raw="$1" dest="$2" pcsv="$3" plat="$4" seen="$5" src d nl='
 ' tab='	'
+  d="${dest:-${raw%/}}"; d="${d##*/}"
+  [ -z "$dest" ] || d="$dest"
+  # another platform's entry is only off, whatever it says
+  if [ -n "$pcsv" ] && ! anfs_manifest_match "$plat" "$pcsv"; then
+    ANFS_MF_OFF="$ANFS_MF_OFF$d$tab$pcsv$nl"
+    return 1
+  fi
   if ! _anfs_mf_expand "$raw"; then
-    _anfs_mf_err "\$$_ANFS_P is not set (src: $raw)"
+    _anfs_mf_bad "$d" "$raw" "\$$_ANFS_P is not set"
     return 1
   fi
   src="$_ANFS_P"
@@ -349,7 +363,7 @@ _anfs_mf_src() {
     /*) ;;
     *)
       if [ -z "${ANFS_MF_SRC_BASE:-}" ]; then
-        _anfs_mf_err "a src: here is absolute, or starts with ~ or a variable: $raw"
+        _anfs_mf_bad "$d" "$raw" "a src: here is absolute, or starts with ~ or a variable"
         return 1
       fi
       src="$ANFS_MF_SRC_BASE/$src"
@@ -357,19 +371,21 @@ _anfs_mf_src() {
   esac
   _anfs_link_norm "$src"
   src="$_ANFS_P"
-  [ "$src" != / ] || { _anfs_mf_err "a link to / is not one (src: $raw)"; return 1; }
+  [ "$src" != / ] || { _anfs_mf_bad "$d" "$raw" "a link to / is not one"; return 1; }
   [ -n "$dest" ] || dest="${src##*/}"
   while :; do case "$dest" in */) dest="${dest%/}" ;; *) break ;; esac; done
   if ! _anfs_mf_path "$dest" || [ "$_ANFS_P" = . ]; then
-    _anfs_mf_err "dest must stay inside the target: '$dest' (src: $raw)"
+    _anfs_mf_bad "$dest" "$raw" "dest must stay inside the target: '$dest'"
     return 1
   fi
   dest="$_ANFS_P"
   case "$seen" in *"$nl$dest$nl"*) _anfs_mf_err "the same path twice: $dest"; return 1 ;; esac
-  if [ -z "$pcsv" ] || anfs_manifest_match "$plat" "$pcsv"; then
-    ANFS_MF_SRCS="$ANFS_MF_SRCS$dest$tab$src$nl"
-  else
-    ANFS_MF_OFF="$ANFS_MF_OFF$dest$tab$pcsv$nl"
-  fi
+  ANFS_MF_SRCS="$ANFS_MF_SRCS$dest$tab$src$nl"
   _ANFS_P="$dest"
+}
+
+# One invalid entry: "<dest>\t<src as written>\t<why>" into ANFS_MF_INVALID
+_anfs_mf_bad() {
+  ANFS_MF_INVALID="$ANFS_MF_INVALID$1	$2	$3
+"
 }

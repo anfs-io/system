@@ -520,14 +520,17 @@ help` documents the commands.
     stay inside the space. Made **relative** with `anfs_link_one`; an absolute link that resolves
     to `src` (one made before) reads `ok` and is not rewritten. States (`anfs_link_src_state`):
     `ok`, `missing`, `missing src` (said at install, not made, not a failure, not counted),
-    `wrong` (a link elsewhere), `in the way`. Install makes them after the clones; `wrong` and `in
+    `wrong` (a link elsewhere), `in the way`, `invalid` (an entry wrong on its own: an unset
+    variable, a `dest` that leaves the space, a link to `/`; warned and skipped, the rest of the
+    space installed, `wsm install` exits 1; not counted in `wsm ls`'s NOTE, in `--json`'s
+    `links`). Install makes them after the clones; `wrong` and `in
     the way` fail the entry, `-f` moves them aside as for files. `remove` deletes one only while it
     still resolves to `src`. They overlap with ovm's vault links into a space; a dest and an ovm
     link at one path meet as `in the way` on whichever comes second.
   - `files:` are copied when missing (after the links, before the clones), never touched again,
     left by `remove`. A missing or in-the-way copy counts in `wsm ls` (`partial`); one that
     differs does not. `wsm ls <id> --json` adds `copies: [{path, status}]`.
-  - A refused manifest (every refusal of a package's, an unset variable included, plus wsm's own:
+  - A refused manifest (every refusal of a package's, plus wsm's own:
     a directory link that holds, is or lies in a child space or a repository; a directory link
     at a hidden directory when the space declares `skills:`, where the CLI writes; `space.yml` in
     `files:` or a path entry) makes the space `invalid` in `wsm ls` (its first error the NOTE) and
@@ -832,7 +835,7 @@ files:
 | --- | --- |
 | `<dir>/` | the directory as **one link** at the same path: a file added upstream is there after a pull, no reinstall |
 | `{path, platforms}` | only on those platforms: a file; a directory without `/` per file; with `/` one link |
-| `{src, dest?, platforms?}` | a link at `dest` (default: `src`'s basename) to `src`, relative; `~` and `$NAME`/`${NAME}` expanded (no eval; unset is an error); `src` must be absolute here (a space's may be relative); `missing src` is said, not made |
+| `{src, dest?, platforms?}` | a link at `dest` (default: `src`'s basename) to `src`, relative; `~` and `$NAME`/`${NAME}` expanded (no eval); `src` must be absolute here (a space's may be relative); `missing src` is said, not made. An entry wrong on its own (an unset variable, a relative `src`, a `dest` outside `$HOME`, a link to `/`) is `invalid`: said (`ppm_fail`, `-n` and `ppm show` list it), skipped, the rest of the package installed |
 | `files:` `<path>` or `{path, platforms}` | copied (mode kept) when nothing is there, never again; `-n` says `differs` when yours changed; remove leaves it |
 
 - `platforms:` is `macos`, `linux` (any distro), `debian`, `fedora`, matched as the package's own.
@@ -842,8 +845,8 @@ files:
   default does not), a path not in `home/`, absolute or with `..`, a trailing `/` on a file, a
   `files:` directory, a directory link inside another, **a platform entry or a `files:` entry
   inside a directory link** (it brings the whole directory), the same path twice, an unknown
-  platform or `platforms: []`, a map with both `path` and `src` (or neither, or another key), a
-  `dest` outside `$HOME`, a relative `src`. Checked wherever the manifest is read: `ppm install`
+  platform or `platforms: []`, a map with both `path` and `src` (or neither, or another key).
+  (A `src:` entry wrong on its own is only `invalid`, above.) Checked wherever the manifest is read: `ppm install`
   (and `-n`), `ppm show`.
 - **One plan** over the links, the copies and the links out of the tree before anything changes:
   everything in the way is in the one `WARNING! ... would cause conflicts` block. `-f` moves it

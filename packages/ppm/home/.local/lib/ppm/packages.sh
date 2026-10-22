@@ -657,6 +657,12 @@ _show_placement() {
     $shown || { echo "Placed:"; shown=true; }
     printf '  %s%s%s\n' "$label" "${plats:+  [$plats]}" "${state:+  ($state)}"
   done <<< "$rows"
+  # src: entries wrong on their own: skipped by install
+  while IFS=$'\t' read -r dest p line; do
+    [[ -n "$dest" ]] || continue
+    $shown || { echo "Placed:"; shown=true; }
+    printf '  ~/%s: invalid, skipped (%s; src: %s)\n' "$dest" "$line" "$p"
+  done <<< "$ANFS_MF_INVALID"
   # links out of the tree, their state from the plan's own expansion
   if $installed && [[ -n "$ANFS_MF_SRCS" ]]; then
     while IFS=$'\t' read -r dest p; do

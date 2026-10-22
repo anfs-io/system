@@ -265,11 +265,24 @@ op_pkg() {
   [[ "$output" == *"off       ~/vaults/apex  (linux)"* ]]
 }
 
-@test "src: a relative src is refused in a package.yml" {
-  pkg user obsidian "links: [{src: ../vault}]"
+@test "src: an entry with an unset variable (or a relative src) is invalid and skipped; the good one is linked" {
+  local vault="$BATS_TEST_TMPDIR/outside/apex"
+  mkdir -p "$vault"
+  unset PPM_T_UNSET
+  pkg user obsidian "links: [{src: \$PPM_T_UNSET/x, dest: bad}, {src: ../rel, dest: rel}, {src: '$vault', dest: good}]"
+  file user obsidian .obsrc o
+  dry_run=true run cmd_install user/obsidian
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'invalid   ~/bad  ($PPM_T_UNSET is not set (src: $PPM_T_UNSET/x); skipped)'* ]]
+  [[ "$output" == *"invalid   ~/rel  (a src: here is absolute"* ]]
+  [[ "$output" == *"link      ~/good  (-> $vault)"* ]]
   run cmd_install user/obsidian
-  [[ "$output" == *"invalid package.yml, not installed"*"a src: here is absolute"* ]]
-  [ ! -e "$PPM_INSTALLED_DIR/user/obsidian.yml" ]
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"[user/obsidian] ERROR: invalid link ~/bad, skipped: \$PPM_T_UNSET is not set"* ]]
+  [ -L "$HOME/good" ] && [ -L "$HOME/.obsrc" ] && [ ! -e "$HOME/bad" ] && [ ! -L "$HOME/bad" ]
+  [ "$(yq -r '.links[].dest' "$PPM_INSTALLED_DIR/user/obsidian.yml")" = good ]
+  run cmd_show user/obsidian
+  [[ "$output" == *"~/bad: invalid, skipped"* ]]
 }
 
 # --- files: ------------------------------------------------------------------------------------
