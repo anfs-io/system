@@ -30,7 +30,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.8.0
+WSM_VERSION=0.9.0
 
 # Paths, sources and the command line come from anfs
 if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
@@ -62,6 +62,10 @@ source "$ANFS_LIB_DIR/cli.sh"
 source "$ANFS_LIB_DIR/table.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB_DIR/config.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB_DIR/repo.sh"
+# shellcheck source=/dev/null
+source "$ANFS_LIB_DIR/move.sh"
 anfs_gitsrc_env
 anfs_tool_paths wsm
 
@@ -126,6 +130,7 @@ directories, for every detected agent (wsm install does this too)" \
 cli_cmd "skill remove" "Remove a space's declared skills from it (a SPEC), or one of them
 (<space id>/<name>); skills it does not declare stay" \
   --alias rm --opt "-y --yes: Do not ask before removing" --arg "spec..."
+anfs_move_cli space spec
 anfs_config_declare
 cli_standard
 
@@ -172,6 +177,11 @@ yours. repo ssh switches a clone's origin from GitHub https to ssh.
 
 Nothing is recorded: list reads the state off the links (ok, partial with what is missing, wrong,
 in the way or left over, or not in the source).
+
+move takes a space and every space under it to another source, with its history (commits in
+both, nothing pushed); when it is installed its directory moves too, clones and your files
+inside untouched, and its links are made again. Ids are not rewritten: what names the old id (a
+depends:, a stack, an ovm vault link) is listed by the check, and is yours to edit.
 
 QUERY (cd, path) is an installed id, or the end of one (web, tech/web); failing those, a source
 names its directory. An ambiguous query exits 2.
@@ -1628,6 +1638,195 @@ cmd_remove() {
   return "$rc"
 }
 
+# --- move ---------------------------------------------------------------------------------
+#
+# `wsm move <source/path> <to-source> [-n] [-f]`: a space, and every space under it (its directory
+# in the source holds them), moves to another source with its history (lib/anfs/move.sh: commits
+# in both, nothing pushed). When it is installed, its directory under the root moves too, in one
+# rename (the clones, the user's files and the copies go with it untouched), and the links are
+# made again from the new source. Ids are not rewritten anywhere: a dependency, a stack or an ovm
+# vault link that names <from>/<path> is listed by the check and edited by the person.
+
+# A relative links: src or skills: repo of space <id> that leaves the moved directory <top> (a
+# path below spaces/): what it names would be another source's after the move. One line each.
+_move_escapes() {
+  local id="$1" top="$2" line kind path repo names tag base
+  _meta_load "$id"
+  while IFS=$'\t' read -r _ kind path _; do
+    [[ "$kind" == src ]] || continue
+    case "$path" in /*|"~"*|'$'*) continue ;; esac
+    # a links: src is relative to the space's directory under the root, which mirrors the source
+    base="${SPACE_PATH[$id]}"
+    _anfs_link_norm "/$base/$path"
+    [[ "$_ANFS_P" == "/$top" || "$_ANFS_P" == "/$top"/* ]] || printf '%s: links: src %s\n' "$id" "$path"
+  done <<< "${MF_ROWS[$id]:-}"
+  while IFS="$ANFS_US" read -r repo names tag; do
+    case "$repo" in .|./*|../*) ;; *) continue ;; esac
+    _anfs_link_norm "/${SPACE_PATH[$id]}/$repo"
+    [[ "$_ANFS_P" == "/$top" || "$_ANFS_P" == "/$top"/* ]] || printf '%s: skills: repo %s\n' "$id" "$repo"
+  done <<< "${META_SKILLS[$id]:-}"
+}
+
+# The clones under space <id>'s directory, one path a line
+_move_clones() {
+  local url path ref home
+  home=$(_space_home "$1")
+  while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+    [[ -e "$home/$path/.git" ]] && printf '%s\n' "$path"
+  done < <(_repo_entries "${SPACE_DIR[$1]}/space.yml")
+}
+
+# How many working trees a clone has (itself included)
+_move_worktrees() { git -C "$1" worktree list --porcelain 2>/dev/null | grep -c '^worktree ' || true; }
+
+cmd_move() {
+  local id="${1%/}" to="${2%/}" dry=${CLI_OPT[dry-run]:-false} force=${CLI_OPT[force]:-false}
+  local from p parent rc=0 i x c n bad="" installed=false
+  local -a fl=() moved=() was=() news=() clones=()
+  $force && fl=(-f)
+  _spec_ok "$id"
+  _require_yq
+  _spaces_load
+  _root_load
+  from="${id%%/*}"
+  if [[ "$id" != */* ]]; then
+    anfs_is_source "$id" &&
+      fail "$EX_USAGE" "$id is a source's root space: its directory is the source's whole spaces/; move the spaces under it instead"
+    fail "$EX_USAGE" "'$id' names no source: wsm move <source>/<path> <to-source>"
+  fi
+  anfs_is_source "$from" || fail "$EX_USAGE" "'$id' names no source: wsm move <source>/<path> <to-source>"
+  [[ -n "${SPACE_DIR[$id]:-}" ]] || fail "$EX_NOTFOUND" "no space $id (wsm ls)"
+  p="${SPACE_PATH[$id]}" parent=""
+  [[ "$p" != */* ]] || parent="${p%/*}"
+  # The space and those under it, parents first
+  for x in "${SPACE_IDS[@]}"; do
+    [[ "${SPACE_SRC[$x]}" == "$from" ]] || continue
+    [[ "${SPACE_PATH[$x]}" == "$p" || "${SPACE_PATH[$x]}" == "$p"/* ]] && moved+=("$x")
+  done
+  mapfile -t moved < <(for x in "${moved[@]}"; do printf '%s\t%s\n' "${#x}" "$x"; done | sort -n | cut -f2-)
+
+  anfs_move_check "${fl[@]}" spaces "$id" "$to" _space_deps || rc=$?
+  if (( rc != 0 )); then
+    if (( rc == 1 )); then warn "move refused: -f moves despite what it says"; else warn "move refused"; fi
+    return "$rc"
+  fi
+
+  # wsm's own refusals, before anything changes
+  _state_load true "$from"
+  for x in "${moved[@]}"; do
+    [[ -n "${INSTALLED[$x]:-}" ]] || continue
+    installed=true was+=("$x")
+    _space_counts "$x"
+    (( C_WRONG + C_WAY + C_LEFT == 0 )) ||
+      bad+="  $x: $REPLY (wsm install -f $x first, so the relink meets nothing)"$'\n'
+  done
+  local home="$ROOT/$from/$p" dest="$ROOT/$to/$p" q=""
+  if $installed || [[ -d "$home" ]]; then
+    installed=true
+    if [[ -e "$dest" || -L "$dest" ]]; then
+      bad+="  $(_display "$dest") is there already"$'\n'
+    else
+      for x in "" ${parent//\// }; do
+        q+="${x:+/$x}"
+        if [[ -L "$ROOT/$to$q" || ( -e "$ROOT/$to$q" && ! -d "$ROOT/$to$q" ) ]]; then
+          bad+="  $(_display "$ROOT/$to$q") is in the way (not a directory)"$'\n'
+          break
+        fi
+      done
+    fi
+  fi
+  if [[ -n "$bad" ]]; then
+    printf '%s' "$bad" >&2
+    warn "move refused"
+    return 1
+  fi
+  # Relative paths out of the moved directory, in the check's form
+  local esc="" st=refused
+  $force && st=forced
+  for x in "${moved[@]}"; do esc+="$(_move_escapes "$x" "$p")"$'\n'; done
+  while IFS= read -r x; do
+    [[ -z "$x" ]] || printf '%s\tpaths\t%s: relative, out of %s, so another source'"'"'s after the move\n' "$st" "$x" "$id"
+  done <<< "$esc"
+  if [[ -n "${esc//$'\n'/}" ]] && ! $force; then
+    warn "move refused: -f moves despite what it says"
+    return 1
+  fi
+
+  for x in "${moved[@]}"; do news+=("$to${SPACE_PATH[$x]:+/${SPACE_PATH[$x]}}"); done
+  if $installed; then
+    for x in "${was[@]}"; do
+      while IFS= read -r c; do [[ -z "$c" ]] || clones+=("$(_space_home "$x")/$c"); done < <(_move_clones "$x")
+    done
+  fi
+
+  if $dry; then
+    anfs_move_tree -n spaces "$id" "$to" || return 1
+    if $installed; then
+      printf '%-8s %s -> %s (%d clone%s inside, untouched)\n' move "$(_display "$home")" "$(_display "$dest")" \
+        "${#clones[@]}" "$([[ ${#clones[@]} -eq 1 ]] || echo s)"
+      local rl=""
+      for x in "${was[@]}"; do
+        _files_of "$x"
+        rl+="${rl:+; }$x: ${#FILES[@]} links"
+      done
+      printf '%-8s %s\n' relink "$rl"
+      for c in ${clones[@]+"${clones[@]}"}; do
+        n=$(_move_worktrees "$c")
+        (( n > 1 )) && printf '%-8s %s (%d worktrees)\n' "worktree repair" "${c#"$home"/}" "$((n - 1))"
+      done
+      local -a nw=()
+      for i in "${!moved[@]}"; do [[ -z "${INSTALLED[${moved[$i]}]:-}" ]] || nw+=("${news[$i]}"); done
+      printf '%-8s wsm remove %s; install %s\n' events "${was[*]}" "${nw[*]}"
+    else
+      printf 'not installed: wsm install %s links it\n' "$to/$p"
+    fi
+    return 0
+  fi
+
+  anfs_move_tree spaces "$id" "$to" || return 1
+  if ! $installed; then
+    echo "not installed: wsm install $to/$p links it"
+    return 0
+  fi
+
+  # The installed directory, in one rename: the clones and the user's files go with it
+  if ! mkdir -p -- "$(dirname -- "$dest")" || ! mv -- "$home" "$dest"; then
+    fail 1 "the source moved, its directory under $(_display "$ROOT") did not: move $(_display "$home") to $(_display "$dest"), then wsm install $to/$p"
+  fi
+  [[ -z "$parent" ]] || _rmdir_empty_up "$ROOT/$from/$parent" "$ROOT"
+  _rmdir_empty_up "$ROOT/$from" "$ROOT"
+  echo "moved $(_display "$home") -> $(_display "$dest")"
+
+  # The links again, from the new source (a link dangling into the sources is replaced)
+  _spaces_reset
+  _spaces_load
+  _state_load true "$to"
+  local failed=0
+  for i in "${!moved[@]}"; do
+    _in_list "${moved[$i]}" "${was[@]}" || continue
+    x="${news[$i]}"
+    if [[ -z "${SPACE_DIR[$x]:-}" ]] || ! _install_space "$x" false false; then
+      failed=$((failed + 1))
+      continue
+    fi
+    INSTALLED[$x]=1
+    _space_links "$x" false false || failed=$((failed + 1))
+    _space_skills "$x" false || failed=$((failed + 1))
+    WSM_EV_REMOVED+=("${moved[$i]}") WSM_EV_INSTALLED+=("$x")
+  done
+
+  # Worktrees elsewhere (anfs work) name the clone's old path in their .git file
+  for c in ${clones[@]+"${clones[@]}"}; do
+    c="$dest${c#"$home"}"
+    n=$(_move_worktrees "$c")
+    (( n > 1 )) || continue
+    if git -C "$c" worktree repair >/dev/null 2>&1; then echo "  worktrees repaired: ${c#"$dest"/}"
+    else warn "worktrees of $(_display "$c") not repaired: git -C $(_display "$c") worktree repair"; fi
+  done
+  echo "ids are not rewritten: what names ${id} (a vault link of ovm's, a depends:) now names nothing"
+  (( failed == 0 )) || fail 1 "the source moved; wsm install $to/$p"
+}
+
 # Resolve a cd/path query into Q_DIR: an installed id; the installed ids that end in /<QUERY>; a
 # source (<source>/ or <source>) names <root>/<source>. Exits 1 on no match and 2 on several, so
 # it must be called directly, never in $(...).
@@ -2314,6 +2513,8 @@ complete_space() {
     [[ -L "$root/$id/space.yml" ]] && printf '%s\n' "$id"
   done < <(complete_spec)
 }
+# The sources (move's destination)
+complete_source() { gitsrc_collect 2>/dev/null; printf '%s\n' ${GITSRC_NAMES[@]+"${GITSRC_NAMES[@]}"}; }
 # What cd and path take: an installed space by id, or by its last segment
 complete_query() {
   local id
