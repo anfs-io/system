@@ -512,15 +512,27 @@ help` documents the commands.
   space is its space (`_repo_split`). Cloned with `anfs_repo_clone` (`lib/anfs/repo.sh`; a failed
   clone or checkout of the ref leaves nothing). Install never pulls (wsm never calls
   `anfs_repo_update`: what is checked out is the user's), and never deletes a clone.
-- **`space.yml`'s `links:`** (`[{src, dest?}]`): absolute links in the space's directory, `dest ->
-  src`. `src` has `~` and `$NAME`/`${NAME}` expanded from the environment (no `eval`; an unset
-  variable makes the entry `invalid`), and a relative one is from the space's directory; `dest`
-  defaults to `src`'s basename and must stay inside the space (`_repo_path_ok`'s rule). States:
-  `ok` (a link whose text is `src`), `missing`, `missing src` (said at install, not made, not a
-  failure, not counted), `wrong` (a link elsewhere), `in the way`, `invalid`. Install makes them
-  after the clones; `wrong` and `in the way` fail the entry, `-f` moves them aside as for files.
-  `remove` deletes one only while its text is still `src`. They overlap with ovm's vault links
-  into a space; a dest and an ovm link at one path meet as `in the way` on whichever comes second.
+- **`space.yml`'s `links:` and `files:`** are a package's vocabulary (`lib/anfs/manifest.sh`,
+  "package.yml" above), over the space's own files: `docs/` is one link, `{path, platforms}` only
+  on those platforms, `{src, dest?}` a link out of the tree, `files:` copies.
+  - `{src, dest?}`: `src` has `~` and `$NAME`/`${NAME}` expanded from the environment (no `eval`),
+    a relative one is from the space's directory; `dest` defaults to `src`'s basename and must
+    stay inside the space. Made **relative** with `anfs_link_one`; an absolute link that resolves
+    to `src` (one made before) reads `ok` and is not rewritten. States (`anfs_link_src_state`):
+    `ok`, `missing`, `missing src` (said at install, not made, not a failure, not counted),
+    `wrong` (a link elsewhere), `in the way`. Install makes them after the clones; `wrong` and `in
+    the way` fail the entry, `-f` moves them aside as for files. `remove` deletes one only while it
+    still resolves to `src`. They overlap with ovm's vault links into a space; a dest and an ovm
+    link at one path meet as `in the way` on whichever comes second.
+  - `files:` are copied when missing (after the links, before the clones), never touched again,
+    left by `remove`. A missing or in-the-way copy counts in `wsm ls` (`partial`); one that
+    differs does not. `wsm ls <id> --json` adds `copies: [{path, status}]`.
+  - A refused manifest (every refusal of a package's, an unset variable included, plus wsm's own:
+    a directory link that holds, is or lies in a child space or a repository; a directory link
+    at a hidden directory when the space declares `skills:`, where the CLI writes; `space.yml` in
+    `files:` or a path entry) makes the space `invalid` in `wsm ls` (its first error the NOTE) and
+    `wsm install` fails it with every error, nothing linked.
+  - The leftover walk never enters a directory link (a mirror that is a link is skipped).
 - **`space.yml`'s `skills:`** (`[{repo, skills?}]`): agent skills installed into the space's
   directory by the skills CLI (`lib/anfs/skill.sh` with the space's directory as the scope, `npx
   skills` without `-g`). `repo` is what the CLI takes (`owner/repo`, a URL, a path); a relative
@@ -556,8 +568,8 @@ help` documents the commands.
     a real directory (`_home_ok`), and `anfs_skill_cli` refuses a scope that is not an existing
     absolute directory (`cd ""` would leave the CLI in the cwd).
 - **`wsm install [SPEC...] [-n] [-f] [-y]` links, as ppm does** (`lib/anfs/link.sh`): each space's
-  files into `$WSM_SPACES_HOME/<source>/<path>/`, one relative link per file, so directories stay
-  real and a clone never lands in the source. Every file is linked but `.DS_Store`, `README.*`
+  files into `$WSM_SPACES_HOME/<source>/<path>/`, one relative link per file (a directory link one
+  link), so directories stay real and a clone never lands in the source. Every file is linked but `.DS_Store`, `README.*`
   and `.gitignore` included. Then its leftovers go, then its repositories are cloned. Several specs
   in one run (`anfs src install a b` passes every source to one `wsm install`); a prefix asks.
   With no SPEC, the space at `.`, which must hold a `space.yml`.
@@ -586,21 +598,24 @@ help` documents the commands.
     source` row.
   - The old `~/.local/state/wsm/installed/` trackers are neither read nor deleted.
 - **`wsm ls [SPEC]`**: `SPACE STATUS DIR NOTE`. STATUS is null (not installed), `ok`, `partial`
-  (NOTE counts `missing`, `wrong`, `in the way`, `leftover`; `links:` count in the first three),
-  or `not in the source`. `wsm ls <id> --json` adds `files: [{file, status}]` (the check's states
+  (NOTE counts `missing`, `wrong`, `in the way`, `leftover`; `links:` and `files:` count in the
+  first three), `invalid` (its manifest is refused; NOTE is the first error) or `not in the
+  source`. `wsm ls <id> --json` adds `files: [{file, status}]` (the check's states
   plus `leftover`, relative to the space) and `links: [{dest, src, status}]`. The installed
-  spaces' `links:` are read with one yq per run. `wsm status` is gone; drift across the machine is `anfs status` (linker plan 03).
+  spaces' `links:` are read with one yq per run. `copies` (`[{path, status}]`) is the space's
+  `files:`. `wsm status` is gone; drift across the machine is `anfs status` (linker plan 03).
 - **wsm acts only on what it derives from the source**: the spaces' files (links), their
-  leftovers, the repository paths, `links:` dests, the skill directories and lock the skills CLI
-  writes for declared skills, and `space.yml`. The user's files, their links and other
-  tools' (ovm's absolute links into vaults) are never listed, changed or removed.
+  leftovers, the repository paths, `links:` dests, `files:` copies (made when missing, never
+  changed or removed after), the skill directories and lock the skills CLI writes for declared
+  skills, and `space.yml`. The user's files, their links and other tools' (ovm's links into
+  vaults) are never listed, changed or removed.
 - **The tree mirrors the source, both ways.**
   - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
     below where you are (in the tree, or below a checkout's `spaces/`). It is installed when the
     nearest space around it is; a space made inside one takes the files below it, whose links are
     already right.
   - `wsm add` moves files from the tree into the source and links them back, relative
-    (`anfs_relpath`), so the next install's plan keeps them. The file's space (its nearest) must be
+    (`anfs_link_one`), so the next install's plan keeps them. The file's space (its nearest) must be
     installed. It never takes clones, repository paths, what the source's `.gitignore` ignores, or
     a file under no space; a copy where the source has the file goes back only when named.
   - `wsm repo ls [SPEC]` is the repositories' git state (`anfs_repo_status`), `wsm repo install
@@ -748,7 +763,7 @@ anfs except anfs's own (the sources, the lists, `anfs.conf`).
 
 One file configures the whole toolkit: `~/.config/anfs/anfs.conf` (shipped by `core/anfs`, so a
 higher layer — your `user/anfs` — can replace it) and `~/.config/anfs/anfs.local.conf` (this
-machine only, seeded by install.sh with `PPM_GROUP_ID`). Every tool loads them through
+machine only; install.sh seeds it with a header line). Every tool loads them through
 `lib/anfs/paths.sh` (`anfs_load_conf`):
 
 - Each variable is named for the tool that reads it: `PCM_HEALTH_TIMEOUT`, `HOMEBREW_*` (ppm);
@@ -768,8 +783,11 @@ Each package is a directory under `<repo>/packages/<n>/`, and every one has a `p
 packages/<n>/
   package.yml     # required: version, author, depends, categories...
   install.sh      # optional: pre/post_install hooks, OS-specific install
-  home/           # optional: stow target → $HOME
+  home/           # optional: linked into $HOME (the only directory of a package that is)
 ```
+
+A `macos/` or `linux/` beside `home/` is not linked and not warned about: what is per platform is
+said in `package.yml` (`links:`, below). `PPM_GROUP_ID` is gone.
 
 ### package.yml
 
@@ -793,6 +811,49 @@ depends:
 - `meta` — free-form map that ppm never reads, for other packages to read. `ai/*` agent packages
   declare `meta: {agent: <skills-cli-id>}` (one id or a list), which `psm` targets. Package
   metadata goes here rather than in a new top-level key, which would be a declared resource.
+
+**How the files are placed: `links:`, `files:`, `platforms:`** (`lib/anfs/manifest.sh`; the same
+vocabulary in a space's `space.yml`, see wsm). Everything under `home/` is linked file by file,
+relative, unless an entry says otherwise:
+
+```yaml
+platforms: [macos]                 # the whole package (unchanged)
+links:
+  - .local/lib/anfs/               # a directory (a trailing /), as one link
+  - {path: .ssh/config.d/99-op.conf, platforms: [macos]}     # only on those platforms
+  - {path: .config/mise/conf.d/op.toml, platforms: [linux]}
+  - {src: ~/Library/Mobile Documents/x/apex, dest: vaults/apex, platforms: [macos]}  # out of the tree
+files:
+  - .config/foo/defaults.conf      # copied when missing, never again: then it is yours
+  - {path: .config/foo/local.conf, platforms: [debian]}
+```
+
+| Entry | Means |
+| --- | --- |
+| `<dir>/` | the directory as **one link** at the same path: a file added upstream is there after a pull, no reinstall |
+| `{path, platforms}` | only on those platforms: a file; a directory without `/` per file; with `/` one link |
+| `{src, dest?, platforms?}` | a link at `dest` (default: `src`'s basename) to `src`, relative; `~` and `$NAME`/`${NAME}` expanded (no eval; unset is an error); `src` must be absolute here (a space's may be relative); `missing src` is said, not made |
+| `files:` `<path>` or `{path, platforms}` | copied (mode kept) when nothing is there, never again; `-n` says `differs` when yours changed; remove leaves it |
+
+- `platforms:` is `macos`, `linux` (any distro), `debian`, `fedora`, matched as the package's own.
+  What another platform's entry leaves out is `off` in `ppm install -n`.
+- **Refused** (the package is not installed, every error said; the rest of the run goes on): a
+  `links:` string without a trailing `/` or a `{path}` without platforms (they say nothing the
+  default does not), a path not in `home/`, absolute or with `..`, a trailing `/` on a file, a
+  `files:` directory, a directory link inside another, **a platform entry or a `files:` entry
+  inside a directory link** (it brings the whole directory), the same path twice, an unknown
+  platform or `platforms: []`, a map with both `path` and `src` (or neither, or another key), a
+  `dest` outside `$HOME`, a relative `src`. Checked wherever the manifest is read: `ppm install`
+  (and `-n`), `ppm show`.
+- **One plan** over the links, the copies and the links out of the tree before anything changes:
+  everything in the way is in the one `WARNING! ... would cause conflicts` block. `-f` moves it
+  aside (`_backup_file`; a whole directory where a directory link goes, when it holds only this
+  package's links); a copy that `differs` is never touched; nothing on the way (a file where a
+  directory goes, a link out of `$HOME`, a path through another package's directory link, a
+  directory holding another package's links) is ever cleared.
+- The tracker's `files` are the links made, a directory link as one path; `links:` holds the links
+  out of the tree (`{dest, src}`); copies are not recorded. All three join `PPM_SKIP_FILE`.
+- Each tool says which entry kinds it takes (`ANFS_MF_KINDS`); ppm and wsm take all of them.
 
 Software a package needs is declared, not installed from hooks:
 
@@ -820,14 +881,14 @@ cask:
   otherwise refuses the formula's dependencies from the same tap.
 - `ppm install` refuses packages whose `platforms` exclude this machine (`ppm install repo/` and `@category` skip them), then installs what is missing in one batch per manager before any hook runs: system packages (one sudo prompt), brew formulas, casks (on macOS and Linux). Only the Homebrew owner installs brew/cask; other users get the command to ask for.
 - A `system` map with entries for other distros but not this one (and no `linux` key) is an error.
-- Mise tools: stow `home/.config/mise/conf.d/<tool>.toml`; after stowing, ppm runs `mise install` for the tools named in the resolved packages' toml files. mise itself is a **core ppm component** — `install.sh` brews it alongside yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
+- Mise tools: link `home/.config/mise/conf.d/<tool>.toml`; after linking, ppm runs `mise install` for the tools named in the toml files the run's layers actually linked (`PPM_MISE_TOMLS`): a toml another platform's entry leaves out (stack/op's Linux-only `op.toml` on macOS) or that a higher layer replaced is not read. mise itself is a **core ppm component** — `install.sh` brews it alongside yq, and `core/anfs` ships its shell activation — so packages declare the *tools* they want and never `depends: [mise]`.
 - Trackers record the formulas/casks ppm installed (`installed_deps`). `ppm remove` uninstalls them when no other installed package recorded or declares them. System packages are never removed.
 - `-c` skips all of this, like hooks.
 
 ### Declared Resources (a package.yml key ppm core does not own)
 
-ppm owns `version`, `author`, `depends`, `platforms`, `categories`, `brew`, `cask`, `system`, `meta` and `onboard`
-(`PPM_CORE_KEYS` in `packages.sh`). **Any other top-level key is a declared resource**: during
+ppm owns `version`, `author`, `depends`, `platforms`, `categories`, `brew`, `cask`, `system`, `meta`, `onboard`,
+`links` and `files` (`PPM_CORE_KEYS` in `packages.sh`). **Any other top-level key is a declared resource**: during
 `install_single_package`, right after stow and before the `install_<os>`/`post_install` hooks, ppm
 calls `ppm_resource_<key> <repo> <package> <package_dir>` — a function another package contributes
 by stowing a file into `~/.local/lib/ppm/`. (wsm used to declare spaces this way, with a
@@ -1019,7 +1080,7 @@ The keys, which are the interface:
 | `wsm repo list` | `repository` (`<space id>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`, `invalid`), `url`, `ahead`, `space`, `path`, `dir` (the clone's path; null while its space is not installed) (the last four `--json` only) |
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
 | `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
-| `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url`, `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
+| `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url` (the clone's `origin`; the list's URL when it is not cloned), `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
@@ -1237,7 +1298,9 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
 
 ## Key Files
 
-- `~/.config/anfs/system.list` — default sources, shipped/stowed by `core/anfs` (don't edit)
+- `~/.config/anfs/system.list` — default sources, linked from `core/anfs` (don't edit: `anfs src
+  ssh` switches a system source's clone `origin` and leaves the list, whose URL is only used for
+  the first clone; `anfs src list` shows the origin)
 - `~/.config/anfs/user.list` — your sources (edited by `anfs src`); higher priority than system.list
 - `~/.local/share/anfs/sources/<alias>/` — one clone per source; a local-path source is a link here
 - `~/.cache/anfs/updated/<alias>` — each source's last successful clone/pull. `ppm install`,
@@ -1247,13 +1310,16 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   <repos>` line for them; `ANFS_QUIET_SKIPPED_REPOS=true` in `anfs.conf` moves it to `--debug`
 - `~/.config/anfs/anfs.conf` — settings for every tool (see Configuration)
 - `~/.config/anfs/anfs.local.conf` — machine-local settings (not committed)
-- `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, stowed files, `installed_deps`, `resources`)
+- `~/.local/state/ppm/installed/<repo>/<pkg>.yml` — per-package install tracker (version, timestamp, linked `files` — a directory link is one —, `links` out of the tree, `installed_deps`, `resources`)
 - `~/.local/state/ppm/installed/callbacks.yml` — packages registered for post-run callbacks (`ppm_register_callback`)
 - `~/.local/state/ppm/installed/protected.yml` — files `ppm file protect` detached from ppm; seeded into the installer's skip list so they are never re-linked
 - `~/.local/state/wsm/backup/` — what `wsm install -f` moved aside; wsm's only state (what is installed is read off the links)
 - `~/.local/bin/<tool>` — each stowed from its package (`core/anfs`, `core/ppm`, `core/pcm`, ...)
 - `~/.config/sh/*.sh`, `~/.config/zsh/*.zsh`, `~/.config/bash/*.bash` — package-contributed shell snippets (see Shell Integration). `ppm.*` and `mise.*` come from `core/ppm`, `anfs.sh` from `core/anfs`
-- `~/.local/lib/anfs/*.sh` — what every tool sources (paths, sources, resolve)
+- `~/.local/lib/anfs/` — what every tool sources (paths, sources, resolve, link, manifest, files,
+  platform): one link into `core/anfs` (`links: [.local/lib/anfs/]`), so a pulled library is there
+  at once. `~/.local/lib/{pcm,pmm}` are directory links too; `~/.local/lib/ppm` stays per file
+  (other packages write there)
 - `~/.local/lib/ppm/*.sh` — ppm's own libraries (stowed from `core/ppm`) plus package-contributed library extensions. Extensions add helpers for hooks (e.g. `stack/ruby`'s `install_gem`) or, for now, commands: a function named `cmd_foo`, registered with `cli_cmd`, becomes `ppm foo` (anfs-dev/dev's `ppm user`; new commands are `~/.local/bin/anfs-<name>`, run as `anfs <name>`)
 - `~/.cache/ppm/brew_last_update`
 - Each tool keeps its own state in its own XDG dirs: `$XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>`
@@ -1367,7 +1433,27 @@ directory into another, skipping a set, and says who a link points into.
   (`~/.local/bin/ppm -> ../../.local/share/anfs/sources/core/packages/ppm/home/.local/bin/ppm`), so
   an install stow made is taken over with no link rewritten, and `stow -D` still undoes one.
   Directories on the way are real; a directory on the way that is a link is followed only when it
-  resolves inside the target.
+  resolves inside the target **and not into the sources** (a directory link: a path through it
+  would write into a source's checkout, so it is a `conflict`, `inside a directory link: <owner>`,
+  never cleared; `anfs_unlink` never removes through one either).
+- **A path in a list may be a directory** (a directory link): planned, applied, checked and
+  unlinked as one link. A real directory there is a `conflict` (`a directory`, or `a directory,
+  with links into another package: <owner>` when it holds any, which ppm's `-f` does not clear).
+- **Relative everywhere, absolute only across `/`**: `anfs_link_text <link-dir> <target>` (both
+  canonical) is the relative path, or the target itself when the two share only `/` (a source on
+  another volume). The plan's and the check's texts follow it. Every link ppm, wsm and ovm make
+  goes through `link.sh` (`anfs_link_one` refuses when anything is at its path, a link or a
+  directory included).
+- **Links out of a tree**: `anfs_link_src_state <link> <src>` (`ok` whether relative or absolute,
+  `missing`, `missing src`, `wrong`, `in the way`) and `anfs_unlink_src` (only while it still
+  resolves to `src`), shared by ppm's and wsm's `{src}` entries.
+- **`lib/anfs/manifest.sh`** reads `links:`, `files:` and `platforms:` of any number of
+  `package.yml`/`space.yml` in one yq (`anfs_manifest_read`) and plans one for a platform
+  (`anfs_manifest_plan` → `ANFS_MF_LINKS`, `_SRCS`, `_COPIES`, `_OFF`, `_DIRS`, `_ERR`);
+  `anfs_manifest_match` is how platforms match. **`lib/anfs/files.sh`** is real files in a target:
+  copy-if-missing (`anfs_files_plan`/`_apply`: `missing`, `present`, `differs`, `in the way`,
+  `skip`; a copy is moved into place only if nothing appeared meanwhile), and the home of linker
+  plan 03's file operations.
 - **A plan, then the links.** `anfs_link_plan` classifies every file, one `<class>\t<path>[\t<detail>]`
   line each: `link`, `keep` (a relative link to this file), `replace` (a link into `<from>`
   that is absolute or points at another of its files, or a dangling link into the sources),
@@ -1396,10 +1482,11 @@ directory into another, skipping a set, and says who a link points into.
   and changes nothing: no pull, no brew, no hooks, no links, no tracker. It exits 1 when the
   install would stop. Hooks do not run, so a `pre_install` that moves a file aside (stack/bash's
   `.bashrc`) shows as a conflict.
-- ppm and wsm source `~/.local/lib/anfs/link.sh`, or the core clone's copy when it is not linked
-  yet (a pull brought it before `core/anfs` was installed again).
+- ppm and wsm source `~/.local/lib/anfs/{platform,link,manifest,files}.sh` and nothing else: the
+  directory is one link, so there is no fallback to the clone.
 - Tests: `packages/anfs/tests/link.bats` (the library, under `/bin/bash` too; the stow comparison
-  skips without stow), `packages/ppm/tests/backup.bats` and `plan.bats`.
+  skips without stow), `manifest.bats`, `files.bats`, `packages/ppm/tests/backup.bats`,
+  `plan.bats` and `manifest.bats`, `packages/wsm/tests/links.bats`.
 
 ## Your Customization Repo
 
@@ -1430,6 +1517,9 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 - `ppm file add <repo/package> <file...>` is `claim` for files no package owns yet (`ppm file claim <file...> --package repo/package`; `--package` accepts that form everywhere). The target is mandatory and the package is created if missing. Directories are refused: pass `dir/*` and let the shell expand it, so exactly the named files move. Directories are always real with a link per file, so files a tool creates there later stay local until added too.
 - **Never put a space in a package**: a space is a directory with a `space.yml` under a source's `spaces/`, and wsm links it into `WSM_SPACES_HOME` (and implode unlinks it). A space stowed by ppm would be files no tool can remove. Files in a wsm tree go into the source with `wsm add`, not `ppm file add`.
 - Protected files are refused by `claim`/`add` (unprotect first): claim would link them again.
+- A path inside a directory link (`~/.local/lib/anfs/x.sh`) is refused by `claim`, `add` and
+  `protect`: it is a file of the source itself ("inside core/anfs's directory link
+  ~/.local/lib/anfs").
 - `ppm file reset <file...>` deletes the claimed copy, restores the owner's link, and removes the claimant package if it becomes empty.
 - `ppm file protect <file...>` turns a package-managed symlink into a plain local copy (preserving its content) and records it in `protected.yml`. ppm then never re-links or force-removes it — including under `-f` — so you can customize it without a repo. The file is also dropped from its package's tracker.
 - `ppm file unprotect <file...>` removes it from `protected.yml`; the next `ppm install -f <package>` re-links it.
@@ -1470,7 +1560,13 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # every entry point; bash 3.2, like link.sh
   link.sh      # the linker (bash 3.2, in the bootstrap set): anfs_link_plan / anfs_link_apply
                # (<from> <to> <files-file> [skip-file]), anfs_link_check, anfs_unlink, anfs_unlink_tree,
-               # anfs_link_one, anfs_link_owner, anfs_relpath. See "Linking" below
+               # anfs_link_one, anfs_link_owner, anfs_relpath, anfs_link_text, anfs_link_src_state,
+               # anfs_unlink_src. See "Linking" below
+  manifest.sh  # links:, files:, platforms: of a package.yml or space.yml (bash 3.2, bootstrap set; yq):
+               # anfs_manifest_read, anfs_manifest_plan, anfs_manifest_match
+  files.sh     # real files in a target (bash 3.2, bootstrap set): anfs_files_plan / anfs_files_apply,
+               # copy-if-missing; the file operations of linker plan 03 go here
+  platform.sh  # platform() (macos/debian/fedora) and os() (macos/linux), bash 3.2, bootstrap set
   log.sh       # anfs_info/warn/die/fail/debug, the log file (anfs log), ANFS_DEBUG, ANFS_TRACE
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
   catalog.sh   # the definitions of one kind across the sources (pcm's services, pmm's images):
@@ -1513,15 +1609,16 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # first segment the source when it is one, and ANFS_RESOLVE_MARKER for the file a
                # resource directory must hold: wsm's spaces, lgat/tech/web and the root lgat)
 packages/ppm/home/.local/lib/ppm/
-  core.sh        # API for package hooks: os(), arch(), add_to_file(), remove_from_file(),
-                 # debug(), user_message(), ppm_fail()
-  platform.sh    # platform() (macos/debian/fedora), system_pkg_*() (apt/dnf), _system_sudo(), brew_prefix(), brew_env(), brew_owner(),
+  core.sh        # API for package hooks: arch(), add_to_file(), remove_from_file(),
+                 # debug(), user_message(), ppm_fail() (os() and platform() are lib/anfs/platform.sh's)
+  platform.sh    # system_pkg_*() (apt/dnf), _system_sudo(), brew_prefix(), brew_env(), brew_owner(),
                  # brew_is_owner(), brew_require_owner(), update_brew_if_needed()
   sources.sh     # collect_repos() (the sources holding packages/), update_ppm_if_needed()
   packages.sh    # list, show, path, deps; collect_packages(), find_package_dirs() and resolve_deps()
                  # (over resolve.sh), package.yml reads, install trackers
   installer.sh   # install (and install -n), remove; install_single_package(), remover(),
-                 # stow_package()/stow_subdir() (the plan, -f, then the links), unstow_package(),
+                 # stow_package() (the manifest, one plan over links, copies and links out of the tree,
+                 # -f, then all of them), plan_package() (-n), unstow_package(),
                  # PPM_SKIP_FILE, _backup_file(), _install_declared_resources()/
                  # _remove_declared_resources(), _reload_stowed_libs()
   file.sh        # file claim|reset|protect|unprotect (file_command), claims.yml, protected.yml
@@ -1550,18 +1647,20 @@ source "$HOME/.local/lib/anfs/bash.sh"
   providers (`lib/pcm/edges/*`), pmm's provisioners (`lib/pmm/provisioners/*`), the `pre-commit`
   hook. A library a tool sources needs no guard,
   and neither does a package's `install.sh`: ppm sources it, so it runs under ppm's bash.
-- `anfs` and `ppm` source it only if it exists. `lib/anfs` is stowed file by file, so a pulled
-  source has the file before an install links it, and those two are what repair that.
+- `anfs` and `ppm` source it only if it exists, a leftover of when `lib/anfs` was linked file by
+  file. It is one directory link now (core/anfs's `links:`), so a pulled library is there at once.
 - **The bootstrap set stays on 3.2**: `install.sh`, the four ppm libraries it sources
-  (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`), `lib/anfs/link.sh`
-  (`ANFS_BOOTSTRAP_LIBS`) and `bash.sh` itself.
+  (`PPM_BOOTSTRAP_LIBS`: `core.sh`, `platform.sh`, `file.sh`, `installer.sh`), lib/anfs's
+  `platform.sh`, `link.sh`, `manifest.sh` and `files.sh` (`ANFS_BOOTSTRAP_LIBS`) and `bash.sh`
+  itself.
   They run on a vanilla Mac before Homebrew's bash exists, so no bash 4+ syntax in them. Each says
   so in its header, and `packages/anfs/tests/bash.bats` parses them under `/bin/bash`. They may
   call functions from bash 5 libraries, as long as that only happens once the real `ppm` runs.
 - Code that predates the floor (wsm, ppm's `packages.sh`, pmm's `image.sh`) still uses parallel
   arrays. Convert it when it is next changed, not for its own sake.
-- **Do not run `ppm install -r core/anfs`** to pick up a new `lib/anfs` file. `-r` removes the
-  package first, which unlinks `lib/anfs`, and ppm cannot run without it to put it back.
+- **Do not run `ppm install -r core/anfs`**. `-r` removes the package first, which unlinks
+  `lib/anfs`, and ppm cannot run without it to put it back. A new `lib/anfs` file needs no install
+  at all: the directory is one link.
 
 **Every tool's command line is `cli.sh`'s**: see "The Command Line" above. An extension declares
 its commands where it defines them: `anfs-dev/dev`'s `container.sh` calls `cli_group container` and
@@ -1583,11 +1682,13 @@ change. Their helpers skip every test and `tests/all` leaves them out; the perso
 hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
+bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, manifest.sh, files.sh,
+                             # bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
-bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n
+bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:
+                             # (manifest.bats: platform, brew and mise stubbed)
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,

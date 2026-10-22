@@ -1,7 +1,7 @@
 # ppm — the package manager
 
 This package *is* ppm: the `ppm` command, its libraries (`~/.local/lib/ppm`) and its shell
-integration all live under `home/` and are stowed onto the machine exactly like any other
+integration all live under `home/` and are linked onto the machine exactly like any other
 package's files. It is one of the anfs toolkit's two base packages, with
 [`anfs`](../anfs/README.md), which holds the source list and `anfs.conf` ppm reads.
 
@@ -63,7 +63,32 @@ stows them back. It takes files, not directories — `ppm file add spaces/frank 
 what the shell expanded is moved. `reset` undoes it, leaving plain files behind.
 
 `ppm file reset` and `ppm file unprotect` walk each of those back. None of them touch git; the
-commits in your repo are yours to make.
+commits in your repo are yours to make. A file inside a directory a package links whole
+(`~/.local/lib/anfs/`, below) is the package's own file in its checkout: claim, add and protect
+refuse it.
+
+## How a Package Is Placed
+
+Everything under a package's `home/` is linked into `$HOME`, one relative link per file, unless its
+`package.yml` says otherwise. `home/` is the only directory linked; what differs per platform is
+said with `platforms:`, not with a `macos/` or `linux/` directory:
+
+```yaml
+links:
+  - .local/lib/anfs/                               # the directory as one link
+  - {path: .ssh/config.d/99-op.conf, platforms: [macos]}   # only on macOS
+  - {src: ~/Library/Mobile Documents/x/apex, dest: vaults/apex}   # a link out of the tree
+files:
+  - .config/foo/defaults.conf                      # copied when missing, then yours
+```
+
+A directory link means a file added to the package upstream is there after a pull, with no
+reinstall. A copy is made once; `ppm install -n` says `differs` when yours has changed, and it is
+never overwritten. `ppm install -n` also lists what this platform leaves out (`off`), and `ppm show`
+each entry with its platforms and state. A `package.yml` that says something it cannot mean (a
+file inside a directory link given its own platforms, a path that is not in `home/`, an unknown
+platform) is refused, with every error, and the package is not installed. The full table is core's
+AGENTS.md, "package.yml".
 
 ## Updates
 
