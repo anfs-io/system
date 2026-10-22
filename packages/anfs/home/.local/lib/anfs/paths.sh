@@ -89,12 +89,15 @@ anfs_tool_paths() {
 # default. A tool not installed has no files and contributes nothing.
 #
 # Format: NAME=value, one per line; blanks and # comments skipped; a leading `export ` allowed; one
-# pair of matching quotes around the value stripped; nothing expanded (a tool that takes ~ in a
-# path expands it itself: WSM_SPACES_HOME). Read, never sourced: a setting cannot run code.
+# pair of matching quotes around the value stripped. The loader expands one thing: a value that is
+# exactly ~, or starts with ~/, has that ~ replaced by $HOME (quoted or not). Nothing else: no
+# $VAR, no ~user, no globbing, no ~ past the start. Read, never sourced: a setting cannot run code.
 #
 # The API (plan 02's `config` command and pcm's per-container settings build on it):
 #   anfs_conf_files <tool>     the two paths, local first (they need not exist)
-#   anfs_conf_read <file>      NAME<TAB>value per setting line, in file order; nothing exported
+#   anfs_conf_read <file>      NAME<TAB>value per setting line, in file order, as written (~ kept);
+#                              nothing exported
+#   anfs_conf_expand <value>   the value as the loader exports it (~ and ~/ to $HOME), into REPLY
 #   anfs_conf_env_only <name>  0 for a name only the environment may set (anfs_load_conf skips it)
 #   anfs_load_conf [tool]      export the tool's settings (no tool, or anfs: anfs's own)
 
@@ -143,6 +146,16 @@ _anfs_conf_parse() {
   done < "$1"
 }
 
+# A leading ~ (the whole value, or ~/...) to $HOME; nothing else. Into REPLY (no fork).
+# Usage: anfs_conf_expand <value>
+anfs_conf_expand() {
+  case "$1" in
+    "~")   REPLY="$HOME" ;;
+    "~/"*) REPLY="$HOME/${1#\~/}" ;;
+    *)     REPLY="$1" ;;
+  esac
+}
+
 # Usage: anfs_conf_read <file>
 anfs_conf_read() {
   local i
@@ -153,7 +166,8 @@ anfs_conf_read() {
 }
 
 # Export a tool's settings: <tool>.local.env, then <tool>.env, each name only where nothing has
-# set it yet, so the environment wins over this machine's file, which wins over the shipped one.
+# set it yet, so the environment wins over this machine's file, which wins over the shipped one;
+# a leading ~ expanded (anfs_conf_expand).
 # paths.sh runs it for anfs when sourced; anfs_tool_paths <tool> for the tool. A second call loads
 # nothing new. A line naming an environment-only variable is skipped with one warning.
 # A package hook that needs its tool's setting calls it itself: hooks run inside ppm, which has
@@ -172,7 +186,8 @@ anfs_load_conf() {
         continue
       fi
       [[ -n "${!name+x}" ]] && continue
-      export "$name=${_ANFS_CONF_VALUES[$i]}"
+      anfs_conf_expand "${_ANFS_CONF_VALUES[$i]}"
+      export "$name=$REPLY"
     done
   done
 }

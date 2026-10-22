@@ -166,3 +166,37 @@ PCM_HEALTH_TIMEOUT no" ]
   [ "${lines[0]}" = "none" ]
   [ "${lines[1]}" = "86400" ]
 }
+
+@test "the loader expands a leading ~/ and a lone ~ to \$HOME, nothing else; anfs_conf_read keeps them" {
+  cat > "$XDG_CONFIG_HOME/pcm/pcm.env" <<'X'
+PCM_A=~/mnt
+PCM_B="~/quoted dir"
+PCM_C=~
+PCM_D=~user/x
+PCM_E=a/~/b
+PCM_F=$HOME/x
+PCM_G=~/*.txt
+PCM_H='~'
+PCM_I=~x
+X
+  in_paths 'anfs_tool_paths pcm; for n in A B C D E F G H I; do v=PCM_$n; echo "$n=${!v}"; done'
+  [ "$status" -eq 0 ]
+  [ "$output" = "A=$HOME/mnt
+B=$HOME/quoted dir
+C=$HOME
+D=~user/x
+E=a/~/b
+F=\$HOME/x
+G=$HOME/*.txt
+H=$HOME
+I=~x" ]
+  in_paths "anfs_conf_read '$XDG_CONFIG_HOME/pcm/pcm.env' | head -3"
+  [ "$output" = "$(printf 'PCM_A\t~/mnt\nPCM_B\t~/quoted dir\nPCM_C\t~')" ]
+}
+
+@test "anfs_conf_expand: into REPLY" {
+  in_paths 'anfs_conf_expand "~/a"; echo "$REPLY"; anfs_conf_expand "~"; echo "$REPLY"; anfs_conf_expand "x~/"; echo "$REPLY"'
+  [ "$output" = "$HOME/a
+$HOME
+x~/" ]
+}

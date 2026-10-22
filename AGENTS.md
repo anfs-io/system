@@ -789,8 +789,10 @@ Each tool owns its settings, beside its other config (`lib/anfs/paths.sh`, "Sett
   tool runs (pcm's edges, pmm's provisioners) sees them.
 - **Format**: `NAME=value` lines, read and never sourced: a setting can't run code or clobber a
   variable a tool set itself. Blanks and `#` comments skipped, a leading `export ` allowed, one
-  pair of matching quotes stripped, nothing expanded (a tool that takes `~` in a path expands it
-  itself: `WSM_SPACES_HOME`).
+  pair of matching quotes stripped. **One expansion**: a value that is exactly `~`, or starts with
+  `~/`, has that `~` replaced by `$HOME` when loaded (`anfs_conf_expand`); nothing else (no
+  `$VAR`, no `~user`, no globbing, no `~` past the start), so `REMOTEFS_MOUNT_HOME=~/mnt` works
+  and `$HOME/mnt` does not. `anfs_conf_read` returns values as written.
 - **Environment-only** (`anfs_conf_env_only`): every `*_{CONFIG,DATA,STATE,CACHE}_HOME` (they
   locate the files: `PCM_CONFIG_HOME` pointed at a temp dir moves pcm's two files there),
   `ANFS_WORK`, `ANFS_WORK_HOME`, `ANFS_WORK_TMP`. A line naming one is ignored with a warning
@@ -800,7 +802,8 @@ Each tool owns its settings, beside its other config (`lib/anfs/paths.sh`, "Sett
   `*_BASH_REEXEC`, `*_LIB`, `*_BIN`) are not settings and are not listed.
 - The API, for code that reads or writes the files (plan 02's `config` command, pcm's
   per-container settings): `anfs_conf_files <tool>` (the two paths, local first),
-  `anfs_conf_read <file>` (`NAME<TAB>value` per line, nothing exported), `anfs_conf_env_only
+  `anfs_conf_read <file>` (`NAME<TAB>value` per line as written, nothing exported),
+  `anfs_conf_expand <value>` (what the loader exports, into `REPLY`), `anfs_conf_env_only
   <name>`, `anfs_load_conf [tool]`.
 - A layer (`user/anfs`) may ship its own `anfs.env`, which replaces core's whole; a machine's
   values belong in `anfs.local.env`. The one file for every tool's settings is gone: nothing
@@ -1624,7 +1627,7 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME, then
                # the tool's settings), the settings: anfs_load_conf [tool] (<tool>.local.env, then
                # <tool>.env; the environment wins; anfs's when sourced), anfs_conf_read <file>,
-               # anfs_conf_files <tool>, anfs_conf_env_only <name>
+               # anfs_conf_files <tool>, anfs_conf_expand <value> (a leading ~), anfs_conf_env_only <name>
   skill.sh     # agent skills through the skills CLI (npx skills@$ANFS_SKILLS_CLI_VERSION) with a
                # scope, -g or a directory: anfs_skill_cli, _require, _agents (ppm's meta.agent),
                # _package_agents, _display/_id, _dir_skills, _load, _has, _status, _sync_rows,
