@@ -21,8 +21,9 @@ setup() {
   chmod +x "$T/bin/compose"
   RUNNER=("$T/bin/compose")
   # RUNNING: compose services with a running container of their own; ONEOFFS: one-off names;
-  # SHOWN: a pcm id whose container `pcm show` finds running
-  RUNNING="" ONEOFFS="" SHOWN=""
+  # SHOWN: a pcm id whose container `pcm show` finds running; SHOWN_ROWS: its containers rows
+  # (name, state, ExitedAt, Status, ports; tab-separated, \t and \n escapes)
+  RUNNING="" ONEOFFS="" SHOWN="" SHOWN_ROWS=""
 }
 
 podman() {
@@ -36,6 +37,8 @@ podman() {
         [[ -z "$ONEOFFS" ]] || printf '%s\n' $ONEOFFS
       elif [[ "$*" == *"com.docker.compose.service="* ]]; then
         for s in $RUNNING; do [[ "$*" != *"com.docker.compose.service=$s "* ]] || echo "app_${s}_1"; done
+      elif [[ -n "$SHOWN" && "$*" == *"{{.ExitedAt}}"* ]]; then
+        printf '%b' "${SHOWN_ROWS:-${SHOWN#*/}_app_1\\trunning\\t-62135596800\\tUp 2 hours\\t\\n}"
       elif [[ -n "$SHOWN" && "$*" == *"label=io.pcm.name=${SHOWN#*/} "* && "$*" == *"{{.Names}}"* ]]; then
         echo "${SHOWN#*/}_app_1"
       fi
@@ -218,4 +221,18 @@ x-pcm:
   [ "$status" -eq 0 ]
   [ "$(cat "$T/inspect.format")" = '{{$n := .Name}}{{range .Mounts}}{{$n}}	{{.Source}} -> {{.Destination}}{{if not .RW}} (ro){{end}}
 {{end}}' ]
+}
+
+@test "show: an exited container podman gave no finish time is exited (unclean), others keep podman's Status" {
+  define "$T/src/a/containers" app
+  load_sources
+  SHOWN=a/app
+  SHOWN_ROWS='app_db_1\texited\t-62135596800\tExited (0) 292 years ago\t\napp_app_1\texited\t1790027654\tExited (143) 4 weeks ago\t0.0.0.0:80->80/tcp\napp_web_1\trunning\t-62135596800\tUp 2 hours\t\n'
+  run cmd_show app
+  [ "$status" -eq 0 ]
+  [[ "$output" =~ app_db_1\ +exited\ \(unclean\) ]]
+  [[ "$output" != *"292 years"* ]]
+  [[ "$output" =~ app_app_1\ +Exited\ \(143\)\ 4\ weeks\ ago\ + ]]
+  [[ "$output" == *"0.0.0.0:80->80/tcp"* ]]
+  [[ "$output" =~ app_web_1\ +Up\ 2\ hours ]]
 }

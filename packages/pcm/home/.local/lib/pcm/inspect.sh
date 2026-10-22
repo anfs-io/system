@@ -42,6 +42,16 @@ cmd_ps() {
   exec podman ps "${filters[@]}" ${flags[@]+"${flags[@]}"}
 }
 
+# `name\tstate\texited-at\tstatus\tports` rows (podman ps) as `  name\tstatus\tports`. An exited
+# container podman never gave a finish time (ExitedAt is the zero time, e.g. it stopped with the
+# podman machine) is `exited (unclean)`: podman's own Status would be "Exited (0) 292 years ago".
+container_rows() {
+  awk -F'\t' -v OFS='\t' '{
+    status = ($2 == "exited" && $3 + 0 <= 0) ? "exited (unclean)" : $4
+    print "  " $1, status, $5
+  }'
+}
+
 # State of a service name's containers: running, stopped (created but none running), or empty
 name_state() {
   local name="$1" containers="$2" _id cname state pid _status any=false
@@ -202,8 +212,8 @@ cmd_show() {
     echo
     echo containers
     podman ps -a --filter "label=$PCM_LABEL_NAME=$name" --filter "label!=$PCM_LABEL_ONEOFF" \
-      --format '  {{.Names}}\t{{.Status}}\t{{.Ports}}' |
-      column -t -s $'\t'
+      --format '{{.Names}}\t{{.State}}\t{{.ExitedAt}}\t{{.Status}}\t{{.Ports}}' |
+      container_rows | column -t -s $'\t'
     local c mounts
     mounts=$(
       while IFS= read -r c; do
