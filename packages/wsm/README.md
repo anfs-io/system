@@ -53,6 +53,7 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm remove [-y] SPEC...` | Asks, then unlinks installed spaces; cloned repos and your own files stay |
 | `wsm new [SOURCE/]PATH` | Creates a space in a source; installs it when the space around it is installed |
 | `wsm add FILE...` | Moves files (or every file under a directory) into the source, then links them back |
+| `wsm move [-n] [-f] SOURCE/PATH TO-SOURCE` | Moves a space and the spaces under it to another source with its history (commits in both, nothing pushed); when installed, its directory under the root moves too (clones and your files inside untouched) and its links are made again. Ids that name it are not rewritten: the check lists them |
 | `wsm cd [-s] [QUERY]` | Jumps to an installed space; with no `QUERY`, to the deepest one you are in. `-s`, `--source`: to its directory in the source instead |
 | `wsm path [-s] [QUERY]` | Prints that path (what `cd` is built on) |
 | `wsm implode [-y]` | Unlinks every installed space and deletes wsm's state; contents are kept |

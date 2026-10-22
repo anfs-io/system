@@ -71,6 +71,16 @@ commits in your repo are yours to make. A file inside a directory a package link
 (`~/.local/lib/anfs/`, below) is the package's own file in its checkout: claim, add and protect
 refuse it.
 
+## Moving a Package to Another Source
+
+`ppm move stack/rails user` moves a whole package with its history: its commits are replayed into
+`user` (or, when they would not replay exactly, copied in one commit naming where the history
+stays), and one commit in `stack` removes it. Nothing is pushed. If it is installed, its links are
+made again from the new place, its tracker, claims, callback and backups follow, and no hook runs.
+`-n` shows the checks, the commits and the steps first; a move that would hide the package from
+something depending on it, or with uncommitted work in either repository, is refused (`-f` goes
+past those; never past uncommitted changes inside the package itself).
+
 ## How a Package Is Placed
 
 Everything under a package's `home/` is linked into `$HOME`, one relative link per file, unless its

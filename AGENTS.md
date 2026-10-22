@@ -657,7 +657,7 @@ help` documents the commands.
     (`web`, `tech/web`; several: exit 2), else a source names `<root>/<source>`; no QUERY, the
     deepest installed space around `.`. `path`, `cd`, `new`, `add` and `repo` read only the
     `space.yml` links, never the full check. `-s` gives the directory in the source.
-  - wsm never commits.
+  - wsm commits only in `wsm move` ("Moving a resource between sources").
 - `remove` takes, per space: its files' links that are still `ok`, its leftovers, then
   `space.yml` last (an interrupted remove leaves it `partial`), then the directories that leaves
   empty up to `<root>/<source>`; clones, the user's files and a child space's links keep a
@@ -757,7 +757,7 @@ This repo (`core/`) contains:
 - `packages/pmm-network` — the root-owned host setup pmm's networks need (Linux); not part of the
   base install
 - dev/test tooling (`anfs work`, `anfs hooks` and the git hooks, `ppm container`, `ppm vm`, `ppm
-  user`, `ppm move`), the round trips and the test boxes are the anfs-dev source's
+  user`), the round trips and the test boxes are the anfs-dev source's
   (`anfs-io/dev-anfs`), not here
 - `skills/` — the tools' own skills (`pcm-containers`, `pmm-images`), synced by psm like any source's
 - `isos/isos.yml` — the ISOs the base images install from: the catalogue entries their `image.yml`
@@ -1325,7 +1325,7 @@ seam by which a package adds a command, and it is anfs's alone:
 - `anfs <name> cd ...` goes through the shell function: it `cd`s to `anfs <name> path ...`.
 - The other tools get no such seam. ppm keeps what is about packages: hook helpers a package stows
   into `lib/ppm` (`stack/ruby`'s `install_gem`) and `ppm_resource_<key>` handlers. The `cmd_`
-  functions anfs-dev/dev still stows there (`ppm container`, `ppm vm`, `ppm user`, `ppm move`) are
+  functions anfs-dev/dev still stows there (`ppm container`, `ppm vm`, `ppm user`) are
   the last of that use, until anfs-dev's plan 03 replaces them.
 - anfs-dev/dev's `anfs work` and `anfs hooks` are the first (`packages/dev/README.md` there).
 
@@ -1668,6 +1668,95 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 - None of these touch git. Commit the changes in the repo yourself.
 - `ppm install -f` never deletes a file of yours. `stow_package` (`installer.sh`) deletes only a link into the sources (the plan's `other`); anything else in the way (`conflict`) is moved to `~/.local/state/ppm/backup/files/<path>` and recorded in `backup/manifest` (`repo/pkg<TAB>path`). `ppm remove` of that package puts it back (`_backup_restore`, skipped by a reinstall), and `ppm implode` restores whatever is left before it deletes the state dir, beside the path as `<path>.pre-ppm` when the path is taken. The first backup of a path is the pre-ppm original and is never replaced. `packages/ppm/tests/backup.bats`.
 
+## Moving a resource between sources (lib/anfs/move.sh)
+
+```
+ppm move stack/rails user          # a package
+wsm move lgat/tech/web rws         # a space, and the spaces under it
+<tool> move <source/name> <to-source> [-n] [-f]
+```
+
+A resource's directory (`<dir>/<name>`: `packages/rails`, `spaces/tech/web`) moves to another
+source **with its history**, as commits, and one commit in the origin removes it. **A move
+commits, by design** (history is commits): it is the one place the toolkit commits on the
+person's behalf. It never pushes, and leaves both repositories clean, or as they were when it
+fails. `-n` prints the checks, the commits that would be replayed (and whether the replay works),
+and the tool's own steps; it changes nothing.
+
+**The tool orchestrates; the library supplies building blocks**, with no hooks or callbacks. A
+tool that has a move declares it with `anfs_move_cli <noun> <arg-kind>` (the same help, `-f` and
+`-n` everywhere) and writes its own `cmd_move`, which reads top to bottom with its own functions
+around the two others. A tool without a `cmd_move` has no move (pcm, pmm and psm: linker plan 06).
+
+- **`anfs_move_check [-f] <dir> <id> <to> [deps-fn]`** prints one line per check,
+  `<state><TAB><check><TAB><detail>` (`ok`, `refused`, `forced`, `note`); 0 go on, 1 refused (`-f`
+  would go on), 2 refused whatever the flags.
+  - Always refused: a bare name (it is a layer in every source; `<id>` is `<source>/<name>`), a
+    resource the origin does not have (or without its marker), the same source, a destination that
+    is not a configured source or has no clone, a source that is not a git repository (a local
+    directory has no history to carry), **the path in the destination** (there, tracked, or a file
+    on the way: `-f` never overwrites a source), either repository in the middle of an am, rebase,
+    merge, cherry-pick or revert, on no branch or with no commit, and **uncommitted or untracked
+    changes inside the resource's own path** (what moves is what is committed).
+  - Refused unless `-f`: other uncommitted changes in either repository (the commits still hold
+    only the path); **dependents** that resolve it now and would not after (the rule is
+    `resolve.sh`'s: a dependency resolves from the depending source's position down, so moving
+    *up* hides it from the dependents below its new place, and one named `<from>/<name>` never
+    resolves again); **its own dependencies** that would not resolve from the destination's
+    position down (moving *down* can lose them); a `stacks/*/stack.yml` in any source naming
+    `<from>/<name>`. Each with the file that says so. Nothing is rewritten.
+  - Notes: the layers before and after (a kind that layers), which source a bare name finds
+    after (`ANFS_RESOLVE_FIRST`), the branches the commits land on, and that nothing is pushed.
+  - Positions are in the whole source order: the destination may not hold `<dir>/` yet.
+    `deps-fn` is what the tool gives `anfs_resolve` (`meta_depends`, `_space_deps`); without it
+    the dependency checks are skipped and said. A nesting kind (`ANFS_NAME_NEST`,
+    `ANFS_RESOLVE_MARKER`) moves a resource with every one under it.
+- **`anfs_move_tree [-n] <dir> <id> <to>`**: `ANFS_MOVE_METHOD` (`replay` or `copy`),
+  `ANFS_MOVE_COMMITS`, `ANFS_MOVE_WHY`; one line at the end (`moved packages/rails: stack -> user,
+  10 commits replayed`); 0, or 1 with both repositories as they were.
+  1. `git format-patch -k --root HEAD -- <path>`: every commit that touched the path, cut down to
+     it (merges are skipped).
+  2. **A trial in a scratch repository**, then a **verification**: the path's tree equals the
+     origin's, and every replayed commit's author, author date and whole message equal the
+     origin's (`git log --no-merges -- <path>`). Only a replay known to work touches the
+     destination. The am flags, each for a reason found on real history (2026-10-22: 92 of 93
+     resources replayed exactly): `-k` (a `[wip]` subject keeps its brackets), `--keep-cr` (CRLF
+     files), `--whitespace=nowarn` (no warnings, and no one's `apply.whitespace=fix`), `--no-3way`,
+     `--committer-date-is-author-date` (the committer is whoever moves it; the dates are the
+     author dates), `--no-verify` (no applypatch hooks: the history was judged where it was made),
+     `--no-message-id`.
+  3. Into the destination: the same am, verified again; on any failure `git am --abort`, `git
+     reset --keep` to the recorded HEAD, then the copy. A staged change there (`-f`) skips the
+     replay (`git am` needs a clean index). **The copy**: exactly what is committed (an index of
+     its own, `read-tree` and `checkout-index`: modes and links kept, no export attribute), one
+     commit `<path>: moved from <from>` naming the origin's URL and SHA, where its history is, and
+     why it was not replayed. What fails a replay: merged parallel branches that linearise into a
+     conflict (user/claude's history), a message holding a `diff --git` line (am refuses it) or a
+     `---` line (am cuts it silently: the verification catches it).
+  4. Out of the origin: `git rm -r` and one commit `<path>: moved to <to> (<method>, <sha>)`
+     limited to the path. The copy and this commit run the repository's hooks (the version bump),
+     and the path is added again after them. If this commit fails, both are put back. What the
+     origin ignores in the directory (`.DS_Store`) goes to the destination, so nothing left at the
+     old path resolves as a resource.
+- **ppm** (`lib/ppm/move.sh`): `core/anfs` and `core/ppm` refused without `-f`; every link the
+  tracker lists must still be the package's (`anfs_link_plan` says `keep`), else nothing changes
+  (`ppm install -f`, or `ppm file protect`, first); the tracker's files unlinked (no remove hooks;
+  `links: {src}` links point outside and stay; copies are the user's); the tree; the tracker moved
+  unchanged to `installed/<to>/`; the same files linked from the destination (a higher layer's and
+  protected files left alone); then claims (claimant, owner), the callback registration and the
+  backup manifest's owner renamed. No install hook, no mise, no resources: only the place changed.
+- **wsm** (`cmd_move`): a space and every space under it (a source's root space is refused: move
+  the spaces under it). Besides the check, refused: the place under the root taken, a moved space
+  with `wrong`, in-the-way or leftover links (`wsm install -f` first), and unless `-f` a relative
+  `links:` src or `skills:` repo that leaves the moved directory. Then the tree; when installed, the
+  directory under the root moves in one rename (the clones, the copies and the user's files with
+  it), the links are made again from the new source (a link dangling into the sources is the plan's
+  `replace`), local-path skills are installed again from it, `git worktree repair` runs in each
+  clone with linked worktrees (`anfs work`'s), and the events are `remove` with the old ids and
+  `install` with the new (an ovm vault link naming the old id is then `unknown`: said). Ids are
+  never rewritten.
+- `anfs mv <source/name> --to <source>` (linker plan 03) will only run the owning tool's `move`.
+
 ## Dependencies
 
 - `yq` (mikefarah/yq) — for YAML parsing of package.yml and tracker files
@@ -1781,6 +1870,8 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # .agents/skills copy and lock entry; an unscoped remove sweeps ~/agent/skills/<name>,
                # a project's skills/<name>), _remove_for, _unlink. psm runs it with -g, wsm with a
                # space's directory
+  move.sh      # a resource to another source with its history: anfs_move_check, anfs_move_tree,
+               # anfs_move_cli (see "Moving a resource between sources"); the one place that commits
   repo.sh      # one clone at one path: anfs_repo_name (the directory git clone would make),
                # anfs_repo_clone <url> <dir> [ref], anfs_repo_status, anfs_repo_ahead,
                # anfs_repo_dirty, anfs_repo_update (pull; 2 when dirty), anfs_repo_ssh_url,
@@ -1811,6 +1902,7 @@ packages/ppm/home/.local/lib/ppm/
                  # PPM_SKIP_FILE, _backup_file(), _install_declared_resources()/
                  # _remove_declared_resources(), _reload_stowed_libs()
   file.sh        # file claim|reset|protect|unprotect (file_command), claims.yml, protected.yml
+  move.sh        # move: cmd_move over lib/anfs/move.sh (unlink, tree, tracker, relink, renames)
   implode.sh     # implode: every installed package removed, dependents first, then ppm's dirs
   completion.sh  # completion
 ```
@@ -1876,18 +1968,19 @@ hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them b
 bats packages/anfs/tests     # lib/anfs: paths.sh's settings (conf.bats; settings.bats: each tool's <tool>.env
                              # documents what it reads), sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, manifest.sh, files.sh,
                              # bash.sh (the floor, the bootstrap set),
-                             # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
+                             # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log,
+                             # move.sh (move.bats: fixture repositories, bare remotes over file://)
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:,
-                             # brew update's interval (brew.bats)
+                             # brew update's interval (brew.bats), ppm move (move.bats)
                              # (manifest.bats: platform, brew and mise stubbed)
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
                              # repositories), the state (ls), path/remove/new/add/repo/implode, events,
                              # links: (links.bats), skills: and wsm skill, the ppm callback (skills.bats,
-                             # npx stubbed: it logs its cwd)
+                             # npx stubbed: it logs its cwd), wsm move (move.bats)
 bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
                              # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart
