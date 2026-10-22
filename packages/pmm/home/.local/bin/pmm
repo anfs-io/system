@@ -47,7 +47,9 @@ if [[ -z "${PMM_BRIDGE_HELPER:-}" ]]; then
 fi
 : "${PMM_SYS_NET:=/sys/class/net}"
 : "${PMM_NET_CHECK:=true}"
-: "${PMM_SSH_CONFIG=$HOME/.ssh/config.d/05-pmm.conf}"
+# The Host entries of running machines: STATE (rewritten by up and down); core/pmm ships
+# ~/.ssh/config.d/05-pmm.conf, one Include of this file
+: "${PMM_SSH_CONFIG=$PMM_STATE_HOME/ssh_config}"
 if [[ -z "${PMM_NET_BACKEND:-}" ]]; then
   [[ "$(uname -s)" == Linux ]] && PMM_NET_BACKEND=libvirt || PMM_NET_BACKEND=none
 fi
@@ -126,7 +128,8 @@ Network: machines/networks/<name>/network.yml in a source, or in $PMM_NETWORKS_H
 
 A machine with no interfaces has qemu's user-mode network: ssh and any ports: are forwarded on
 127.0.0.1 only. The host setup networks need is one package: ppm install core/pmm-network.
-`ssh <machine>` works for running machines where ~/.ssh/config includes ~/.ssh/config.d/*.conf.
+`ssh <machine>` works for running machines where ~/.ssh/config includes ~/.ssh/config.d/*.conf:
+core/pmm's 05-pmm.conf there includes $PMM_STATE_HOME/ssh_config, which up and down rewrite.
 
 An <image> is `name` or `source/name`, resolved like a machine: local ($PMM_IMAGES_HOME), then
 the anfs sources in order.

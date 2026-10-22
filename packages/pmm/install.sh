@@ -14,10 +14,6 @@ EOF2
   echo -e "${cyan}Personal Machine Manager${nc}"
 }
 
-post_install() {
-  mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/pmm/machines/"{images,networks}
-}
-
 # Refuse removal while machines run (override with ppm remove -f)
 pre_remove() {
   local run="${XDG_STATE_HOME:-$HOME/.local/state}/pmm/run" dir running=""

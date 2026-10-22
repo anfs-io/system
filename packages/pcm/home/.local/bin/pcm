@@ -28,7 +28,8 @@ anfs_gitsrc_env
 : "${PCM_VOLUMES_HOME:=$PCM_DATA_HOME/volumes}"
 : "${PCM_HEALTH_TIMEOUT:=120}"
 : "${PCM_INGRESS_DOMAIN:=localhost}"
-export PCM_CONFIG_HOME PCM_CONTAINERS_HOME PCM_DATA_HOME PCM_VOLUMES_HOME
+# exported for what pcm runs: the edges write where pcm reads (the tunnel token into PCM_STATE_HOME)
+export PCM_CONFIG_HOME PCM_CONTAINERS_HOME PCM_DATA_HOME PCM_VOLUMES_HOME PCM_STATE_HOME
 
 # The implicit, highest-priority source: hand-made definitions in $PCM_CONTAINERS_HOME
 PCM_LOCAL_SOURCE=local
@@ -118,7 +119,8 @@ environment > .env > .env.schema defaults, and invalid values stop the command.
 Put this machine's overrides in $PCM_CONTAINERS_HOME/<name>/local.env (KEY=VALUE
 lines), not next to the schema in a clone: they apply to whichever source's
 definition of <name> runs. They are exported before varlock runs, below anything
-already in the environment. If fnox is installed and a fnox.toml is in the
+already in the environment. What pcm records for a service (the tunnel token) is
+$PCM_STATE_HOME/containers/<name>/state.env, read below local.env. If fnox is installed and a fnox.toml is in the
 service directory or $PCM_CONFIG_HOME, the call is wrapped in `fnox exec` so its
 secrets are in the environment first.
 

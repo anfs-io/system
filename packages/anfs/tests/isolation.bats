@@ -7,14 +7,17 @@
 #
 # Checked: every suite's bats files, helpers, stubs and e2e scripts. Not checked: the round trips
 # and their harness, whose ~ and /home are a test box's, and anfs-dev's suites (its own repo).
-# What a grep cannot see, a suite that never sets PMM_SOCK_DIR, pmm refuses itself under bats
-# (sock_dir_path in lib/pmm/core.sh).
+# On Linux the live socket directory is pmm/ under XDG_RUNTIME_DIR (/run/user/<uid>) instead, and
+# no suite may name that either. What a grep cannot see, a suite that never sets PMM_SOCK_DIR, pmm
+# refuses itself under bats, both defaults (sock_dir_path in lib/pmm/core.sh).
 # Run: bats packages/anfs/tests/
 
 setup() {
   REPO="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
   # the live socket directory, by $(id -u), $UID, a $uid of the test's own, or a number
   SOCK_RE='/tmp/pmm-(\$\(id -u\)|\$\{?[A-Za-z_]*(UID|uid)\}?|[0-9]+)([^0-9A-Za-z_-]|$)'
+  # Linux's: pmm/ under $XDG_RUNTIME_DIR, or under /run/user/<uid> spelled out
+  RUNTIME_RE='(\$\{?XDG_RUNTIME_DIR(:-[^}]*)?\}?|/run/user/[^/"]+)/pmm([^0-9A-Za-z_-]|$)'
 }
 
 # The files the rule covers, one per line
@@ -48,6 +51,21 @@ matches() {
 @test "no test names the live socket directory, /tmp/pmm-<uid>" {
   run matches "$SOCK_RE"
   [ -z "$output" ] || { echo "$output"; return 1; }
+}
+
+@test "no test names Linux's live socket directory, pmm/ under XDG_RUNTIME_DIR" {
+  run matches "$RUNTIME_RE"
+  [ -z "$output" ] || { echo "$output"; return 1; }
+}
+
+@test "the runtime pattern catches what it is for, and not a test's own directory" {
+  PROBE="$BATS_TEST_TMPDIR/probe.bash"
+  # shellcheck disable=SC2016
+  printf '%s\n' 'd=$XDG_RUNTIME_DIR/pmm' 'd="${XDG_RUNTIME_DIR}/pmm"' 'd=/run/user/1000/pmm' 'd=/run/user/$(id -u)/pmm/' \
+    'd=$T/run/pmm' 'export XDG_RUNTIME_DIR="/run/user/$(id -u)"' 'd=$XDG_RUNTIME_DIR/pmm-bats' > "$PROBE"
+  covered() { echo "$PROBE"; }
+  run matches "$RUNTIME_RE"
+  [ "${#lines[@]}" -eq 4 ] || { echo "$output"; return 1; }
 }
 
 @test "no test kills by pattern" {

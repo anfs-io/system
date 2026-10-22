@@ -215,16 +215,24 @@ pcm_local_env() {
   echo "$PCM_CONTAINERS_HOME/$(svc_name "$1")/local.env"
 }
 
-# Export service $1's local.env (KEY=VALUE lines, read by lib/anfs's anfs_conf_read, never
-# sourced; nothing expanded), except variables already in the environment: they sit where a .env
-# would, below the environment and above the .env.schema defaults
+# What pcm itself recorded for service $1 on this machine: $PCM_STATE_HOME/containers/<name>/
+# state.env (mode 0600; today only the cloudflare-tunnel edge's TUNNEL_TOKEN, fetched and fetched
+# again: STATE, not the person's local.env). Keyed by the name, like local.env
+pcm_state_env() {
+  echo "$PCM_STATE_HOME/containers/$(svc_name "$1")/state.env"
+}
+
+# Export service $1's local.env, then its state.env (KEY=VALUE lines, read by lib/anfs's
+# anfs_conf_read, never sourced; nothing expanded), each name only when it is not set yet: they
+# sit where a .env would, so environment > local.env > state.env > the .env.schema defaults
 export_env_overrides() {
   local file key val
-  file=$(pcm_local_env "$1")
-  [[ -f "$file" ]] || return 0
-  while IFS=$'\t' read -r key val; do
-    [[ -n "${!key+x}" ]] || export "$key=$val"
-  done < <(anfs_conf_read "$file")
+  for file in "$(pcm_local_env "$1")" "$(pcm_state_env "$1")"; do
+    [[ -f "$file" ]] || continue
+    while IFS=$'\t' read -r key val; do
+      [[ -n "${!key+x}" ]] || export "$key=$val"
+    done < <(anfs_conf_read "$file")
+  done
 }
 
 # Run a command from service $1's directory with PROVISIONED and the local env overrides

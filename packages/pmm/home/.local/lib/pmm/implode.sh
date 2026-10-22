@@ -34,6 +34,8 @@ cmd_implode() {
     [[ -f "${d}state.yml" ]] || continue
     net_delete "$(basename "$d")"
   done
+  # the Host entries (in $PMM_STATE_HOME unless moved); ~/.ssh/config.d/05-pmm.conf is a linked
+  # file of core/pmm's, which ppm removes with the package
   [[ -z "$PMM_SSH_CONFIG" ]] || rm -f "$PMM_SSH_CONFIG"
   # tart creates its home on any command; a machine that never ran tart has none to clean
   if command -v tart >/dev/null 2>&1 && [[ -d "${TART_HOME:-$HOME/.tart}" ]]; then

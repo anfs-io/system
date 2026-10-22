@@ -18,7 +18,11 @@
 #                                       dir from it (packages/ containers/ skills/ spaces/)
 #   ~/.cache/anfs/updated/<alias>       each source's last clone or pull
 #   ~/.local/state/anfs/bootstrap       what install.sh found on the machine and what it added
-#   $XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>  each tool's own files
+#   $XDG_{CONFIG,DATA,STATE,CACHE}_HOME/<tool>  each tool's own files, each kind in its place
+#                                       (core AGENTS.md, "Where files go"): CONFIG only what the
+#                                       person declares, never a side effect; STATE what a tool
+#                                       records; DATA what it manages; CACHE what it can rebuild;
+#                                       sockets in $XDG_RUNTIME_DIR (Linux) or /tmp (macOS)
 
 # The one place the installed library path is written: ~/.local/lib/<name> for each library
 # directory (anfs_lib_dir), lib/anfs this file's own

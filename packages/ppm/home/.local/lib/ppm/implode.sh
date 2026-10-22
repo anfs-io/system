@@ -75,7 +75,7 @@ cmd_implode() {
     rm -rf "${dir:?}"
   done
   rm -f "$BIN_DIR/ppm"
-  rm -f /tmp/ppm-messages.* 2>/dev/null || true
+  rm -f "${TMPDIR:-/tmp}"/ppm-messages.* 2>/dev/null || true
   echo "ppm imploded. Open a new shell: this one still has ppm's functions loaded."
 }
 

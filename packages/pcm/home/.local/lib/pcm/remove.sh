@@ -29,6 +29,7 @@ remove_summary() {
     size=$(du -sh "$data" 2>/dev/null | cut -f1)
     echo "  data         $(tilde "$data")  $size  (deleted)"
   fi
+  [[ ! -f "$(pcm_state_env "$id")" ]] || echo "  state        $(tilde "$(pcm_state_env "$id")")  (deleted; fetched again on up)"
 
   if yq eval -e '[.services[] | select(has("build"))] | length > 0' "$(compose_file "$id")" >/dev/null 2>&1; then
     echo "  images       the ones compose built (pulled images are kept)"
@@ -52,8 +53,9 @@ remove_summary() {
 
 # `pcm remove <service>... [-y] [-f|--force]`: stop the services and delete everything pcm created
 # for them — containers, networks, anonymous volumes, images compose built, their data dir and
-# generated override — and run each dependency's deprovision hook. Running dependents are stopped
-# first, which needs --force. The definition, its env override and its source are never touched.
+# generated override, what pcm recorded for them (state.env) — and run each dependency's
+# deprovision hook. Running dependents are stopped first, which needs --force. The definition, its
+# local.env and its source are never touched.
 cmd_remove() {
   local yes=${CLI_OPT[yes]:-false} force=${CLI_OPT[force]:-false} arg id
   local -a services=()
@@ -119,6 +121,8 @@ cmd_remove() {
 
     remove_data_dir "$PCM_VOLUMES_HOME/$(svc_name "$id")" || { anfs_warn "could not delete $id's data"; rc=1; }
     rm -f "$(override_file "$id")"
+    # what pcm recorded for it (a tunnel token: fetched again on the next up)
+    rm -rf "${PCM_STATE_HOME:?}/containers/$(svc_name "$id")"
     snapshot_forget "$id"
   done
   return $rc

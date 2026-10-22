@@ -161,6 +161,8 @@ cmd_show() {
   local settings
   settings=$(pcm_local_env "$id")
   [[ -f "$settings" ]] && printf '  %-12s %s\n' settings "$(tilde "$settings")"
+  settings=$(pcm_state_env "$id")
+  [[ -f "$settings" ]] && printf '  %-12s %s\n' state "$(tilde "$settings")"
   local names vars secrets
   names=$(schema_names "$id")
   vars=$(sed -n 's/^env|//p' <<< "$names" | paste -sd ' ' -)

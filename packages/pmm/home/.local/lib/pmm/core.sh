@@ -45,11 +45,12 @@ arch_qemu() {
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# A short directory for UNIX sockets: macOS caps socket paths at 104 bytes, and $PMM_STATE_HOME
-# (or a test's tmp dir) can be longer than that. A machine's sockets are <name>.qmp and <name>.ga;
-# a build's start with a dot, which no machine's name does. PMM_SOCK_DIR is somewhere else: the
-# tests and the e2e set it, because the default is where a real pmm on the same host keeps the
-# sockets of its running machines, and implode deletes the directory.
+# A short directory for UNIX sockets (RUNTIME: they die with the machines): macOS caps socket
+# paths at 104 bytes, and $PMM_STATE_HOME (or a test's tmp dir) can be longer than that. A
+# machine's sockets are <name>.qmp and <name>.ga; a build's start with a dot, which no machine's
+# name does. PMM_SOCK_DIR is somewhere else: the tests and the e2e set it, because the default is
+# where a real pmm on the same host keeps the sockets of its running machines, and implode deletes
+# the directory.
 sock_dir() {
   local d
   d=$(sock_dir_path) || return 1
@@ -57,15 +58,30 @@ sock_dir() {
   echo "$d"
 }
 
-# PMM_SOCK_DIR, else the live default. Under bats (BATS_TEST_TMPDIR) the live directory is
-# refused, set or defaulted: a suite that forgot to set PMM_SOCK_DIR would otherwise reach the
-# sockets of the machines running on the host, which no grep of the tests can see.
+# The default: on Linux $XDG_RUNTIME_DIR/pmm when that is a directory (per user, short, cleared at
+# logout and boot, as a qemu's sockets should be); otherwise, and on macOS (no XDG_RUNTIME_DIR,
+# and a $TMPDIR too long for a socket's path), /tmp/pmm-<uid>
+sock_dir_default() {
+  if [[ "$(host_os)" == linux && -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" ]]; then
+    echo "${XDG_RUNTIME_DIR%/}/pmm"
+  else
+    echo "/tmp/pmm-$(id -u)"
+  fi
+}
+
+# PMM_SOCK_DIR, else the default. Under bats (BATS_TEST_TMPDIR) a live directory is refused, set
+# or defaulted, /tmp/pmm-<uid> and $XDG_RUNTIME_DIR/pmm alike: a suite that forgot to set
+# PMM_SOCK_DIR would otherwise reach the sockets of the machines running on the host, which no
+# grep of the tests can see.
 sock_dir_path() {
-  local live="/tmp/pmm-$(id -u)" d="${PMM_SOCK_DIR:-}"
-  d="${d:-$live}"
-  if [[ -n "${BATS_TEST_TMPDIR:-}" && "${d%/}" == "$live" ]]; then
-    anfs_warn "refusing $live under a test: set PMM_SOCK_DIR to a directory of the test's"
-    return 1
+  local d="${PMM_SOCK_DIR:-}" live
+  d="${d:-$(sock_dir_default)}"
+  if [[ -n "${BATS_TEST_TMPDIR:-}" ]]; then
+    for live in "/tmp/pmm-$(id -u)" ${XDG_RUNTIME_DIR:+"${XDG_RUNTIME_DIR%/}/pmm"}; do
+      [[ "${d%/}" != "$live" ]] && continue
+      anfs_warn "refusing $live under a test: set PMM_SOCK_DIR to a directory of the test's"
+      return 1
+    done
   fi
   echo "$d"
 }

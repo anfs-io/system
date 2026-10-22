@@ -14,12 +14,10 @@ EOF
   echo -e "${cyan}Personal Container Manager${nc}"
 }
 
+# Nothing in ~/.config/pcm: containers/ is where you put your own definitions and settings, made
+# when you do (core AGENTS.md, "Where files go")
 post_install() {
-  local pcm_config="${XDG_CONFIG_HOME:-$HOME/.config}/pcm"
   local pcm_data="${XDG_DATA_HOME:-$HOME/.local/share}/pcm"
-
-  # Create PCM config directory
-  mkdir -p "$pcm_config/containers"
 
   # Create PCM data directory (sources are anfs's: anfs src update)
   mkdir -p "$pcm_data/volumes"

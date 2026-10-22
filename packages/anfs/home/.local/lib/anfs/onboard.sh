@@ -302,7 +302,7 @@ _onboard_repo_init() {
   _ob_commit "$dir" "anfs onboard: the user source"
 }
 
-# A repo you already have: listed first, cloned, and its anfs package stowed over the seeded list
+# A repo you already have: listed first, cloned, and its anfs package stowed over the plain list
 # (what install.sh --repo does)
 _onboard_repo_use() {
   local alias="$ONBOARD_USER_ALIAS" url="$1" dir="$2"
@@ -311,7 +311,7 @@ _onboard_repo_use() {
   if [[ -d "$dir/packages/anfs" ]]; then
     tool ppm install -f "$alias/anfs" || anfs_die "ppm install -f $alias/anfs failed"
   else
-    anfs_warn "$url has no anfs package; ~/.config/anfs keeps the seeded user.list"
+    anfs_warn "$url has no anfs package; ~/.config/anfs/user.list stays a plain file"
   fi
 }
 

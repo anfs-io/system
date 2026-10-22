@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
 # pcm: a container's settings on this machine, $PCM_CONTAINERS_HOME/<name>/local.env. A directory
 # there is a definition only with compose.yml; with only local.env it is settings for the name,
-# defined in any source. Precedence: environment > local.env > the .env.schema defaults.
+# defined in any source. What pcm records for one (the tunnel token) is
+# $PCM_STATE_HOME/containers/<name>/state.env, never the person's local.env.
+# Precedence: environment > local.env > state.env > the .env.schema defaults.
 #
 # pcm's own suites (packages/pcm/tests) are off until further notice (ROADMAP, 2026-10-19). This
 # file is not one of them: it is small and needs no podman, so it runs with anfs's suites. It uses
@@ -109,10 +111,10 @@ setup() {
   [[ "$output" != *"app: warning"* ]]
 }
 
-@test "cloudflare-tunnel writes TUNNEL_TOKEN into cloudflared's local.env, other lines kept, 600" {
-  mkdir -p "$T/bin" "$PCM_CONTAINERS_HOME/cloudflared"
-  # A Cloudflare that knows one zone, one tunnel (T1) and its CNAME already
-  cat > "$T/bin/curl" <<'EOF'
+# A Cloudflare that knows one zone, one tunnel (T1) and its CNAME already: a curl on PATH
+fake_curl() {
+  mkdir -p "$T/bin"
+  cat > "$T/bin/curl" <<'EOF2'
 #!/usr/bin/env bash
 for a in "$@"; do [[ "$a" == http* ]] && url="$a"; done
 ok() { echo "{\"success\":true,\"result\":$1}"; }
@@ -125,19 +127,83 @@ case "${url#*/client/v4}" in
   /zones/Z1/dns_records\?*) ok '[{"id":"R1","type":"CNAME","name":"crm.example.com","content":"T1.cfargotunnel.com"}]' ;;
   *) echo '{"success":false}' ;;
 esac
-EOF
+EOF2
   chmod +x "$T/bin/curl"
-  printf '%s\n' 'OTHER=kept' 'TUNNEL_TOKEN=old' > "$PCM_CONTAINERS_HOME/cloudflared/local.env"
+}
+
+cft_add() {
   PATH="$T/bin:$PATH" CLOUDFLARE_API_TOKEN=test PCM_TUNNEL_NAME=pcm-test \
     "$PCM_LIB_DIR/edges/cloudflare-tunnel" add crm.example.com origin=http://traefik:80
-  f="$PCM_CONTAINERS_HOME/cloudflared/local.env"
+}
+
+mode() { stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1"; }
+
+@test "pcm_state_env: <name>/state.env under PCM_STATE_HOME, whatever the source" {
+  [ "$(pcm_state_env a/app)" = "$PCM_STATE_HOME/containers/app/state.env" ]
+  [ "$(pcm_state_env local/app)" = "$PCM_STATE_HOME/containers/app/state.env" ]
+}
+
+@test "cloudflare-tunnel writes TUNNEL_TOKEN into cloudflared's state.env (0600 in a 0700 dir), other lines kept, nothing in CONFIG" {
+  fake_curl
+  f="$PCM_STATE_HOME/containers/cloudflared/state.env"
+  mkdir -p "${f%/*}"
+  printf '%s\n' 'OTHER=kept' 'TUNNEL_TOKEN=old' > "$f"
+  cft_add
   [ "$(cat "$f")" = "OTHER=kept
 TUNNEL_TOKEN=tok-123" ]
-  [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
-  rm -r "$PCM_CONTAINERS_HOME/cloudflared"
-  PATH="$T/bin:$PATH" CLOUDFLARE_API_TOKEN=test PCM_TUNNEL_NAME=pcm-test \
-    "$PCM_LIB_DIR/edges/cloudflare-tunnel" add crm.example.com origin=http://traefik:80
+  [ "$(mode "$f")" = 600 ]
+  rm -r "$PCM_STATE_HOME/containers"
+  cft_add
   [ "$(cat "$f")" = "TUNNEL_TOKEN=tok-123" ]
+  [ "$(mode "$f")" = 600 ]
+  [ "$(mode "${f%/*}")" = 700 ]
+  # nothing under $PCM_CONFIG_HOME but what the test made (containers/app)
+  [ "$(cd "$PCM_CONFIG_HOME" && find . -mindepth 1 | LC_ALL=C sort | paste -sd ' ' -)" = "./containers ./containers/app ./containers/app/local.env" ]
+}
+
+@test "the edge's PCM_STATE_HOME comes from pcm: bin/pcm exports it" {
+  grep -qE '^export .*\bPCM_STATE_HOME\b' "$PCM_PKG/home/.local/bin/pcm"
+}
+
+@test "state.env is exported below local.env, the environment above both" {
+  load_sources
+  mkdir -p "$PCM_STATE_HOME/containers/app"
+  printf '%s\n' 'X=state' 'Y=state' > "$PCM_STATE_HOME/containers/app/state.env"
+  ( export_env_overrides a/app; [ "$X" = local ] && [ "$Y" = state ] )
+  ( export Y=env; export_env_overrides a/app; [ "$X" = local ] && [ "$Y" = env ] )
+  rm "$PCM_CONTAINERS_HOME/app/local.env"
+  ( export_env_overrides a/app; [ "$X" = state ] )
+  [ -z "${X:-}" ] && [ -z "${Y:-}" ]
+}
+
+@test "pcm show prints the state line when state.env exists" {
+  load_sources
+  run cmd_show app
+  [[ "$output" != *"state        "* ]]
+  mkdir -p "$PCM_STATE_HOME/containers/app"
+  echo 'TUNNEL_TOKEN=t' > "$PCM_STATE_HOME/containers/app/state.env"
+  run cmd_show app
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"state        $PCM_STATE_HOME/containers/app/state.env"* ]] || { echo "$output"; return 1; }
+  [[ "$output" != *"TUNNEL_TOKEN"* && "$output" != *"=t"* ]]
+}
+
+@test "pcm remove deletes what pcm recorded (state.env) and keeps local.env" {
+  load_sources
+  mkdir -p "$PCM_STATE_HOME/containers/app" "$PCM_STATE_HOME/containers/other"
+  echo 'TUNNEL_TOKEN=t' > "$PCM_STATE_HOME/containers/app/state.env"
+  echo 'TUNNEL_TOKEN=o' > "$PCM_STATE_HOME/containers/other/state.env"
+  # no engine: compose and the edges are stubbed, as nothing runs
+  compose_flags() { FLAGS=(); }
+  compose_run() { :; }
+  export_podman_socket() { :; }
+  edges_unpublish() { :; }
+  run cli_call remove -y app
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"state        $PCM_STATE_HOME/containers/app/state.env  (deleted"* ]] || { echo "$output"; return 1; }
+  [ ! -e "$PCM_STATE_HOME/containers/app" ]
+  [ -f "$PCM_STATE_HOME/containers/other/state.env" ]
+  [ -f "$PCM_CONTAINERS_HOME/app/local.env" ]
 }
 
 @test "nothing in core names PCM_ENV_HOME or ~/.config/pcm/env" {

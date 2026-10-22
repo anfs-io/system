@@ -179,10 +179,11 @@ ifaces_show() {
 # Where a running machine's ssh is: the address and the port
 mach_ssh_host() { cat "$(run_dir "$1")/host" 2>/dev/null || echo 127.0.0.1; }
 
-# Rewrite the ssh config fragment: a Host entry per running machine, so `ssh <machine>` works
-# wherever ~/.ssh/config includes it (stack/ssh: Include config.d/*.conf). ssh takes the first
-# value it reads for a setting, so the file sorts ahead of a person's own (05-). Host keys are
-# not recorded, as with pmm shell: a machine's key changes whenever it is recreated.
+# Rewrite $PMM_SSH_CONFIG ($PMM_STATE_HOME/ssh_config: STATE, never ~/.ssh): a Host entry per
+# running machine, so `ssh <machine>` works wherever ~/.ssh/config includes config.d/*.conf
+# (stack/ssh), where core/pmm's 05-pmm.conf includes this file. ssh takes the first value it reads
+# for a setting, so that fragment sorts ahead of a person's own (05-). Host keys are not
+# recorded, as with pmm shell: a machine's key changes whenever it is recreated.
 ssh_config_write() {
   local d name r
   [[ -n "$PMM_SSH_CONFIG" ]] || return 0

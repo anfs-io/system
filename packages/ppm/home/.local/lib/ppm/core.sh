@@ -81,8 +81,9 @@ debug() {
   $PPM_DEBUG && echo -e "[DEBUG] $*" >&2 || true
 }
 
-# User message aggregation — packages call user_message() during install
-PPM_MSG_FILE=$(mktemp /tmp/ppm-messages.XXXXXX)
+# User message aggregation — packages call user_message() during install. In $TMPDIR (a job's own
+# under anfs work run), /tmp when it is unset
+PPM_MSG_FILE=$(mktemp "${TMPDIR:-/tmp}/ppm-messages.XXXXXX")
 # (and the installer's skip list, installer.sh)
 trap 'rm -f "$PPM_MSG_FILE" ${PPM_SKIP_FILE:+"$PPM_SKIP_FILE"}' EXIT
 

@@ -61,7 +61,7 @@ _setup_home() {
   # Networks: no backend, as on macOS, until a suite asks for libvirt (setup_net)
   PMM_NETWORKS_HOME="$PMM_MACHINES_HOME/networks" PMM_NET_BACKEND=none PMM_NET_CHECK=true
   PMM_LIBVIRT_URI=qemu:///system PMM_BRIDGE_CONF="$T/etc/pmm-bridge.conf" PMM_BRIDGE_HELPER="$T/etc/helper"
-  PMM_SYS_NET="$T/sys" PMM_SSH_CONFIG="$HOME/.ssh/config.d/05-pmm.conf"
+  PMM_SYS_NET="$T/sys" PMM_SSH_CONFIG="$PMM_STATE_HOME/ssh_config"
   export VIRSH_STUB="$T/virsh"
   mkdir -p "$T/etc" "$T/sys" "$VIRSH_STUB"
   local f

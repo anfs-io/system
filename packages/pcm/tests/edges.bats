@@ -190,14 +190,16 @@ cft() { "$PCM_LIB_DIR/edges/cloudflare-tunnel" "$@"; }
 
 @test "cloudflare-tunnel add: creates the tunnel, points it at the origin, writes the token, adds the CNAME" {
   fake_cloudflare
-  mkdir -p "$PCM_CONTAINERS_HOME/cloudflared"
-  echo 'OTHER=kept' > "$PCM_CONTAINERS_HOME/cloudflared/local.env"
+  local f="$PCM_STATE_HOME/containers/cloudflared/state.env"
+  mkdir -p "${f%/*}"
+  echo 'OTHER=kept' > "$f"
   cft add crm.example.com origin=http://traefik:80 2>/dev/null
   grep -qF 'POST /accounts/A1/cfd_tunnel {"name":"pcm-test","config_src":"cloudflare"}' "$CF/log"
   grep -qF 'PUT /accounts/A1/cfd_tunnel/T1/configurations {"config":{"ingress":[{"service":"http://traefik:80"}]}}' "$CF/log"
-  grep -qx 'TUNNEL_TOKEN=tok-123' "$PCM_CONTAINERS_HOME/cloudflared/local.env"
-  grep -qx 'OTHER=kept' "$PCM_CONTAINERS_HOME/cloudflared/local.env"
-  [ "$(stat -f %Lp "$PCM_CONTAINERS_HOME/cloudflared/local.env" 2>/dev/null || stat -c %a "$PCM_CONTAINERS_HOME/cloudflared/local.env")" = 600 ]
+  grep -qx 'TUNNEL_TOKEN=tok-123' "$f"
+  grep -qx 'OTHER=kept' "$f"
+  [ "$(stat -f %Lp "$f" 2>/dev/null || stat -c %a "$f")" = 600 ]
+  [ ! -e "$PCM_CONTAINERS_HOME/cloudflared" ]
   grep -q '|CNAME|crm.example.com|T1.cfargotunnel.com$' "$CF/records"
   grep -qF '"proxied":true' "$CF/log"
 }
@@ -208,7 +210,7 @@ cft() { "$PCM_LIB_DIR/edges/cloudflare-tunnel" "$@"; }
   cft add crm.example.com origin=http://traefik:80 2>/dev/null
   [ "$(grep -c 'POST /accounts/A1/cfd_tunnel ' "$CF/log")" -eq 1 ]
   [ "$(grep -c 'POST /zones/Z1/dns_records' "$CF/log")" -eq 1 ]
-  [ "$(grep -c 'TUNNEL_TOKEN=' "$PCM_CONTAINERS_HOME/cloudflared/local.env")" -eq 1 ]
+  [ "$(grep -c 'TUNNEL_TOKEN=' "$PCM_STATE_HOME/containers/cloudflared/state.env")" -eq 1 ]
 }
 
 @test "cloudflare-tunnel add: never replaces someone else's record; an unknown zone fails" {

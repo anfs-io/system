@@ -26,10 +26,11 @@
 #      That is what puts ~/.local/bin/{anfs,ppm} on PATH. Files protected with `ppm file protect`
 #      are left alone.
 #   6. Adds GitHub's published SSH host keys to ~/.ssh/known_hosts
-#   7. Seeds an empty ~/.config/anfs/user.list (your sources). No settings file is written: a
-#      machine's own values are yours to put in ~/.config/<tool>/<tool>.local.env
+#   7. Writes nothing into ~/.config but those links (core AGENTS.md, "Where files go"): no
+#      user.list (`anfs src add` makes it) and no settings file (a machine's own values are yours
+#      to put in ~/.config/<tool>/<tool>.local.env)
 #   8. With --repo: adds your customization repo as the "user" source (highest priority) and
-#      installs its anfs package, which replaces the seeded user.list with a link into it
+#      installs its anfs package, whose user.list (a link into the repo) is your source list
 #   9. Runs 'anfs src update', installs your login shell's package from stack (bash or zsh:
 #      without it nothing puts Homebrew on an interactive shell's PATH), then 'anfs install
 #      system': the stack core/system, the whole toolkit — pcm, psm, wsm and the software they
@@ -41,7 +42,7 @@
 #   ~/.local/bin/{anfs,ppm,pcm,psm,wsm}   the commands (linked)
 #   ~/.local/lib/{anfs,ppm,pcm}/          their libraries; lib/anfs (one link) is what every tool shares
 #   ~/.config/anfs/system.list            default sources (linked from core/anfs)
-#   ~/.config/anfs/user.list              your sources (a link into your repo with --repo)
+#   ~/.config/anfs/user.list              with --repo only: your sources (a link into your repo)
 #   ~/.config/anfs/anfs.env               anfs's settings, documented (linked from core/anfs); each
 #                                         tool links its own ~/.config/<tool>/<tool>.env
 #   ~/.local/state/ppm/installed/         what ppm installed
@@ -63,7 +64,7 @@
 # OPTIONS:
 #   --repo <url>    your customization repo (see `anfs onboard`), added as the "user" source
 #                   (or set ANFS_INSTALL_REPO)
-#   --script-only   only clone anfs, link the base packages and seed config (needs yq: the
+#   --script-only   only clone anfs and link the base packages (needs yq: the
 #                   base packages' package.yml says how they are linked)
 #   --skip-deps     skip prerequisites and Homebrew setup (you manage them)
 #   --no-shell      do not install your login shell's package (or set ANFS_INSTALL_SHELL=false)
@@ -350,22 +351,10 @@ stow_base() {
 }
 
 
-# Seed the machine's own config. anfs.env and system.list are linked from core/anfs; here we
-# seed an empty user.list the user can add repos to (the tools read the list, so it must exist). A
-# repo's package can later replace it with a link into that repo (install_repo). No settings file
-# is written: <tool>.local.env is the person's, made by hand (or a tool's config command).
-install_configs() {
-  if [[ ! -e "$ANFS_USER_LIST" ]]; then
-    printf '# Your anfs sources (highest priority). Add with: anfs src add <git-url> [alias]\n' \
-      > "$ANFS_USER_LIST"
-  fi
-}
-
-
 # --repo: your customization repo (see `anfs onboard`), always registered as the "user" source
-# (highest priority). Its anfs package is a layer of core/anfs; installing it with -f swaps the
-# seeded user.list for the repo's copy, which lists the repo itself, and puts its anfs.env (if it
-# ships one) over the default.
+# (highest priority). Its anfs package is a layer of core/anfs; installing it with -f replaces the
+# user.list `anfs src add` wrote with the repo's copy, which lists the repo itself, and puts its
+# anfs.env (if it ships one) over the default.
 install_repo() {
   local alias="$PPM_USER_REPO_ALIAS"
   local pkg_dir="$ANFS_SOURCES_HOME/$alias/packages/anfs"
@@ -374,7 +363,7 @@ install_repo() {
   anfs src update "$alias"
 
   if [[ ! -d "$pkg_dir" ]]; then
-    warn "$repo_url has no anfs package; ~/.config/anfs keeps the seeded config files"
+    warn "$repo_url has no anfs package; ~/.config/anfs/user.list stays a plain file"
     return 0
   fi
 
@@ -477,7 +466,6 @@ EOF
     clone_anfs
     brew_env   # put an existing Homebrew (hence yq) on PATH if there is one
     stow_base
-    install_configs
     exit 0
   fi
 
@@ -499,7 +487,6 @@ EOF
 
   clone_anfs   # after the prerequisites: they are what provide git
   stow_base
-  install_configs
   setup_known_hosts
   [[ -z "$repo_url" ]] || install_repo
   anfs src update || warn "anfs src update skipped or failed for one or more sources"
