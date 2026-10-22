@@ -80,7 +80,7 @@ compose_command() {
   export_podman_socket "${services[@]}"
 
   # One compose invocation per service so each keeps its own project
-  local service rc=0
+  local service rc=0 v
   local -a service_args
   for service in "${services[@]}"; do
     service_args=(${args[@]+"${args[@]}"})
@@ -95,6 +95,14 @@ compose_command() {
       # Options like -v apply only to the services the user named
       anfs_warn "stopping dependent service $service"
       service_args=()
+    fi
+    # Already down: compose down would print an error per container and for the pod
+    if [[ "$subcmd" == "down" && -z "$(project_containers "$service" -a)" ]]; then
+      anfs_warn "$service is not running"
+      v=""
+      [[ " ${service_args[*]-} " != *" -v "* && " ${service_args[*]-} " != *" --volumes "* ]] || v=-v
+      project_objects_rm "$(svc_name "$service")" $v || { anfs_warn "failed to stop $service; not stopping the rest"; return 1; }
+      continue
     fi
     compose_flags "$service" || { rc=1; continue; }
     compose_run "$service" ${PRE[@]+"${PRE[@]}"} "${FLAGS[@]}" "$subcmd" ${service_args[@]+"${service_args[@]}"} || {

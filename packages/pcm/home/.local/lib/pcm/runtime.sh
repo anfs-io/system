@@ -31,6 +31,28 @@ project_containers() {
     --filter "label!=$PCM_LABEL_ONEOFF" --format '{{.Names}}'
 }
 
+# What compose down removes besides the containers, for project $1 (a service name) once it has
+# none: its pod (podman-compose's default, pod_<project>), its networks and, with -v, its named
+# volumes; each only if it exists. Compose down itself would still stop and remove every container
+# it defines and print podman's "no container with name or ID" and "no such pod" for each
+# (r-20261022-5). A podman that fails is an error, not "nothing there".
+project_objects_rm() {
+  local project="$1" volumes="${2:-}" rc=0 st=0 obj objs
+  podman pod exists "pod_$project" || st=$?
+  case $st in
+    0) podman pod rm -f "pod_$project" >/dev/null || rc=1 ;;
+    1) ;;
+    *) return 1 ;;
+  esac
+  objs=$(podman network ls -q --filter "label=com.docker.compose.project=$project") || return 1
+  for obj in $objs; do podman network rm -f "$obj" >/dev/null || rc=1; done
+  if [[ "$volumes" == -v ]]; then
+    objs=$(podman volume ls -q --filter "label=com.docker.compose.project=$project") || return 1
+    for obj in $objs; do podman volume rm -f "$obj" >/dev/null || rc=1; done
+  fi
+  return $rc
+}
+
 # The pcm id a container was started from
 container_pcm_id() {
   podman inspect --format "{{index .Config.Labels \"$PCM_LABEL_ID\"}}" "$1" 2>/dev/null

@@ -24,6 +24,8 @@ setup() {
   # SHOWN: a pcm id whose container `pcm show` finds running; SHOWN_ROWS: its containers rows
   # (name, state, ExitedAt, Status, ports; tab-separated, \t and \n escapes)
   RUNNING="" ONEOFFS="" SHOWN="" SHOWN_ROWS=""
+  # POD, VOLUMES, NETWORKS: what podman has of the project with its containers gone (pcm down)
+  POD="" POD_RC="" VOLUMES="" NETWORKS=""
 }
 
 podman() {
@@ -46,7 +48,18 @@ podman() {
     inspect)
       [[ "$2" == --format ]] && printf '%s' "$3" > "$T/inspect.format"
       return 0 ;;
-    rm|network) return 0 ;;
+    pod)
+      # POD: the project's pod exists; POD_RC: what `pod exists` returns otherwise (125: podman fails)
+      if [[ "$2" == exists ]]; then [[ -z "$POD" ]] || return 0; return "${POD_RC:-1}"; fi
+      return 0 ;;
+    volume|network)
+      if [[ "$2" == ls ]]; then
+        if [[ "$1" == volume ]]; then [[ -z "$VOLUMES" ]] || printf '%s\n' $VOLUMES
+        else [[ -z "$NETWORKS" ]] || printf '%s\n' $NETWORKS; fi
+      fi
+      return 0 ;;
+    rm) return 0 ;;
+    unshare) shift; command "$@" ;;
     *) return 1 ;;
   esac
 }
@@ -274,5 +287,80 @@ rmi_runner() {
   run cli_call remove -y app </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" != *"Error:"* ]]
+  [ ! -s "$COMPOSE_LOG" ]
+}
+
+# A compose runner that, like podman-compose 1.6, stops and removes every container it defines and
+# the pod whether they exist or not, printing podman's errors when they don't (r-20261022-5)
+down_runner() {
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$COMPOSE_LOG"\n[[ -n "$UP" ]] || { for i in 1 2 3 4; do echo "Error: no container with name or ID \\"app_app_1\\" found: no such container" >&2; done; echo "Error: unable to find pod \\"pod_app\\": no such pod" >&2; }\n' > "$T/bin/compose"
+}
+
+@test "remove: already down, no compose down and no Error:; its pod, networks, volumes and data go" {
+  define "$T/src/a/containers" app
+  load_sources
+  down_runner
+  UP="" POD=1 VOLUMES="app_data" NETWORKS="app_default"
+  export UP
+  mkdir -p "$PCM_VOLUMES_HOME/app"
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Error:"* ]]
+  [ ! -s "$COMPOSE_LOG" ]
+  grep -qxF "pod rm -f pod_app" "$CALLS"
+  grep -qxF "network rm -f app_default" "$CALLS"
+  grep -qxF "volume rm -f app_data" "$CALLS"
+  [ ! -d "$PCM_VOLUMES_HOME/app" ]
+}
+
+@test "remove: already down with nothing left, podman is asked for nothing it does not have" {
+  define "$T/src/a/containers" app
+  load_sources
+  down_runner
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Error:"* ]]
+  [ ! -s "$COMPOSE_LOG" ]
+  ! grep -q " rm " "$CALLS"
+}
+
+@test "remove: running, compose down still runs" {
+  define "$T/src/a/containers" app
+  load_sources
+  down_runner
+  SHOWN=a/app UP=1
+  export UP
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
   grep -q -- ' down --volumes --remove-orphans$' "$COMPOSE_LOG"
+  ! grep -q "^pod " "$CALLS"
+}
+
+@test "remove: already down and podman fails, its error is not taken for nothing there; data kept" {
+  define "$T/src/a/containers" app
+  load_sources
+  POD_RC=125
+  mkdir -p "$PCM_VOLUMES_HOME/app"
+  run cli_call remove -y app </dev/null
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"its data is kept"* ]]
+  [ -d "$PCM_VOLUMES_HOME/app" ]
+}
+
+@test "down: already down, no compose down and no Error:; the pod goes, volumes only with -v" {
+  define "$T/src/a/containers" app
+  load_sources
+  down_runner
+  UP="" POD=1 VOLUMES="app_data"
+  export UP
+  run cli_call down app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Error:"* ]]
+  [[ "$output" == *"a/app is not running"* ]]
+  [ ! -s "$COMPOSE_LOG" ]
+  grep -qxF "pod rm -f pod_app" "$CALLS"
+  ! grep -q "^volume rm" "$CALLS"
+  run compose_command down -v app </dev/null
+  [ "$status" -eq 0 ]
+  grep -qxF "volume rm -f app_data" "$CALLS"
 }

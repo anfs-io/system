@@ -51,10 +51,11 @@ pcm_setup() {
   PRE=() PROVISIONED=() NAMED="" ORDER=() CLOSURE=() VALIDATE_ERRORS=0
 }
 
-# No container engine in tests: nothing runs, no image is pulled
+# No container engine in tests: nothing runs, no image is pulled, no pod/network/volume exists
 podman() {
   case "$1" in
     ps) return 0 ;;
+    network|volume) [[ "$2" == ls ]] ;;
     *)  return 1 ;;
   esac
 }

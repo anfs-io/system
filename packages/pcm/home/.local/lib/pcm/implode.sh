@@ -6,7 +6,7 @@
 # came from. Unlike remove it works from the runtime labels, not the definitions, so containers
 # whose definition is gone (a source removed, a link dangling) go too. Deprovision hooks are not
 # run: whatever they would undo lives in a dependency that is being deleted as well.
-#   - every container labelled io.pcm.name, and the compose networks and volumes of those projects
+#   - every container labelled io.pcm.name, and the pods, compose networks and volumes of those projects
 #   - the shared network
 #   - $PCM_DATA_HOME (service data), $PCM_STATE_HOME, $PCM_CACHE_HOME, $PCM_CONFIG_HOME
 #   - on macOS, the podman machine, when pcm created it (a machine that predates pcm is kept)
@@ -46,7 +46,7 @@ cmd_implode() {
       anfs_warn "removing $project"
       ids=$(podman ps -aq --filter "label=$PCM_LABEL_NAME=$project")
       [[ -z "$ids" ]] || podman rm -f -v $ids >/dev/null || rc=1
-      _implode_project_objects "$project" || rc=1
+      project_objects_rm "$project" -v || rc=1
     done
     if podman network exists "$network" 2>/dev/null; then
       podman network rm -f "$network" >/dev/null || rc=1
@@ -78,17 +78,5 @@ cmd_implode() {
     rm -rf "${dir:?}" || rc=1
   done
   [[ $rc -eq 0 ]] && echo "pcm imploded" >&2
-  return $rc
-}
-
-# The networks and named volumes compose created for a project (it labels them with the project)
-_implode_project_objects() {
-  local project="$1" rc=0 obj
-  for obj in $(podman network ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
-    podman network rm -f "$obj" >/dev/null || rc=1
-  done
-  for obj in $(podman volume ls -q --filter "label=com.docker.compose.project=$project" 2>/dev/null); do
-    podman volume rm -f "$obj" >/dev/null || rc=1
-  done
   return $rc
 }
