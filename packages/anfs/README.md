@@ -5,7 +5,7 @@ The `anfs` command and everything the tools share:
 | Stowed to | What |
 | --- | --- |
 | `~/.local/bin/anfs` | `anfs src` (and `anfs src install <source>`), the stacks (`anfs list|show|install|remove|path`), `anfs implode`, `anfs iso` (the ISO catalogue and store; `pmm iso` and `ventoy iso` are the same commands) |
-| `~/.local/lib/anfs/` | the libraries every tool sources: `paths.sh` (where everything lives, and `anfs.conf`), `sources.sh` (the source lists and clones), `resolve.sh` (finding resources, ordering them by dependency), `stacks.sh` (stacks: the manifest, install and remove, the record), `iso.sh` (the ISO store, its catalogue and the `iso` commands) |
+| `~/.local/lib/anfs/` | the libraries every tool sources: `paths.sh` (where everything lives, and `anfs.conf`), `sources.sh` (the source lists), `repo.sh` (one clone at one path: clone, state, pull, ssh), `resolve.sh` (finding resources, ordering them by dependency), `stacks.sh` (stacks: the manifest, install and remove, the record), `iso.sh` (the ISO store, its catalogue and the `iso` commands) |
 | `~/.config/anfs/system.list` | the default sources |
 | `~/.config/anfs/anfs.conf` | the settings of every tool, each named for the tool that reads it |
 | `~/.config/sh/anfs.sh` | the shell wrapper that reloads the shell after `anfs install`, `remove` and `src install` |

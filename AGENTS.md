@@ -509,7 +509,9 @@ help` documents the commands.
   path?, ref?}]`, cloned into the space's directory (a path left out is git's name for it). A
   repository's id is `<space id>/<path>`; a path that leaves the space, lies inside a child space or
   holds one is `invalid` (warned, counted as failed), so the longest prefix of an id that is a
-  space is its space (`_repo_split`). Install never pulls, and never deletes a clone.
+  space is its space (`_repo_split`). Cloned with `anfs_repo_clone` (`lib/anfs/repo.sh`; a failed
+  clone or checkout of the ref leaves nothing). Install never pulls (wsm never calls
+  `anfs_repo_update`: what is checked out is the user's), and never deletes a clone.
 - **`wsm install [SPEC...] [-n] [-f] [-y]` links, as ppm does** (`lib/anfs/link.sh`): each space's
   files into `$WSM_SPACES_HOME/<source>/<path>/`, one relative link per file, so directories stay
   real and a clone never lands in the source. Every file is linked but `.DS_Store`, `README.*`
@@ -556,8 +558,13 @@ help` documents the commands.
     (`anfs_relpath`), so the next install's plan keeps them. The file's space (its nearest) must be
     installed. It never takes clones, repository paths, what the source's `.gitignore` ignores, or
     a file under no space; a copy where the source has the file goes back only when named.
-  - `wsm repo ls [SPEC]` is the repositories' git state, and `wsm repo install [SPEC|REPOSITORY]`
-    clones what an installed space declares and is missing (install's clone half).
+  - `wsm repo ls [SPEC]` is the repositories' git state (`anfs_repo_status`), `wsm repo install
+    [SPEC|REPOSITORY]` clones what an installed space declares and is missing (install's clone
+    half), and `wsm repo ssh [SPEC]` switches each clone's GitHub https origin to ssh, as `anfs src
+    ssh` (`<id>: origin -> git@...`); `space.yml` is the source's and is not edited, an https URL
+    in it is noted (`<id>: https in space.yml`). The group follows `anfs src` where it is cheap:
+    no `update` (space repositories are never pulled), no `add`/`remove` (a repository is declared
+    in the source's `space.yml`).
   - `wsm path`/`cd [-s] [QUERY]`: an installed id, else the installed ids that end in `/QUERY`
     (`web`, `tech/web`; several: exit 2), else a source names `<root>/<source>`; no QUERY, the
     deepest installed space around `.`. `path`, `cd`, `new`, `add` and `repo` read only the
@@ -969,7 +976,7 @@ The keys, which are the interface:
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 
-A clone's state (`gitsrc_dir_status`, for `anfs src list` and `wsm repo list`): `clean`, `dirty`
+A clone's state (`anfs_repo_status` in `lib/anfs/repo.sh`, for `anfs src list` and `wsm repo list`): `clean`, `dirty`
 (uncommitted or untracked changes), `unpushed` (commits its upstream lacks, as of the last fetch;
 nothing is fetched), `no upstream` (a branch that tracks none, or a detached HEAD), or `dirty, `
 followed by either of the last two. `ahead` is the count of unpushed commits (null: no upstream,
@@ -1433,8 +1440,15 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # anfs_result, anfs_json_on
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),
                # anfs_load_conf (anfs.local.conf, anfs.conf; the environment wins)
-  sources.sh   # gitsrc_*: source lists, clone/pull/link, status, provides, the `src` command;
-               # anfs_gitsrc_env points it at anfs's lists
+  repo.sh      # one clone at one path: anfs_repo_name (the directory git clone would make),
+               # anfs_repo_clone <url> <dir> [ref], anfs_repo_status, anfs_repo_ahead,
+               # anfs_repo_dirty, anfs_repo_update (pull; 2 when dirty), anfs_repo_ssh_url,
+               # anfs_repo_ssh. No policy, no messages: anfs src and wsm repo keep theirs
+  sources.sh   # gitsrc_*: source lists, the TTL and marks, linking local paths, provides, the
+               # `src` command, over repo.sh (which it sources from where it really lives, its
+               # link resolved: every tool that sources sources.sh has it, and a pull that brings
+               # repo.sh works before core/anfs is installed again); anfs_gitsrc_env points it at
+               # anfs's lists
   cli.sh       # the command line: cli_cmd / cli_group declarations, and from them help, the
                # check of the line (CLI_OPT), `__complete`, cli_call, anfs_confirm
   resolve.sh   # anfs_sources <dir>, anfs_find, anfs_list, anfs_resolve <dir> <deps_fn> (layered
@@ -1513,7 +1527,7 @@ change. Their helpers skip every test and `tests/all` leaves them out; the perso
 hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
+bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
