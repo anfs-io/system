@@ -1461,7 +1461,7 @@ directory into another, skipping a set, and says who a link points into.
   link into another directory of the sources: another layer's; detail is its owner) and
   `conflict` (a file, a directory, a link elsewhere). `anfs_link_apply` changes nothing unless
   the plan has no `other` or `conflict`; it returns 1 and the caller decides: ppm moves them
-  aside under `-f` (`stow_subdir`), and so does wsm (`_backup`); without `-f` both refuse. Every
+  aside under `-f` (`stow_package`), and so does wsm (`_backup`); without `-f` both refuse. Every
   file in the way is reported, not the first.
 - **`anfs_link_check <from> <to> <files-file>...`** is the read-only side: `<state>\t<file>` per
   file, `ok` (the text apply writes, or any link that resolves to the file), `missing`, `wrong` (a
@@ -1525,7 +1525,7 @@ Three levels of ownership for an individual file: ppm owns it (default), *you* o
 - `ppm file unprotect <file...>` removes it from `protected.yml`; the next `ppm install -f <package>` re-links it.
 - Claims are recorded in `~/.local/state/ppm/installed/claims.yml` (file → claimant, owner); protections in `~/.local/state/ppm/installed/protected.yml` (a plain list of `$HOME`-relative paths). The per-package trackers are updated to match.
 - None of these touch git. Commit the changes in the repo yourself.
-- `ppm install -f` never deletes a file of yours. `stow_subdir` (`installer.sh`) deletes only a link into the sources (the plan's `other`); anything else in the way (`conflict`) is moved to `~/.local/state/ppm/backup/files/<path>` and recorded in `backup/manifest` (`repo/pkg<TAB>path`). `ppm remove` of that package puts it back (`_backup_restore`, skipped by a reinstall), and `ppm implode` restores whatever is left before it deletes the state dir, beside the path as `<path>.pre-ppm` when the path is taken. The first backup of a path is the pre-ppm original and is never replaced. `packages/ppm/tests/backup.bats`.
+- `ppm install -f` never deletes a file of yours. `stow_package` (`installer.sh`) deletes only a link into the sources (the plan's `other`); anything else in the way (`conflict`) is moved to `~/.local/state/ppm/backup/files/<path>` and recorded in `backup/manifest` (`repo/pkg<TAB>path`). `ppm remove` of that package puts it back (`_backup_restore`, skipped by a reinstall), and `ppm implode` restores whatever is left before it deletes the state dir, beside the path as `<path>.pre-ppm` when the path is taken. The first backup of a path is the pre-ppm original and is never replaced. `packages/ppm/tests/backup.bats`.
 
 ## Dependencies
 
