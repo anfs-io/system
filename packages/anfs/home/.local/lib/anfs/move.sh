@@ -585,8 +585,7 @@ _anfs_move_undo_copy() {
 anfs_move_cli() {
   cli_cmd move "Move a $1 to another source, with its history (commits in both; nothing is
 pushed): replayed when it replays exactly, else copied in one commit naming the origin" \
-    --opt "-f --force: Despite uncommitted changes elsewhere in either repository, a dependent
-that will not resolve, or a stack that names it" \
+    --opt "-f --force: Despite other uncommitted changes, dependents it breaks, stacks naming it" \
     --opt "-n --dry-run: Print the checks, the commits to replay and the steps; change nothing" \
     --arg "$2" --arg "source"
 }
