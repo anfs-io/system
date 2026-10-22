@@ -658,9 +658,10 @@ help` documents the commands.
     [SPEC|REPOSITORY]` clones what an installed space declares and is missing (install's clone
     half), and `wsm repo ssh [SPEC]` switches each clone's GitHub https origin to ssh, as `anfs src
     ssh` (`<id>: origin -> git@...`); `space.yml` is the source's and is not edited, an https URL
-    in it is noted (`<id>: https in space.yml`). The group follows `anfs src` where it is cheap:
-    no `update` (space repositories are never pulled), no `add`/`remove` (a repository is declared
-    in the source's `space.yml`).
+    in it is noted (`<id>: https in space.yml`). `wsm repo push [REPOSITORY...|--all] [-n]` is
+    `anfs src push` over the repositories (the same helper, below). The group follows `anfs src`
+    where it is cheap: no `update` (space repositories are never pulled), no `add`/`remove` (a
+    repository is declared in the source's `space.yml`).
   - `wsm path`/`cd [-s] [QUERY]`: an installed id, else the installed ids that end in `/QUERY`
     (`web`, `tech/web`; several: exit 2), else a source names `<root>/<source>`; no QUERY, the
     deepest installed space around `.`. `path`, `cd`, `new`, `add` and `repo` read only the
@@ -1222,6 +1223,7 @@ The keys, which are the interface:
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
 | `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
 | `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url` (the clone's `origin`; the list's URL when it is not cloned), `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
+| `anfs src push`, `wsm repo push` | `source` / `repository` (as the tool's list names it), `status` (`pushed N`, `pushed N (uncommitted changes left)`, `up to date`, `no upstream`, `detached`, `rejected`, `not cloned`; `-n`: `would push N`), `branch`, `upstream` (null: none), `commits` (ahead of the upstream), `error` (git's first error line when rejected) (the last two `--json` only). Exit 1 when one was not pushed (`up to date` is not a failure). `lib/anfs/repo.sh`'s `anfs_repo_push_cli` is both commands: names (resolved before anything is pushed) or `--all` (every one ahead), neither is a usage error that lists the ones ahead |
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `<tool> config list` | `name`, `value` (the effective value; null: empty), `from` (`env`, `local`, `shipped`, `default`), `file` (the file it is from; the shipped one for `default`; null for `env`); with `anfs config list --all` a leading `tool` |
@@ -1236,7 +1238,8 @@ followed by either of the last two. `ahead` is the count of unpushed commits (nu
 or not a clone).
 
 On a terminal (not piped, not `--json`, `NO_COLOR` unset) `anfs_table` colors a `STATUS` cell
-that needs attention: `dirty` (alone or first) red, `unpushed` and `no upstream` yellow. The map
+that needs attention: `dirty` (alone or first) and push's `rejected` red, `unpushed`, `no upstream`
+and push's `detached` yellow. The map
 is `_anfs_tone` in `table.sh`; a state added there is colored in every list.
 
 ### The Command Line (lib/anfs/cli.sh)
@@ -1921,7 +1924,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   repo.sh      # one clone at one path: anfs_repo_name (the directory git clone would make),
                # anfs_repo_clone <url> <dir> [ref], anfs_repo_status, anfs_repo_ahead,
                # anfs_repo_dirty, anfs_repo_update (pull; 2 when dirty), anfs_repo_ssh_url,
-               # anfs_repo_ssh. No policy, no messages: anfs src and wsm repo keep theirs
+               # anfs_repo_ssh, anfs_repo_push <dir> [-n] (plain git push of the current branch;
+               # its outcome as the exit status). No policy, no messages: anfs src and wsm repo
+               # keep theirs, except anfs_repo_push_cli, the push command both share (names or
+               # --all, -n, the list, the exit status; the caller fills ANFS_PUSH_IDS/_DIRS)
   sources.sh   # gitsrc_*: source lists, the TTL and marks, linking local paths, provides, the
                # `src` command, over repo.sh (which it sources from where it really lives, its
                # link resolved: every tool that sources sources.sh has it, and a pull that brings
