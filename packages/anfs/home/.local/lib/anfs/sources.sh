@@ -25,7 +25,21 @@
 #   gitsrc_hook_user_list_read  echo the user list to read, or nothing
 #   gitsrc_hook_system_writable true when the system list may be edited by `src ssh`
 #
-# Source list format, one per line: <git-url-or-path> [alias]  (alias defaults to the basename)
+# Source list format, one per line: <git-url-or-path> [alias]  (alias defaults to the directory git
+# clone would make: anfs_repo_name)
+
+# One clone at one path (repo.sh), from the directory this file really lives in: its link resolved,
+# so a pull that brings repo.sh works before core/anfs is installed again
+_gitsrc_self="${BASH_SOURCE[0]}"
+[[ "$_gitsrc_self" == */* ]] || _gitsrc_self="./$_gitsrc_self"
+while [[ -L "$_gitsrc_self" ]]; do
+  _gitsrc_link=$(readlink "$_gitsrc_self")
+  [[ "$_gitsrc_link" == /* ]] || _gitsrc_link="${_gitsrc_self%/*}/$_gitsrc_link"
+  _gitsrc_self="$_gitsrc_link"
+done
+# shellcheck source=/dev/null
+source "${_gitsrc_self%/*}/repo.sh"
+unset _gitsrc_self _gitsrc_link
 
 # anfs_debug (log.sh) when the tool loaded it; else the tool's own debug, if it has one
 gitsrc_debug() {
@@ -64,8 +78,12 @@ gitsrc_parse_line() {
   [[ -z "$1" || "$1" =~ ^[[:space:]]*# ]] && return 1
   read -r GITSRC_LINE_URL GITSRC_LINE_NAME _ <<< "$1"
   [[ -n "$GITSRC_LINE_URL" ]] || return 1
-  [[ -z "$GITSRC_LINE_NAME" ]] && GITSRC_LINE_NAME="$(basename "$GITSRC_LINE_URL" .git)"
-  return 0
+  if [[ -z "$GITSRC_LINE_NAME" ]]; then
+    anfs_repo_name_reply "$GITSRC_LINE_URL"
+    GITSRC_LINE_NAME="$REPLY"
+  fi
+  # A URL that names no directory (and no alias given) is no source
+  [[ -n "$GITSRC_LINE_NAME" ]]
 }
 
 # Read both lists into GITSRC_URLS and GITSRC_NAMES (array order is priority order). User entries
@@ -123,38 +141,10 @@ gitsrc_dir_reply() {
   return 0
 }
 
-# State of a directory: clean, dirty (uncommitted or untracked changes), unpushed (commits its
-# upstream does not have, as of the last fetch), no upstream (a branch that tracks none, or no
-# branch), "dirty, unpushed", "dirty, no upstream", local (exists, not a git repo) or missing.
-# Reads only the clone: no fetch.
-gitsrc_dir_status() {
-  local dir="$1" dirty="" push="" ahead
-  if [[ -d "$dir/.git" || -f "$dir/.git" ]]; then
-    [[ -z "$(git -C "$dir" status --porcelain 2>/dev/null)" ]] || dirty=dirty
-    if ! ahead=$(git -C "$dir" rev-list --count '@{upstream}..HEAD' 2>/dev/null); then
-      push="no upstream"
-    elif (( ahead > 0 )); then
-      push=unpushed
-    fi
-    if [[ -n "$dirty" && -n "$push" ]]; then echo "$dirty, $push"
-    elif [[ -n "$dirty$push" ]]; then echo "$dirty$push"
-    else echo clean
-    fi
-  elif [[ -d "$dir" ]]; then
-    echo local
-  else
-    echo missing
-  fi
-}
-
-# Commits a clone has that its upstream lacks, as of the last fetch; nothing for no upstream
-gitsrc_dir_ahead() {
-  git -C "$1" rev-list --count '@{upstream}..HEAD' 2>/dev/null || true
-}
-
 # State of source $1 (collected)
 gitsrc_status() {
-  gitsrc_dir_status "$(gitsrc_dir "$1")"
+  gitsrc_dir_reply "$1"
+  anfs_repo_status "$REPLY"
 }
 
 # --- src list ----------------------------------------------------------------------------------
@@ -176,7 +166,7 @@ gitsrc_list_file() {
   while IFS= read -r line || [[ -n "$line" ]]; do
     gitsrc_parse_line "$line" || continue
     anfs_row "$GITSRC_LINE_NAME" "$(gitsrc_status "$GITSRC_LINE_NAME")" "$GITSRC_LINE_URL" "$list" \
-      "$(gitsrc_provides "$GITSRC_LINE_NAME")" "$(gitsrc_dir_ahead "$(gitsrc_dir "$GITSRC_LINE_NAME")")"
+      "$(gitsrc_provides "$GITSRC_LINE_NAME")" "$(gitsrc_dir_reply "$GITSRC_LINE_NAME"; anfs_repo_ahead "$REPLY")"
   done < "$file"
 }
 
@@ -213,7 +203,11 @@ gitsrc_add() {
   mkdir -p "$(dirname "$user_file")"
   touch "$user_file"
 
-  local alias="${2:-$(basename "$url" .git)}"
+  local alias="${2:-$(anfs_repo_name "$url")}"
+  if [[ -z "$alias" ]]; then
+    echo "Error: $url names no directory: give the source an alias" >&2
+    exit 64
+  fi
   local entry="$url  $alias"
   # local is every tool's own config directory, the implicit source (pcm, pmm, psm)
   if [[ "$alias" == local ]]; then
@@ -268,17 +262,12 @@ gitsrc_remove() {
 
 # --- src ssh -----------------------------------------------------------------------------------
 
-# Convert https://github.com/user/repo[.git] to git@github.com:user/repo[.git]
-gitsrc_github_ssh_url() {
-  echo "git@github.com:${1#https://github.com/}"
-}
-
 # Rewrite a GitHub HTTPS entry to SSH in one list file; false if the file doesn't list the URL
 gitsrc_ssh_rewrite_in_file() {
   local file="$1" url="$2" tmp
   [[ -f "$file" ]] || return 1
   awk -v u="$url" '$1 == u { f=1 } END { exit !f }' "$file" || return 1
-  tmp=$(awk -v old="$url" -v new="$(gitsrc_github_ssh_url "$url")" \
+  tmp=$(awk -v old="$url" -v new="$(anfs_repo_ssh_url "$url")" \
     '$1 == old { sub(/^[^[:space:]]+/, new) } { print }' "$file")
   printf '%s\n' "$tmp" > "$file"
 }
@@ -312,7 +301,7 @@ gitsrc_ssh() {
       # Rewrite the entry in the first writable list that has it
       for f in "${writable[@]}"; do
         if gitsrc_ssh_rewrite_in_file "$f" "$url"; then
-          echo "$name: $(basename "$f") -> $(gitsrc_github_ssh_url "$url")"
+          echo "$name: $(basename "$f") -> $(anfs_repo_ssh_url "$url")"
           changed=true
           break
         fi
@@ -325,9 +314,8 @@ gitsrc_ssh() {
       fi
     fi
 
-    if remote=$(git -C "$repo_dir" remote get-url origin 2>/dev/null) && [[ "$remote" == https://github.com/* ]]; then
-      git -C "$repo_dir" remote set-url origin "$(gitsrc_github_ssh_url "$remote")"
-      echo "$name: origin -> $(gitsrc_github_ssh_url "$remote")"
+    if remote=$(anfs_repo_ssh "$repo_dir"); then
+      echo "$name: origin -> $remote"
       changed=true
     fi
 
@@ -398,8 +386,7 @@ gitsrc_update() {
 
     if [[ ! -d "$dir" ]]; then
       echo "Cloning: $repo_url"
-      mkdir -p "$GITSRC_REPOS_DIR"
-      if git clone "$repo_url" "$dir"; then
+      if anfs_repo_clone "$repo_url" "$dir"; then
         gitsrc_mark_updated "$repo_name"
       else
         gitsrc_mark_failed "$repo_name"
@@ -409,8 +396,7 @@ gitsrc_update() {
       continue
     fi
 
-    if ! git -C "$dir" diff --quiet || ! git -C "$dir" diff --cached --quiet ||
-       [[ -n $(git -C "$dir" status --porcelain) ]]; then
+    if anfs_repo_dirty "$dir"; then
       if $auto; then
         skipped+=("$repo_name")
       else
@@ -421,7 +407,7 @@ gitsrc_update() {
     fi
 
     echo "Updating: $repo_name"
-    if git -C "$dir" pull; then
+    if anfs_repo_update "$dir"; then
       gitsrc_mark_updated "$repo_name"
     else
       gitsrc_mark_failed "$repo_name"

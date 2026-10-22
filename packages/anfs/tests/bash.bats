@@ -102,6 +102,17 @@ need_old_bash() {
   done
 }
 
+@test "every lib/anfs file parses under the floor" {
+  local f n=0
+  for f in "$LIB"/*.sh; do
+    "$NEW" -n "$f" || { echo "$f does not parse"; return 1; }
+    n=$((n + 1))
+  done
+  # repo.sh among them: sources.sh loads it, so every tool that sources sources.sh does
+  [ -f "$LIB/repo.sh" ]
+  (( n >= 15 ))
+}
+
 @test "the bootstrap set is what install.sh sources" {
   # If install.sh starts sourcing another library, it joins the set (and the test above)
   run grep -E '^PPM_BOOTSTRAP_LIBS=' "$REPO/install.sh"

@@ -46,6 +46,24 @@ remote() {
   [ "$(gitsrc_index nope)" = 9999 ]
 }
 
+@test "collect: an alias is the directory git clone would make (a trailing / too); none, no source" {
+  printf 'file:///u/app/\nhttps://h/o/web.git/\ngit@h:o/api.git\nfile:///\n' > "$GITSRC_USER_LIST"
+  gitsrc_collect
+  [ "${GITSRC_NAMES[*]}" = "app web api" ]
+  run gitsrc_add file:///x/one/
+  [ "$output" = "Added source: file:///x/one/ (one)" ]
+}
+
+@test "sources.sh loads repo.sh from where it really lives, through a link" {
+  local lib
+  lib=$(cd "$BATS_TEST_DIRNAME/../home/.local/lib/anfs" && pwd)
+  mkdir -p "$T/linked"
+  ln -s "$lib/sources.sh" "$T/linked/sources.sh"
+  run bash -c 'source "$1"; declare -F anfs_repo_clone' _ "$T/linked/sources.sh"
+  [ "$status" -eq 0 ]
+  [ "$output" = anfs_repo_clone ]
+}
+
 @test "collect: no lists at all is empty, not an error" {
   gitsrc_collect
   [ "${#GITSRC_NAMES[@]}" -eq 0 ]
