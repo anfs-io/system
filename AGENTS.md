@@ -186,6 +186,14 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
   environment > `local.env` > `state.env` > `.env.schema` defaults. `pcm show` prints `state
   <file>` (never a value); `pcm remove` deletes the directory (the next `up` fetches it again);
   `pcm implode` deletes `$PCM_STATE_HOME`. `pcm up` writes nothing under `~/.config/pcm`.
+- **One-offs** (`pcm run <service> [--] <cmd>...`, `lib/pcm/run.sh`): `podman compose run` with
+  what `up` gives the service, through its own override (`<name>.run.override.yml`: labelled
+  `io.pcm.oneoff=true`, no ingress labels, no network alias), named `<name>-run-<hex>`, `--rm`
+  unless `--keep`, `--no-deps` (run starts the `x-pcm.depends_on` services and the compose
+  service's own `depends_on` first, as `up` would; not an ingress service's proxy or edges). Code
+  that means a service's own containers filters `label!=io.pcm.oneoff` (`project_containers`,
+  `pcm_containers`, `_box_container`); `ps` shows one-offs, `show` names kept ones, `remove` and
+  `implode` delete them. There is no `pcm run <image>`: a stock image is `podman run --rm`.
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
   port on `127.0.0.1` unless its `.env.schema`'s `ANFS_UI_BIND` says otherwise; `toolkit: write`.

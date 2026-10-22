@@ -148,7 +148,14 @@ x-pcm:
 The only set today is `anfs-sources`, the source repos resolved to their real paths. Generated
 mounts are not in `volumes:`, so the volume rules above don't apply to them.
 
-### Snapshots, exec and shell
+### Snapshots, run, exec and shell
+
+- `pcm run <svc> [-s compose-svc] [-u user] [--keep] -- cmd` runs a command in a new one-off
+  container of the service (`docker compose run`): its image, env (`local.env` included), network,
+  mounts, labels. It starts what the service requires first, needs no running service, and is
+  removed on exit unless `--keep`. Use it for migrations, consoles, one-shot tasks.
+- For a throwaway run of a stock image with no definition, use plain `podman run --rm <image>`:
+  pcm has no `run <image>`, and that is not bypassing pcm.
 
 These work on any running service:
 - `pcm exec <svc> [-u user] [-s compose-svc] -- cmd` runs a command in its container.

@@ -27,6 +27,24 @@ schema (the environment > `local.env` > the schema's defaults), for whichever so
 runs. That directory holds a local definition only when it has a `compose.yml`; with only
 `local.env` it is settings, and `pcm show <name>` names the file.
 
+## One-off commands
+
+`pcm run <service> [--] <cmd>...` runs a command in a new container of a service, as `docker
+compose run` does: the service's image (pulled or built as `pcm up` gets it), its env with
+`local.env`, its network (it reaches the services it depends on) and mounts, and pcm's labels plus
+`io.pcm.oneoff=true`. It starts what the service requires (`x-pcm.depends_on`, compose
+`depends_on`) when it is not running, has a tty at a terminal, and is removed on exit unless
+`--keep`. `-s <compose-service>` picks one when the definition has several; with no command it runs
+what the service runs.
+
+```sh
+pcm run app -- bin/rails db:migrate   # with the app's env, network and database
+pcm run app -s worker -- sh            # a shell in a new container of compose service worker
+```
+
+There is no `pcm run <image>`. For a throwaway run of a stock image, plain `podman run --rm
+<image>` is the right tool; it does not bypass pcm, which manages definitions.
+
 ## Validate
 
 ```sh
