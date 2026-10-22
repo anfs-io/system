@@ -22,7 +22,7 @@ cconf() {
 #
 #   podman compose up postgres          # stock podman, cwd compose file
 #   podman compose up --pcm postgres    # pcm-provided postgres (same as `pcm up postgres`)
-#   podman compose --pcm logs -f postgres glitchtip
+#   podman compose --pcm logs -f postgres   # is `pcm logs -f postgres`, which works in any shell
 
 podman() {
   if (( ${argv[(Ie)--pcm]} )); then

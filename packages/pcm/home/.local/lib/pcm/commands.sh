@@ -32,6 +32,12 @@ cli_cmd ps "pcm's containers (podman ps; options go on to it)" --passthrough --a
 cli_cmd exec "Run a command in a running service's container: <service> -- <cmd>..." --passthrough \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" \
   --arg "service" --arg "word..."
+cli_cmd logs "A service's logs (podman compose logs): every compose service's
+containers, or -s NAME's; one-offs only when -s names one (pcm ps). Other
+options, or any after --, go on to compose logs" --passthrough \
+  --opt "-f --follow: Keep following" --opt "--tail N: The last N lines of each" \
+  --opt "--since TIME: From then on (a timestamp, or 10m)" \
+  --opt "-s --service NAME: Of that compose service, or that one-off" --arg "service"
 cli_cmd run "A one-off container of a service (compose run): its image, env,
 network, mounts and labels; removed on exit. No command runs what the service
 runs. Starts what it requires (x-pcm.depends_on, compose depends_on) as up

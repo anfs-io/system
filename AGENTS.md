@@ -194,6 +194,11 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
   that means a service's own containers filters `label!=io.pcm.oneoff` (`project_containers`,
   `pcm_containers`, `_box_container`); `ps` shows one-offs, `show` names kept ones, `remove` and
   `implode` delete them. There is no `pcm run <image>`: a stock image is `podman run --rm`.
+- **Logs** (`pcm logs <service> [-s NAME] [-f] [--tail N] [--since T] [-- opts]`,
+  `lib/pcm/logs.sh`): `compose_run ... logs` with `compose_flags`, as `up` runs compose, so all of
+  a project's compose services without `-s`; compose logs reads the containers the file defines,
+  so one-offs are out unless `-s` names one (then `podman logs`). No containers is 1. The zsh
+  `podman compose --pcm logs` goes through `compose_wrapper` to it. Agents use `pcm logs`.
 - **Provisioning for a consumer outside pcm** (`pcm provision|deprovision <service> [--as NAME]
   [key=value...]`, `lib/pcm/provision.sh`): the hook through `hook_run` (`lib/pcm/deps.sh`), the
   one `up` and `remove` use for a dependent, with `PCM_DEPENDENT` the `--as` name (`external`).

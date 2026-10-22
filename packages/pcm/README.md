@@ -45,6 +45,20 @@ pcm run app -s worker -- sh            # a shell in a new container of compose s
 There is no `pcm run <image>`. For a throwaway run of a stock image, plain `podman run --rm
 <image>` is the right tool; it does not bypass pcm, which manages definitions.
 
+## Logs
+
+`pcm logs <service>` prints a service's logs, as `podman compose logs` does for its project: every
+compose service's containers, or one with `-s <compose-service>`. It is a plain command, so it
+works from bash, scripts and agents (the zsh-only `podman compose --pcm logs` now runs it). `pcm
+run`'s one-offs are left out unless `-s` names one (its name is in `pcm ps`). It exits 1 when the
+service has no containers.
+
+```sh
+pcm logs ui --tail 50          # the last 50 lines of each container
+pcm logs app -s worker -f      # follow compose service worker
+pcm logs app -- -t             # anything after -- goes on to compose logs
+```
+
 ## Provisioning for a consumer outside pcm
 
 A definition's `provision` hook normally runs for another definition that lists it under

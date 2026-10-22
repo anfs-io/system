@@ -148,7 +148,7 @@ x-pcm:
 The only set today is `anfs-sources`, the source repos resolved to their real paths. Generated
 mounts are not in `volumes:`, so the volume rules above don't apply to them.
 
-### Snapshots, run, exec and shell
+### Snapshots, run, exec, shell and logs
 
 - `pcm run <svc> [-s compose-svc] [-u user] [--keep] -- cmd` runs a command in a new one-off
   container of the service (`docker compose run`): its image, env (`local.env` included), network,
@@ -160,6 +160,9 @@ mounts are not in `volumes:`, so the volume rules above don't apply to them.
 These work on any running service:
 - `pcm exec <svc> [-u user] [-s compose-svc] -- cmd` runs a command in its container.
 - `pcm shell <svc> [-u user]` opens that user's login shell.
+- `pcm logs <svc> [-s compose-svc] [-f] [--tail N] [--since T]` shows its logs (all its compose
+  services without `-s`). Use it, not `podman compose --pcm logs` (a zsh function, absent in bash
+  and non-interactive shells) or `podman logs <container>`.
 - `pcm snapshot <svc> <name>` saves the service: each container committed to an image, plus a
   copy of its data dir.
 - `pcm reset -y <svc> <name>` goes back to a snapshot and keeps running from it.
@@ -303,7 +306,7 @@ before varlock resolves.
 3. `pcm validate <name>`. Fix every error. Treat warnings (image VOLUMEs, host-port clashes with
    other definitions) as bugs unless there's a reason.
 4. `pcm list` shows it (and whether it shadows or is shadowed), then `pcm up <name>`. Commit it in its source repo.
-5. Check it: `pcm ps`, `podman compose --pcm logs -f <name>`, then `pcm down <name>`.
+5. Check it: `pcm ps`, `pcm logs <name> --tail 50`, then `pcm down <name>`.
 
 Only report the definition as working after `pcm validate` passes and `pcm up` starts it
 healthy. If you couldn't run them, say so.

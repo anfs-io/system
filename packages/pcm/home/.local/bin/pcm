@@ -58,8 +58,9 @@ A <service> is `name` or `source/name`. A plain name resolves to the highest-pri
 source that defines it: local ($PCM_CONTAINERS_HOME), then the anfs sources in order.
 Only one service of a name runs at a time; `source/name` picks which definition.
 
-Any compose subcommand also works via the podman wrapper in pcm.zsh:
-  podman compose --pcm logs -f postgres
+Logs: `pcm logs <service> [-s NAME] [-f] [--tail N]`, from any shell. Other compose
+subcommands work in zsh through the podman wrapper in pcm.zsh (its logs is pcm logs):
+  podman compose --pcm restart postgres
 
 Manifest: a service's container.yml beside its compose.yml says what it is
 

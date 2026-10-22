@@ -118,7 +118,7 @@ compose_command() {
 }
 
 # Internal: entry point for `podman compose --pcm ...` (--pcm already stripped).
-# Falls back to plain compose with a warning when no pcm service is named.
+# Falls back to plain compose with a warning when no pcm service is named; logs is cmd_logs.
 compose_wrapper() {
   PRE=()
   while [[ $# -gt 0 && "$1" == -* ]]; do PRE+=("$1"); shift; done
@@ -131,6 +131,19 @@ compose_wrapper() {
   if [[ $# -eq 0 || "$named" == false ]]; then
     anfs_warn "--pcm given but no pcm service named; running plain ${RUNNER[*]}"
     exec "${RUNNER[@]}" ${PRE[@]+"${PRE[@]}"} "$@"
+  fi
+
+  # logs is `pcm logs` (logs.sh): one service, the rest its options
+  if [[ "$1" == logs ]]; then
+    shift
+    local -a svcs=() rest=()
+    for arg in "$@"; do
+      if is_service "$arg"; then svcs+=("$arg"); else rest+=("$arg"); fi
+    done
+    (( ${#svcs[@]} == 1 )) || { anfs_warn "logs: one service at a time (pcm logs <service>)"; return 64; }
+    [[ ${#PRE[@]} -eq 0 ]] || anfs_warn "logs: ignoring ${PRE[*]}"
+    cli_call logs "${svcs[0]}" ${rest[@]+"${rest[@]}"}
+    return
   fi
 
   compose_command "$@"
