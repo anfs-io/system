@@ -236,3 +236,43 @@ x-pcm:
   [[ "$output" == *"0.0.0.0:80->80/tcp"* ]]
   [[ "$output" =~ app_web_1\ +Up\ 2\ hours ]]
 }
+
+# A compose runner that, like podman-compose 1.6, runs `podman rmi` for down --rmi with the images
+# of the project's containers, and with none prints podman's error (r-20261022-3)
+rmi_runner() {
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$COMPOSE_LOG"\n[[ " $* " != *" --rmi "* || -n "$BUILT" ]] || echo "Error: image name or ID must be specified" >&2\n' > "$T/bin/compose"
+}
+
+@test "remove: a stock image (no build:) asks compose for no --rmi; nothing from podman's rmi" {
+  define "$T/src/a/containers" app
+  load_sources
+  rmi_runner
+  SHOWN=a/app BUILT=""
+  export BUILT
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Error:"* ]]
+  [[ "$output" != *"images "* ]]
+  grep -q -- ' down --volumes --remove-orphans$' "$COMPOSE_LOG"
+}
+
+@test "remove: a built image goes with --rmi local while its containers exist; with none, no --rmi" {
+  define "$T/src/a/containers" app 'services:
+  app:
+    build: .
+    image: app'
+  load_sources
+  rmi_runner
+  SHOWN=a/app BUILT=localhost/app
+  export BUILT
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"images       the ones compose built"* ]]
+  grep -q -- ' down --volumes --remove-orphans --rmi local$' "$COMPOSE_LOG"
+  : > "$COMPOSE_LOG"
+  SHOWN="" BUILT=""
+  run cli_call remove -y app </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"Error:"* ]]
+  grep -q -- ' down --volumes --remove-orphans$' "$COMPOSE_LOG"
+}

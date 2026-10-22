@@ -14,6 +14,11 @@ remove_data_dir() {
   fi
 }
 
+# Whether service $1's definition builds an image (a service with build:)
+builds_images() {
+  yq eval -e '[.services[] | select(has("build"))] | length > 0' "$(compose_file "$1")" >/dev/null 2>&1
+}
+
 # What `remove` will do to service $1, for the confirmation
 remove_summary() {
   local id="$1" name c spec dep size data users=""
@@ -33,7 +38,7 @@ remove_summary() {
   fi
   [[ ! -f "$(pcm_state_env "$id")" ]] || echo "  state        $(tilde "$(pcm_state_env "$id")")  (deleted; fetched again on up)"
 
-  if yq eval -e '[.services[] | select(has("build"))] | length > 0' "$(compose_file "$id")" >/dev/null 2>&1; then
+  if builds_images "$id"; then
     echo "  images       the ones compose built (pulled images are kept)"
   fi
 
@@ -94,6 +99,7 @@ cmd_remove() {
 
   export_podman_socket "${ORDER[@]}"
   local spec dep oneoffs rc=0
+  local -a rmi
   for id in "${ORDER[@]}"; do
     PROVISIONED=()
     compose_flags "$id" || return 1
@@ -108,7 +114,11 @@ cmd_remove() {
     # pcm run's one-offs first, whatever the compose provider's down does with them
     oneoffs=$(oneoff_containers "$id" | paste -sd ' ' -) || true
     [[ -z "$oneoffs" ]] || podman rm -f $oneoffs >/dev/null || { anfs_warn "failed to remove $id's one-offs: $oneoffs"; rc=1; }
-    compose_run "$id" "${FLAGS[@]}" down --volumes --remove-orphans --rmi local || {
+    # --rmi local only with something compose built: podman-compose takes the images from the
+    # project's containers and runs `podman rmi` even with none ("image name or ID must be specified")
+    rmi=()
+    if builds_images "$id" && [[ -n "$(project_containers "$id" -a)" ]]; then rmi=(--rmi local); fi
+    compose_run "$id" "${FLAGS[@]}" down --volumes --remove-orphans ${rmi[@]+"${rmi[@]}"} || {
       anfs_warn "failed to remove $id's containers; its data is kept"
       rc=1
       continue
