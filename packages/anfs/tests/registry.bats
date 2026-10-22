@@ -564,9 +564,15 @@ SH
   local others="|NAME ARCH BACKEND PID SSH|NAME BUILD|TOOL LISTENER STATUS HANDLER|STEP PACKAGE STATUS DETAIL|CHECK STATUS DETAIL|KIND RESOURCE DECLARED ACTUAL FROM|NAME VALUE FROM|TOOL NAME VALUE FROM|"
   while IFS= read -r line; do
     head="${line#*anfs_table \"}" head="${head%%\"*}"
+    # push's list (lib/anfs/repo.sh) is headed by the kind its caller names, checked below
+    [[ "$head" != '${kind^^} STATUS BRANCH UPSTREAM' ]] || continue
     [[ " $head " != *" STATE "* ]] || bad+="$line"$'\n'
     [[ "$kinds" == *" ${head%% *} "* || "$others" == *"|$head|"* ]] || bad+="$line"$'\n'
   done < <(grep -rh 'anfs_table "' "$root"/*/home | grep -v '^[[:space:]]*#')
+  while IFS= read -r line; do
+    head="${line#*anfs_repo_push_cli }" head="${head%% *}"
+    [[ "$kinds" == *" ${head^^} "* ]] || bad+="$line"$'\n'
+  done < <(grep -rhE '^[[:space:]]*anfs_repo_push_cli [a-z]' "$root"/*/home)
   [ -z "$bad" ] || { printf '%s' "$bad"; false; }
 }
 

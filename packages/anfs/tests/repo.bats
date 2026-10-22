@@ -167,3 +167,79 @@ push_more() {
   run anfs_repo_ssh "$T/none"
   [ "$status" -eq 1 ]
 }
+
+# The commit <ref> of <name>'s bare remote
+remote_rev() { git -C "$T/remotes/$1.git" rev-parse "$2"; }
+
+@test "push: ahead is pushed (plain git push), and what was found is set; nothing ahead is 2" {
+  local url d="$T/c" rc=0
+  url=$(remote r)
+  anfs_repo_clone "$url" "$d"
+  anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 2 ]
+  [ "$ANFS_REPO_BRANCH $ANFS_REPO_UPSTREAM $ANFS_REPO_AHEAD" = "main origin/main 0" ]
+  git -C "$d" commit -q --allow-empty -m a
+  git -C "$d" commit -q --allow-empty -m b
+  git -C "$d" tag local-tag
+  rc=0
+  anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 0 ]
+  [ "$ANFS_REPO_BRANCH $ANFS_REPO_UPSTREAM $ANFS_REPO_AHEAD" = "main origin/main 2" ]
+  [ "$(remote_rev r main)" = "$(git -C "$d" rev-parse HEAD)" ]
+  # tags only as the repo's config says
+  [ "$(git -C "$T/remotes/r.git" tag)" = v1 ]
+  run anfs_repo_push "$d"
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
+}
+
+@test "push: -n pushes nothing; a dirty clone pushes its commits and keeps its changes" {
+  local url d="$T/c" before rc=0
+  url=$(remote r)
+  anfs_repo_clone "$url" "$d"
+  git -C "$d" commit -q --allow-empty -m a
+  before=$(remote_rev r main)
+  anfs_repo_push "$d" -n || rc=$?
+  [ "$rc" -eq 0 ]
+  [ "$ANFS_REPO_AHEAD" = 1 ]
+  [ "$(remote_rev r main)" = "$before" ]
+  echo mine >> "$d/README"
+  run anfs_repo_push "$d"
+  [ "$status" -eq 0 ]
+  [ "$(remote_rev r main)" = "$(git -C "$d" rev-parse HEAD)" ]
+  [ "$(tail -1 "$d/README")" = mine ]
+}
+
+@test "push: no upstream 3, detached 4, not a clone 5; the remote moved on is 1 with git's line" {
+  local url d="$T/c" before rc=0
+  url=$(remote r)
+  anfs_repo_clone "$url" "$d"
+  git -C "$d" checkout -qb loose
+  git -C "$d" commit -q --allow-empty -m a
+  rc=0; anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 3 ]
+  [ "$ANFS_REPO_BRANCH" = loose ] && [ -z "$ANFS_REPO_UPSTREAM" ]
+  [ "$(git -C "$T/remotes/r.git" branch --list loose)" = "" ]
+  git -C "$d" checkout -q --detach
+  rc=0; anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 4 ]
+  [ -z "$ANFS_REPO_BRANCH" ]
+  rc=0; anfs_repo_push "$T/none" || rc=$?
+  [ "$rc" -eq 5 ]
+  mkdir "$T/plain"
+  rc=0; anfs_repo_push "$T/plain" || rc=$?
+  [ "$rc" -eq 5 ]
+
+  git -C "$d" checkout -q main
+  git -C "$d" commit -q --allow-empty -m mine
+  push_more r theirs
+  before=$(remote_rev r main)
+  rc=0; anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 1 ]
+  [[ "$REPLY" == "! [rejected] main -> main (fetch first)" ]] || { echo "$REPLY"; false; }
+  [ "$(remote_rev r main)" = "$before" ]
+  git -C "$d" remote set-url origin "file://$T/nowhere.git"
+  rc=0; anfs_repo_push "$d" || rc=$?
+  [ "$rc" -eq 1 ]
+  [[ "$REPLY" == fatal:* ]]
+}

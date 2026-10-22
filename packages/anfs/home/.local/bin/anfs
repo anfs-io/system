@@ -13,6 +13,7 @@
 #
 # Commands:
 #   src <add|remove|list|ssh|update>   the source lists (~/.config/anfs/{user,system}.list)
+#   src push [source...|--all] [-n]    push sources ahead of their upstream (lib/anfs/repo.sh)
 #   iso <list|show|pull|add|...>       the ISO catalogue and store (lib/anfs/iso.sh; pmm and
 #                                      ventoy have the same group)
 #   list | show | install | remove | path   stacks (lib/anfs/stacks.sh): the manifest, applied
@@ -85,6 +86,12 @@ cli_cmd "src remove" "Take a source off your list" --alias rm \
 cli_cmd "src ssh" "Switch GitHub HTTPS sources and their remotes to SSH" --arg "[source]"
 cli_cmd "src update" "Clone missing sources and pull the others (local paths are linked,
 never pulled)" --arg "[source...]"
+cli_cmd "src push" "Push the current branch of each source to its upstream (plain git
+push: never forced, no --set-upstream); a source with uncommitted
+changes still pushes its commits. Name sources, or --all" \
+  --opt "--all: Every source ahead of its upstream" \
+  --opt "-n --dry-run: Say what would be pushed: the branch, its upstream, the commits" \
+  --arg "[source...]"
 # The iso group is lib/anfs/iso.sh's, the same in every tool that uses ISOs
 ! declare -F anfs_iso_cli >/dev/null || anfs_iso_cli
 cli_cmd "src install" "Install everything a source holds: its packages (ppm),
@@ -296,6 +303,18 @@ cmd_src_remove() {
 }
 cmd_src_ssh()    { gitsrc_ssh "$@"; }
 cmd_src_update() { gitsrc_update "$@"; }
+# `anfs src push`: every source and where it is, for lib/anfs/repo.sh's push command
+cmd_src_push() {
+  local i
+  _need_lib anfs_repo_push_cli repo.sh
+  ANFS_PUSH_IDS=() ANFS_PUSH_DIRS=()
+  gitsrc_collect
+  for i in "${!GITSRC_NAMES[@]}"; do
+    gitsrc_dir_reply "${GITSRC_NAMES[$i]}"
+    ANFS_PUSH_IDS+=("${GITSRC_NAMES[$i]}") ANFS_PUSH_DIRS+=("$REPLY")
+  done
+  anfs_repo_push_cli source "anfs src list" "$@"
+}
 
 # What cli.sh asks for on a tab press (complete_<kind>)
 complete_source() { gitsrc_collect 2>/dev/null; printf '%s\n' "${GITSRC_NAMES[@]}"; }

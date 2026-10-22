@@ -33,8 +33,9 @@
 # and no tool depends on it.
 #
 # On a terminal, and unless NO_COLOR is set, a STATUS cell that needs a person's attention is
-# colored (_anfs_tone): red for work only this machine has and git does not (dirty), yellow for
-# commits only this clone has (unpushed, no upstream). Piped and --json are never colored.
+# colored (_anfs_tone): red for work only this machine has and git does not (dirty), or a push
+# refused (rejected), yellow for commits only this clone has (unpushed, no upstream, detached).
+# Piped and --json are never colored.
 #
 # ANFS_TABLE=aligned|tsv|json forces a form, ANFS_COLOR=1 color in the aligned form (tests).
 #
@@ -65,8 +66,8 @@ _anfs_json_str() {
 # The SGR color of a status cell, or nothing
 _anfs_tone() {
   case "$1" in
-    dirty|"dirty, "*) REPLY=31 ;;
-    unpushed|"no upstream") REPLY=33 ;;
+    dirty|"dirty, "*|rejected) REPLY=31 ;;
+    unpushed|"no upstream"|detached) REPLY=33 ;;
     *) REPLY="" ;;
   esac
 }

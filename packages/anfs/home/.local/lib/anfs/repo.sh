@@ -6,7 +6,9 @@
 # Like everything in lib/anfs/ it only defines functions, depends on no tool, and is safe under
 # `set -euo pipefail`. Written for the bash floor (5.2, see bash.sh); not in the bootstrap set
 # (install.sh clones core with its own git clone before any library exists). It prints nothing of
-# its own: messages are the caller's, and only git speaks, on error.
+# its own: messages are the caller's, and only git speaks, on error. The one exception is the last
+# section, anfs_repo_push_cli: the `push` command `anfs src push` and `wsm repo push` share, which
+# prints a list and so needs what every tool has loaded (cli.sh, table.sh, log.sh).
 
 # The directory git clone would make for <url>, into REPLY: its last part, without a trailing /
 # or .git (git@host:org/app.git, https://host/org/app/, /srv/app.git, host:app: app). Empty when
@@ -80,6 +82,37 @@ anfs_repo_update() {
   git -C "$1" pull -q
 }
 
+# Push the current branch of the clone at <dir> to its upstream: plain `git push` (quiet), never
+# forced, never --set-upstream, tags only as the repo's config says. With -n, only find out.
+# ANFS_REPO_BRANCH, ANFS_REPO_UPSTREAM and ANFS_REPO_AHEAD hold what was found (empty when not).
+# 0 pushed (with -n: would be); 1 git failed (non-fast-forward, auth, unreachable), with git's first
+# error line in REPLY; 2 nothing ahead (as of the last fetch: nothing is fetched); 3 no upstream;
+# 4 a detached HEAD; 5 not a clone.
+anfs_repo_push() {
+  local dir="$1" dry=false err line
+  local -a w
+  [[ "${2:-}" != -n ]] || dry=true
+  ANFS_REPO_BRANCH="" ANFS_REPO_UPSTREAM="" ANFS_REPO_AHEAD="" REPLY=""
+  [[ -n "$dir" && ( -d "$dir/.git" || -f "$dir/.git" ) ]] || return 5
+  ANFS_REPO_BRANCH=$(git -C "$dir" symbolic-ref -q --short HEAD) || return 4
+  ANFS_REPO_UPSTREAM=$(git -C "$dir" rev-parse -q --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) ||
+    { ANFS_REPO_UPSTREAM=""; return 3; }
+  ANFS_REPO_AHEAD=$(anfs_repo_ahead "$dir")
+  (( ${ANFS_REPO_AHEAD:-0} > 0 )) || return 2
+  ! $dry || return 0
+  err=$(git -C "$dir" push -q 2>&1 >/dev/null) && return 0
+  while IFS= read -r line; do
+    case "$line" in
+      " ! "*|error:*|fatal:*|ERROR:*|"remote: error"*) read -ra w <<< "$line"; REPLY="${w[*]}"; break ;;
+    esac
+  done <<< "$err"
+  if [[ -z "$REPLY" ]]; then
+    while IFS= read -r line; do [[ -z "$line" ]] || { REPLY="$line"; break; }; done <<< "$err"
+  fi
+  REPLY="${REPLY:-git push failed}"
+  return 1
+}
+
 # https://github.com/<x> -> git@github.com:<x>; any other URL unchanged
 anfs_repo_ssh_url() {
   if [[ "$1" == https://github.com/* ]]; then
@@ -98,4 +131,75 @@ anfs_repo_ssh() {
   new=$(anfs_repo_ssh_url "$remote")
   git -C "$1" remote set-url origin "$new" || return 1
   printf '%s\n' "$new"
+}
+
+# --- push, the command: `anfs src push` and `wsm repo push` ----------------------------------------
+
+# `<tool> ... push [name...] [--all] [-n]`. The caller fills ANFS_PUSH_IDS (every repo it has, in
+# its list's order, named as its list names it) and ANFS_PUSH_DIRS (each one's clone; empty when
+# it has none), and passes its kind (source, repository), its list command (for messages) and
+# the names typed; --all and -n are CLI_OPT's. Names are resolved before anything is pushed. One
+# row per repo (<KIND> STATUS BRANCH UPSTREAM; commits and error in --json only); every one is
+# tried, and it returns 1 when any was not pushed (no upstream, detached, rejected, not cloned).
+ANFS_PUSH_IDS=() ANFS_PUSH_DIRS=()
+anfs_repo_push_cli() {
+  local kind="$1" listcmd="$2" all=${CLI_OPT[all]:-false} dry=${CLI_OPT[dry-run]:-false}
+  shift 2
+  local plural="${kind}s" i j name status rc err failed=false rows="" ahead="" n
+  local -a pick=()
+  [[ "$kind" != *y ]] || plural="${kind%y}ies"
+
+  if [[ $# -gt 0 ]]; then
+    ! $all || cli_usage_err "names or --all, not both"
+    for name in "$@"; do
+      j=""
+      for i in "${!ANFS_PUSH_IDS[@]}"; do
+        [[ "${ANFS_PUSH_IDS[$i]}" == "$name" ]] && { j=$i; break; }
+      done
+      [[ -n "$j" ]] || anfs_fail 1 "no $kind '$name' ($listcmd)"
+      [[ " ${pick[*]-} " == *" $j "* ]] || pick+=("$j")
+    done
+  else
+    for i in "${!ANFS_PUSH_IDS[@]}"; do
+      [[ -n "${ANFS_PUSH_DIRS[$i]}" ]] || continue
+      n=$(anfs_repo_ahead "${ANFS_PUSH_DIRS[$i]}")
+      (( ${n:-0} > 0 )) || continue
+      pick+=("$i")
+      ahead+="${ahead:+, }${ANFS_PUSH_IDS[$i]}"
+    done
+    if ! $all; then
+      if [[ -n "$ahead" ]]; then
+        cli_usage_err "name the $plural to push, or --all for every one ahead of its upstream: $ahead"
+      else
+        cli_usage_err "name the $plural to push, or --all (none is ahead of its upstream)"
+      fi
+    fi
+    if [[ ${#pick[@]} -eq 0 ]]; then
+      if anfs_json_on; then echo '[]'; else echo "Nothing to push: no $kind is ahead of its upstream"; fi
+      return 0
+    fi
+  fi
+
+  for i in "${pick[@]}"; do
+    rc=0
+    if $dry; then anfs_repo_push "${ANFS_PUSH_DIRS[$i]}" -n || rc=$?
+    else anfs_repo_push "${ANFS_PUSH_DIRS[$i]}" || rc=$?
+    fi
+    err="$REPLY"
+    case $rc in
+      0) if $dry; then status="would push $ANFS_REPO_AHEAD"; else status="pushed $ANFS_REPO_AHEAD"; fi
+         ! anfs_repo_dirty "${ANFS_PUSH_DIRS[$i]}" || status+=" (uncommitted changes left)" ;;
+      1) status=rejected
+         anfs_warn "${ANFS_PUSH_IDS[$i]}: rejected: $err" ;;
+      2) status="up to date" ;;
+      3) status="no upstream" ;;
+      4) status=detached ;;
+      *) status="not cloned" ;;
+    esac
+    [[ $rc -eq 0 || $rc -eq 2 ]] || failed=true
+    rows+=$(anfs_row "${ANFS_PUSH_IDS[$i]}" "$status" "$ANFS_REPO_BRANCH" "$ANFS_REPO_UPSTREAM" \
+      "$ANFS_REPO_AHEAD" "$([[ $rc -ne 1 ]] || printf '%s' "$err")")$'\n'
+  done
+  printf '%s' "$rows" | anfs_table "${kind^^} STATUS BRANCH UPSTREAM" "$kind status branch upstream commits error"
+  ! $failed
 }
