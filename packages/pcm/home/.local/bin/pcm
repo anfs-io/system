@@ -92,6 +92,20 @@ prints is exported to the service's compose as PCM_<DEP>_<KEY>, e.g.
 PCM_POSTGRES_URL. A value already set in the environment wins. `pcm remove`
 runs the dependency's `deprovision` hook (if present) with the same settings.
 
+Provisioning for a consumer outside pcm (an app run on the host):
+
+  pcm provision postgres --as partitia/shop database=shop    # URL=... HOST=...
+  pcm deprovision postgres --as partitia/shop database=shop
+
+provision starts the service if it is not running (as `pcm up` does), waits for
+it to be healthy and runs its provision hook as up does for a dependent: under
+varlock, with PCM_DEPENDENT set to the --as name (default: external) and the
+key=value args as its settings. stdout is only the hook's KEY=VALUE lines
+(--json: one object); they are secrets, so only their names are logged. The
+args are the command line, which the log records: settings, not secrets.
+deprovision never starts the service: when it is not running, what it
+provisioned is left in place and it exits 1. Either exits 1 with no hook.
+
 Ingress: a service may declare a hostname route instead of (or as well as) a
 host port
 

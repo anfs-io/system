@@ -45,6 +45,30 @@ pcm run app -s worker -- sh            # a shell in a new container of compose s
 There is no `pcm run <image>`. For a throwaway run of a stock image, plain `podman run --rm
 <image>` is the right tool; it does not bypass pcm, which manages definitions.
 
+## Provisioning for a consumer outside pcm
+
+A definition's `provision` hook normally runs for another definition that lists it under
+`x-pcm.depends_on`. `pcm provision` runs it for anything else, such as a Rails app run on the
+host, and `pcm deprovision` undoes it:
+
+```sh
+pcm provision postgres --as partitia/shop database=shop          # URL=... HOST=... PASSWORD=...
+pcm provision postgres --as partitia/shop database=shop --json   # {"URL":"...",...}
+pcm deprovision postgres --as partitia/shop database=shop
+```
+
+`provision` starts the service if it is not running (with what it depends on, as `pcm up` does)
+and waits until it is healthy (`PCM_HEALTH_TIMEOUT`). Then it runs the hook the way `up` runs it for
+a dependent: from the definition's directory under varlock, with `PCM_SERVICE`, `PCM_PROJECT` and
+`PCM_DEPENDENT` (the `--as` name, `external` by default). The `key=value` args are passed as the
+hook's arguments, just as a dependent's `depends_on` settings are. stdout is only the hook's
+`KEY=VALUE` lines, and messages go to stderr. The values are secrets: pcm logs only their names. The
+args are part of the command line, which the anfs log records, so they are settings, not secrets.
+
+`deprovision` runs the `deprovision` hook with the same env and args. It never starts the service:
+when the service is not running, it says what was left in place and exits 1. Both commands exit 1
+when the definition has no such hook.
+
 ## Validate
 
 ```sh

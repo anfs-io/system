@@ -194,6 +194,12 @@ toolkit: write                              # the toolkit API (anfs rpc): read o
   that means a service's own containers filters `label!=io.pcm.oneoff` (`project_containers`,
   `pcm_containers`, `_box_container`); `ps` shows one-offs, `show` names kept ones, `remove` and
   `implode` delete them. There is no `pcm run <image>`: a stock image is `podman run --rm`.
+- **Provisioning for a consumer outside pcm** (`pcm provision|deprovision <service> [--as NAME]
+  [key=value...]`, `lib/pcm/provision.sh`): the hook through `hook_run` (`lib/pcm/deps.sh`), the
+  one `up` and `remove` use for a dependent, with `PCM_DEPENDENT` the `--as` name (`external`).
+  provision starts the service with `compose_command up` when it is not running, then
+  `wait_healthy`; stdout is `hook_pairs` (the KEY=VALUE lines), `--json` an object. Values are
+  never logged, only key names. deprovision never starts the service (exit 1, left in place).
 - Core's own service is `containers/ui` (anfs-ui, see Repository Layout): built from its
   `Containerfile` (`build: target: dev`), the service directory mounted read-only at `/app`, its
   port on `127.0.0.1` unless its `.env.schema`'s `ANFS_UI_BIND` says otherwise; `toolkit: write`.

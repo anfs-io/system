@@ -183,6 +183,30 @@ done. `pcm remove` and `pcm implode` delete a service's snapshots with it.
   is passed.
 - **Rules:** dependencies must name existing definitions, with no cycles.
 
+### Provisioning for a consumer outside pcm
+
+When the consumer is not a pcm definition, for example a Rails app run on the host that needs a
+postgres database, don't run `./provision` by hand: that skips varlock and pcm's environment. Use:
+
+```sh
+pcm provision postgres --as myapp database=myapp           # KEY=VALUE lines on stdout
+pcm provision postgres --as myapp database=myapp --json    # one object
+pcm deprovision postgres --as myapp database=myapp         # when the app is gone
+```
+
+- `provision` starts the service if needed, waits for it to be healthy, then runs the hook as `up`
+  does for a dependent. `--as` sets `PCM_DEPENDENT` (default `external`), and the `key=value` args
+  are the hook's settings.
+- The keys are the hook's own (`URL`, not `PCM_POSTGRES_URL`). The consumer maps them to its own
+  variables, e.g. `DATABASE_URL`.
+- Treat the output as secrets: don't echo it into logs or commit it. Only `pcm provision`'s key
+  names are logged. Don't pass secrets as args, because the command line is logged.
+- `deprovision` doesn't start a stopped service. It says what was left in place and exits 1.
+- Both commands exit 1 if the definition has no such hook.
+- A host-run app reaches the service on its published host port, not by the container name in
+  `HOST`/`URL`, which only resolves on the shared network. Postgres's hook prints the container
+  name, so use the host port (`POSTGRES_PORT`) from the host.
+
 ## .env.schema
 
 This is a [varlock](https://varlock.dev) schema. pcm runs compose and provision hooks through

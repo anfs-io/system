@@ -19,6 +19,15 @@ cli_cmd remove "Down, then delete everything pcm created for it: containers,
 networks, built images, its data under \${PCM_VOLUMES_HOME}/<name>/;
 runs dependencies' deprovision hooks. The definition is kept." --alias rm \
   --opt "-y --yes: Do not ask before deleting" --opt "-f --force: Stop running dependents" --arg "service..."
+cli_cmd provision "Run the service's provision hook for a consumer that is not a pcm
+definition (a host-run app), as up runs it for a dependent: starts the service
+if it is not running, waits for it to be healthy; settings are key=value args.
+Prints the hook's KEY=VALUE lines (secrets: never logged); --json, an object" \
+  --opt "--as NAME: PCM_DEPENDENT, who it is for (default: external)" --arg "service" --arg "[setting...]"
+cli_cmd deprovision "Run the service's deprovision hook for that consumer, with the
+same settings; a service that is not running is not started (what it
+provisioned is left in place, exit 1)" \
+  --opt "--as NAME: PCM_DEPENDENT, who it was for (default: external)" --arg "service" --arg "[setting...]"
 cli_cmd ps "pcm's containers (podman ps; options go on to it)" --passthrough --arg "[service...]"
 cli_cmd exec "Run a command in a running service's container: <service> -- <cmd>..." --passthrough \
   --opt "-u --user USER: As that user" --opt "-s --service NAME: In that compose service" \

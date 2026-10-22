@@ -50,28 +50,44 @@ dep_settings() {
 #   deprovision  on `remove` of a dependent, after it is down; undoes what provision created
 # Both get the dependent's settings for it (x-pcm.depends_on map form) as key=value args, and
 # PCM_SERVICE, PCM_PROJECT (the dependency) and PCM_DEPENDENT (the service) in the environment.
-# A proxy's hooks get the service's ingress as their settings instead (ingress.sh).
+# A proxy's hooks get the service's ingress as their settings instead (ingress.sh). `pcm provision`
+# and `pcm deprovision` run them for a consumer that is not a pcm definition (provision.sh).
 
 has_hook() {
   [[ -x "$(svc_dir "$2")/$1" ]]
 }
 
-# Run hook $1 of dependency $3 for service $2, whose depends_on names it as $4. Prints the hook's
-# stdout (unredacted: provision's carries connection details).
-run_hook() {
-  local hook_name="$1" service="$2" dep="$3" spec="$4" hook line
+# Run hook $1 of service $2 for a dependent named $3 (a pcm service's name, or what `pcm provision
+# --as` says), with the key=value settings $4.... Prints the hook's stdout (unredacted:
+# provision's carries connection details). `up`, `remove` and `pcm provision` all run hooks here.
+hook_run() {
+  local hook_name="$1" dep="$2" dependent="$3" hook
+  shift 3
   hook="$(svc_dir "$dep")/$hook_name"
   [[ -x "$hook" ]] || return 0
+  (
+    export PCM_SERVICE="$(svc_name "$dep")" PCM_PROJECT="$(project_name "$dep")" PCM_DEPENDENT="$dependent"
+    service_run "$dep" --no-redact-stdout -- "$hook" "$@"
+  )
+}
 
+# Run hook $1 of dependency $3 for service $2, whose depends_on names it as $4
+run_hook() {
+  local hook_name="$1" service="$2" dep="$3" spec="$4" line
   local -a settings=()
   while IFS= read -r line; do
     [[ -n "$line" ]] && settings+=("$line")
   done < <(dep_settings "$service" "$spec")
+  hook_run "$hook_name" "$dep" "$(svc_name "$service")" ${settings[@]+"${settings[@]}"}
+}
 
-  (
-    export PCM_SERVICE="$(svc_name "$dep")" PCM_PROJECT="$(project_name "$dep")" PCM_DEPENDENT="$(svc_name "$service")"
-    service_run "$dep" --no-redact-stdout -- "$hook" ${settings[@]+"${settings[@]}"}
-  )
+# The KEY=VALUE lines of a provision hook's output (stdin); anything else it printed is dropped
+hook_pairs() {
+  local line
+  while IFS= read -r line; do
+    [[ "$line" =~ ^[A-Z][A-Z0-9_]*= ]] && printf '%s\n' "$line"
+  done
+  return 0
 }
 
 # Run dependency $2's provision hook for service $1 ($3: the spec as written).
@@ -92,12 +108,12 @@ provision() {
   # An edge publishing the first host knows its public URL; the proxy only knows the local one
   [[ "$role" == proxy ]] && public=$(ingress_public_url "$service")
   while IFS= read -r line; do
-    [[ "$line" =~ ^[A-Z][A-Z0-9_]*= ]] || continue
+    [[ -n "$line" ]] || continue
     [[ -n "$public" && "$line" == URL=* ]] && line="URL=$public"
     var="$prefix${line%%=*}"
     [[ -n "${!var+x}" ]] && continue  # a value already in the environment wins
     PROVISIONED+=("$var=${line#*=}")
-  done <<< "$output"
+  done < <(hook_pairs <<< "$output")
 }
 
 # Start and provision a service's x-pcm dependencies (recursively).
