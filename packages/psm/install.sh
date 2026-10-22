@@ -93,10 +93,9 @@ _psm_package_meta() {
   echo "$ANFS_SOURCES_HOME/${1%%/*}/packages/${1#*/}/package.yml"
 }
 
-# Agent ids a package declares under meta.agent, one per line
+# Agent ids a package declares under meta.agent, one per line (lib/anfs/skill.sh)
 _psm_package_agents() {
-  local meta
-  meta=$(_psm_package_meta "$1")
-  [[ -f "$meta" ]] || return 0
-  yq -r '[.meta.agent] | flatten | .[] | select(. != null)' "$meta" 2>/dev/null || true
+  # shellcheck source=/dev/null
+  declare -F anfs_skill_package_agents >/dev/null || source "$HOME/.local/lib/anfs/skill.sh"
+  anfs_skill_package_agents "$1"
 }

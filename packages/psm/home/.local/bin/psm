@@ -21,13 +21,12 @@ source "$ANFS_LIB/callbacks.sh"
 source "$ANFS_LIB/sources.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/resolve.sh"
+# The engine: agents, the skills CLI, rows, what is installed (the global scope, -g, here)
+# shellcheck source=/dev/null
+source "$ANFS_LIB/skill.sh"
 anfs_gitsrc_env
 anfs_tool_paths psm
-: "${PSM_CLI_VERSION:=latest}"
 export PSM_CONFIG_HOME
-
-# ppm's state, used to detect installed agent packages
-PPM_INSTALLED_DIR="${PPM_STATE_HOME:-$XDG_STATE_HOME/ppm}/installed"
 
 # The command line (lib/anfs/cli.sh): every command is a cmd_<name> function below; the registry
 # is the help, in this order, and the completion's command list. `path` is plumbing for the
@@ -102,55 +101,13 @@ warn() { anfs_warn "$@"; }
 # Wrong arity for a known command: the same wording and exit code as every tool (lib/anfs/cli.sh)
 usage_err() { cli_usage "$@"; }
 
-# node comes from mise via the `node` dependency
-require_npx() {
-  command -v npx &>/dev/null && return 0
-  command -v mise &>/dev/null && eval "$(mise env -s bash 2>/dev/null)" || true
-  command -v npx &>/dev/null || die "npx not found — install node first: ppm install node"
-}
+require_npx() { anfs_skill_require || exit 1; }
 
-# </dev/null: the CLI reads stdin, which would otherwise swallow rows from the
-# while-loops feeding it
-skills_cli() {
-  npx --yes "skills@$PSM_CLI_VERSION" "$@" </dev/null
-}
+# The skills CLI in the global scope (lib/anfs/skill.sh puts -g before the first option)
+skills_cli() { anfs_skill_cli -g "$@"; }
 
-# Skills-CLI agent ids a ppm package declares under `meta.agent` (one or a list),
-# one per line; nothing when the package or its package.yml is gone
-# Usage: _package_agents <repo/pkg>
-_package_agents() {
-  local meta="$ANFS_SOURCES_HOME/${1%%/*}/packages/${1#*/}/package.yml"
-  [[ -f "$meta" ]] || return 0
-  yq -r '[.meta.agent] | flatten | .[] | select(. != null)' "$meta" 2>/dev/null || true
-}
-
-# Skills-CLI agent ids for every installed ppm package that declares `meta.agent`.
-# The package dir is derived from the tracker path so that a package overridden
-# by a higher-priority repo resolves to the one actually installed.
-_installed_agents() {
-  local tracker repo pkg
-
-  for tracker in "$PPM_INSTALLED_DIR"/*/*.yml; do
-    [[ -f "$tracker" ]] || continue
-    repo=$(basename "$(dirname "$tracker")")
-    pkg=$(basename "$tracker" .yml)
-    _package_agents "$repo/$pkg"
-  done | sort -u | paste -sd, -
-}
-
-# `skills list --json` reports agents by display name, not id. Unknown ids
-# return 1, so those sources are always re-added rather than wrongly skipped.
-_agent_display() {
-  case "$1" in
-    claude-code)     echo "Claude Code" ;;
-    opencode)        echo "OpenCode" ;;
-    pi)              echo "Pi" ;;
-    hermes-agent)    echo "Hermes Agent" ;;
-    antigravity)     echo "Antigravity" ;;
-    antigravity-cli) echo "Antigravity CLI" ;;
-    *)               return 1 ;;
-  esac
-}
+_installed_agents() { anfs_skill_agents; }
+_agent_display() { anfs_skill_display "$1"; }
 
 # Config files, all or by name (basename without extension)
 _config_files() {
@@ -174,13 +131,7 @@ _config_files() {
   done
 }
 
-# Skill names in a directory, one per line: every <name>/SKILL.md directly under
-# it. Not -type f: ppm stows SKILL.md as a symlink.
-_dir_skills() {
-  local file
-  find "$1" -mindepth 2 -maxdepth 2 -name SKILL.md 2>/dev/null | sort \
-    | while IFS= read -r file; do basename "$(dirname "$file")"; done
-}
+_dir_skills() { anfs_skill_dir_skills "$1"; }
 
 # The anfs sources holding skills/, one row each: <alias>|<skills dir>|<skills csv>|
 # Named rather than passed as "*" so each skill gets a real installed check and prune sees them
@@ -248,44 +199,23 @@ _config_sources() {
   done
 }
 
-_expand_home() {
-  case "$1" in
-    "~")   echo "$HOME" ;;
-    "~/"*) echo "$HOME/${1#\~/}" ;;
-    *)     echo "$1" ;;
-  esac
-}
+_expand_home() { anfs_skill_expand "$1"; }
 
 # Inverse of _expand_home: configs record ~/src/skills, not /Users/x/src/skills
 _abbreviate() { anfs_display "$1"; }
 
-_is_local() {
-  [[ "$1" == /* || "$1" == ./* || "$1" == ../* ]]
-}
+_is_local() { anfs_skill_is_local "$1"; }
 
-# Installed skills as |-separated rows: <name>|<agent display names csv>|<source>.
-# Loaded once per run; a failed lookup yields nothing, so nothing is skipped.
+# Installed skills (lib/anfs/skill.sh): <name>|<agent display names csv>|<source> rows in
+# INSTALLED, loaded once per run; a failed lookup yields nothing, so nothing is skipped
 INSTALLED=""
-_load_installed() {
-  INSTALLED=$(skills_cli list -g --json 2>/dev/null \
-    | yq -p json -r '.[] | [.name, ((.agents // []) | join(",")), (.source // "")] | join("|")' 2>/dev/null) || true
-}
+_load_installed() { anfs_skill_load -g; INSTALLED="$ANFS_SKILL_INSTALLED"; }
 
 # Agent display names a skill is installed for; returns 1 if not installed
-_skill_agents() {
-  awk -F'|' -v n="$1" '$1 == n { print $2; found = 1; exit } END { exit !found }' <<< "$INSTALLED"
-}
+_skill_agents() { anfs_skill_installed_agents "$1"; }
 
 # True when <skill> is installed for every agent id in <agents csv>
-_has_skill() {
-  local have agent display
-  have=$(_skill_agents "$1") || return 1
-
-  for agent in ${2//,/ }; do
-    display=$(_agent_display "$agent") || return 1
-    [[ ",$have," == *",$display,"* ]] || return 1
-  done
-}
+_has_skill() { anfs_skill_has "$1" "$2"; }
 
 # --- repo ---
 
@@ -420,7 +350,7 @@ cmd_agents_remove() {
     fi
     echo "unlink $id: ${names[*]}"
     anfs_confirm "agents remove unlinks ${#names[@]} skills from $id" "Unlink them from $id?"
-    skills_cli remove "${names[@]}" -g -y -a "$id" || { warn "skills remove for $id failed"; failed=$((failed + 1)); }
+    anfs_skill_unlink -g "$id" "${names[@]}" || { warn "skills remove for $id failed"; failed=$((failed + 1)); }
   done
 
   # Universal agents read ~/.agents/skills itself: there is no link of theirs to remove, and the
@@ -449,54 +379,12 @@ cmd_sync() {
   _sync_rows "$force_local" "$detected" < <(_config_sources ${names[@]+"${names[@]}"})
 }
 
-# Sync |-separated source rows read from stdin (see _config_sources)
+# Sync |-separated source rows read from stdin (see _config_sources), then say how it went
 # Usage: _sync_rows <force_local> <detected agents csv>
 _sync_rows() {
-  local force_local="$1" detected="$2"
-  local config repo skills agents item
-  local installed=0 current=0 failed=0 waiting=0
-  local -a list args
-
-  while IFS='|' read -r config repo skills agents; do
-    [[ -n "$repo" ]] || continue
-    repo=$(_expand_home "$repo")
-    [[ -n "$agents" ]] || agents=$detected
-
-    # No agent installed yet is the normal state of a fresh machine, not a failure: installing an
-    # agent package syncs these (psm's ppm callback)
-    if [[ -z "$agents" ]]; then
-      waiting=$((waiting + 1))
-      continue
-    fi
-
-    args=(add "$repo" -g -y)
-    IFS=',' read -r -a list <<< "$skills"
-    for item in "${list[@]}"; do
-      # "*" can't be enumerated ahead of time; local copies go stale on edit
-      if [[ "$item" == '*' ]] || { $force_local && _is_local "$repo"; } || ! _has_skill "$item" "$agents"; then
-        args+=(-s "$item")
-      fi
-    done
-
-    if [[ ${#args[@]} -eq 4 ]]; then
-      echo "ok     $repo"
-      current=$((current + 1))
-      continue
-    fi
-
-    for item in ${agents//,/ }; do
-      args+=(-a "$item")
-    done
-
-    echo "sync   $repo"
-    if skills_cli "${args[@]}"; then
-      installed=$((installed + 1))
-    else
-      warn "skills add $repo failed"
-      failed=$((failed + 1))
-    fi
-  done
-
+  local rc=0
+  anfs_skill_sync_rows -g "$1" "$2" || rc=1
+  local installed=$ANFS_SKILL_SYNCED current=$ANFS_SKILL_CURRENT failed=$ANFS_SKILL_FAILED waiting=$ANFS_SKILL_WAITING
   if [[ $((installed + current + failed + waiting)) -eq 0 ]]; then
     echo "No skill sources: no anfs source has skills/ and $PSM_CONFIG_HOME has no configs"
   elif [[ $((installed + current + failed)) -eq 0 ]]; then
@@ -506,7 +394,7 @@ _sync_rows() {
     [[ $waiting -eq 0 ]] || note=", $waiting waiting for an agent"
     echo "Sources: $installed synced, $current up to date, $failed failed$note"
   fi
-  [[ $failed -eq 0 ]]
+  return $rc
 }
 
 # `psm install <source/|source/skill>...`: sync a source's skills, or one of them
@@ -531,7 +419,7 @@ cmd_install() {
 
 cmd_update() {
   require_npx
-  skills_cli update -g -y || warn "skills update failed"
+  skills_cli update -y || warn "skills update failed"
   CLI_OPT[local]=true
   cmd_sync "$@"
 }
@@ -553,12 +441,8 @@ cmd_list() {
     for item in "${list[@]}"; do
       if [[ "$item" == '*' ]]; then
         status="*"
-      elif _has_skill "$item" "$agents"; then
-        status="ok"
-      elif _skill_agents "$item" >/dev/null; then
-        status="partial"
       else
-        status="missing"
+        status=$(anfs_skill_status "$item" "$agents")
       fi
       anfs_row "$config/$item" "$status" "$config" "$repo"
     done
@@ -593,13 +477,13 @@ cmd_prune() {
 
   printf 'undeclared  %s\n' "${orphans[@]}"
   anfs_confirm "prune removes ${#orphans[@]} skills no config declares" "Remove them?"
-  skills_cli remove -g -y "${orphans[@]}"
+  skills_cli remove -y "${orphans[@]}"
 }
 
 cmd_remove() {
   require_npx
   anfs_confirm "remove takes $* away from every agent" "Remove $*?"
-  skills_cli remove -g -y "$@"
+  skills_cli remove -y "$@"
 }
 
 cmd_path() {
@@ -662,7 +546,7 @@ cmd_implode() {
 
   local rc=0
   if [[ ${#names[@]} -gt 0 ]]; then
-    skills_cli remove "${names[@]}" -g -y || { warn "skills remove failed"; rc=1; }
+    skills_cli remove "${names[@]}" -y || { warn "skills remove failed"; rc=1; }
   fi
   for dir in "$PSM_CONFIG_HOME" "$PSM_DATA_HOME"; do
     [[ -e "$dir" ]] || continue

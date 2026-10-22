@@ -11,6 +11,7 @@ setup() {
   XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
   XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME PSM_CONFIG_HOME PPM_STATE_HOME
+  unset ANFS_SKILLS_CLI_VERSION PSM_CLI_VERSION
   export HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
   export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
   mkdir -p "$HOME/.local/lib" "$HOME/.config/anfs" "$HOME/.local/share/anfs/sources" "$T/bin"
@@ -19,12 +20,13 @@ setup() {
   # npx stub: `skills list -g --json` lists $NPX_LIST (nothing by default); everything else is logged
   cat > "$T/bin/npx" <<'STUB'
 #!/usr/bin/env bash
+echo "$2" > "$NPX_VER"
 shift 2   # --yes skills@<version>
 [[ "$1" == list ]] && { echo "${NPX_LIST:-[]}"; exit 0; }
 echo "$*" >> "$NPX_LOG"
 STUB
   chmod +x "$T/bin/npx"
-  export NPX_LOG="$T/npx.log" PATH="$T/bin:$PATH"
+  export NPX_LOG="$T/npx.log" NPX_VER="$T/npx.ver" PATH="$T/bin:$PATH"
 
   # An installed agent package: ai/pi with meta.agent: pi
   source_dir ai
@@ -184,4 +186,15 @@ psm() { "$PSM" "$@"; }
   run psm repo rm -y "$T/mine"
   [ "$status" -eq 0 ]
   [ ! -e "$f" ]
+}
+
+@test "the CLI's version is ANFS_SKILLS_CLI_VERSION (latest by default); PSM_CLI_VERSION is not read" {
+  source_dir acme
+  skill acme hello
+  psm sync >/dev/null
+  [ "$(cat "$NPX_VER")" = skills@latest ]
+  PSM_CLI_VERSION=1.0.0 psm sync >/dev/null
+  [ "$(cat "$NPX_VER")" = skills@latest ]
+  ANFS_SKILLS_CLI_VERSION=1.7.4 psm sync >/dev/null
+  [ "$(cat "$NPX_VER")" = skills@1.7.4 ]
 }
