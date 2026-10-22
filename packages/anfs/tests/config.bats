@@ -5,6 +5,8 @@
 # --export is for eval; anfs config list --all is every installed tool's.
 # Run: bats packages/anfs/tests/config.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   PKGS="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
   LIB="$PKGS/anfs/home/.local/lib/anfs"
@@ -229,10 +231,13 @@ t() {
   [[ "$output" == *"ANFS_UPDATE_CACHE_DURATION"$'\t'"86400"$'\t'"shipped"* ]]
   [[ "$output" == *"HOMEBREW_NO_AUTO_UPDATE"$'\t'"1"$'\t'"shipped"* ]]
   [[ "$output" == *"HOMEBREW_NO_ENV_HINTS"* && "$output" != *PCM_* && "$output" != *ANFS_WORK* ]]
+  # j must be a job (lib/anfs/work.sh: the installed anfs stops on one that is not); it has no
+  # copy of anfs, so the installed one runs and says so on stderr
+  mkdir -p "$HOME/work/j" && echo 'branch: j' > "$HOME/work/j/.job.yml"
   t ANFS_WORK=j anfs config list
   [[ "$output" == *"ANFS_WORK"$'\t'"j"$'\t'"env"* ]]
   t ANFS_WORK=j anfs config get ANFS_WORK
-  [ "$output" = j ]
+  [ "${lines[0]}" = "anfs: running job j" ] && [ "${lines[1]}" = j ]
   # a line in anfs.local.env is ignored, with the loader's warning, and gives no row
   printf 'ANFS_WORK=x\n' > "$CFG/anfs/anfs.local.env"
   t anfs config list

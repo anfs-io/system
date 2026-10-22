@@ -8,6 +8,8 @@
 # pcm's helper (pcm_setup, define, add_source) without the helper's off switch.
 # Run: bats packages/anfs/tests/pcm-local-env.bats
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 load ../../pcm/tests/helper
 PCM_PKG="$(cd "$BATS_TEST_DIRNAME/../../pcm" && pwd)"
 setup_file() { :; }   # the helper's skips every test while pcm's suites are off; this file runs
