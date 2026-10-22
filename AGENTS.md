@@ -787,8 +787,8 @@ Each tool owns its settings, beside its other config (`lib/anfs/paths.sh`, "Sett
   `packages/anfs/tests/settings.bats` holds each core tool to it: a `${<TOOL>_X:-…}` the code reads
   with a default has its line, a line names something the code reads.
 - **`~/.config/<tool>/<tool>.local.env`** beside it: this machine's values. The person's file:
-  nothing writes it as a side effect (install.sh seeds no settings file); plan 02's `<tool> config
-  set` will be the one command that does.
+  nothing writes it as a side effect (install.sh seeds no settings file); `<tool> config set` is
+  the one command that does.
 - **anfs's own** are `~/.config/anfs/anfs.env` and `anfs.local.env`: `ANFS_*` (what more than one
   tool shares: the sources' TTL, `ANFS_SKILLS_CLI_VERSION` for psm and wsm, the API's port) and
   Homebrew's `HOMEBREW_NO_AUTO_UPDATE`, `HOMEBREW_NO_ENV_HINTS`, which every tool runs brew with.
@@ -813,16 +813,43 @@ Each tool owns its settings, beside its other config (`lib/anfs/paths.sh`, "Sett
 - Names: a tool's settings carry its prefix (`PCM_`, `OPM_`); `ANFS_` is for what tools share.
   Paths that locate a tree (`PCM_CONTAINERS_HOME`), test hooks and internal switches (`*_IN_FNOX`,
   `*_BASH_REEXEC`, `*_LIB`, `*_BIN`) are not settings and are not listed.
-- The API, for code that reads or writes the files (plan 02's `config` command, pcm's
-  per-container settings): `anfs_conf_files <tool>` (the two paths, local first),
-  `anfs_conf_read <file>` (`NAME<TAB>value` per line as written, nothing exported),
-  `anfs_conf_expand <value>` (what the loader exports, into `REPLY`), `anfs_conf_env_only
-  <name>`, `anfs_load_conf [tool]`.
+- The API, for code that reads or writes the files (`lib/anfs/config.sh`, pcm's per-container
+  settings): `anfs_conf_files <tool>` (the two paths, local first), `anfs_conf_read <file>`
+  (`NAME<TAB>value` per line as written, nothing exported), `anfs_conf_expand <value>` (what the
+  loader exports, into `REPLY`), `anfs_conf_env_only <name>`, `anfs_load_conf [tool]`, and
+  `ANFS_CONF_LOADED` (the names the loader exported in this process; not exported).
 - A layer (`user/anfs`) may ship its own `anfs.env`, which replaces core's whole; a machine's
   values belong in `anfs.local.env`. The one file for every tool's settings is gone: nothing
   reads a settings file but the two of anfs's and the two of the running tool's.
-- `<tool> config` (`list`, `get`, `set`, `unset`) is plan 02's (`units/config.md`); until it lands,
-  the files are edited by hand.
+
+**`<tool> config`** (`lib/anfs/config.sh`): every tool that ships a `<tool>.env` has the group,
+scoped to its own settings, so `pcm config set PCM_HEALTH_TIMEOUT=300` (or `anfs container config
+set ...`, through the seam) writes `~/.config/pcm/pcm.local.env`.
+
+| Command | Does |
+| --- | --- |
+| `<tool> config list` | `NAME VALUE FROM`: every setting the tool declares, its effective value (a file's `~` expanded) and where it is from |
+| `<tool> config list --export` | `export NAME='value'` per setting, for `eval "$(pcm config list --export)"`; what is from `env` (and an empty default) left out |
+| `<tool> config get NAME` | the value `list` shows; exit 1, nothing printed, when it has none (an empty default) |
+| `<tool> config set NAME=VALUE...` | into `<tool>.local.env`: the line replaced in place or appended, the file created with a header line; a value that is not plain is single-quoted; atomic (a temp file beside it, then `mv`; through a link, its target). A warning when the environment sets the name too (it wins) |
+| `<tool> config unset NAME...` | the name's lines out of `<tool>.local.env` (never the shipped file); not there: a note, exit 0 |
+| `anfs config list --all` | anfs's, then every installed tool's (each `$XDG_CONFIG_HOME/<d>/<d>.env`, and a tool whose `<TOOL>_CONFIG_HOME` the environment sets), with a leading `TOOL`; read in anfs's process, nothing of the other tool runs |
+
+- **FROM**, the first that applies: `env` (exported by the environment the tool started in, not by
+  the loader: a tool run by another inherits the parent's settings, and they are `env` there),
+  `local` (a line in `<tool>.local.env`), `shipped` (an active line in `<tool>.env`), `default`
+  (the commented `#NAME=value`: the documented built-in default). FROM is not a state (rule 5 of
+  "Lists and --json").
+- **Declared names only**: a tool's settings are the names its shipped file has a line for, active
+  or commented (`#NAME=`, no space after the `#`; a prose comment is not one). `get` and `set`
+  refuse anything else (64, `pcm config: PMM_INSTALL is not a pcm setting (pcm config list)`);
+  there is no owner lookup by prefix. A name only in the local file is listed (FROM `local`) so a
+  stray line is seen, and `unset` takes it away.
+- `set` refuses (64) a malformed name, `ANFS_WORK` and the environment-only `*_HOME` names, and a
+  value with a single quote (the reader strips one pair of quotes and has no escapes) or a newline.
+- `anfs config list` also has `ANFS_WORK` when it is set (FROM `env`; never in a file).
+- `config` is not in the toolkit API's `RPC_GROUPS`: through `anfs rpc` it is a write, refused
+  under `--grant read`.
 
 ## Package Structure
 
@@ -1111,7 +1138,7 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, onboard's, stack's ovm's, `anfs work list`) take rule 2 only.
+   callbacks`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1136,6 +1163,7 @@ The keys, which are the interface:
 | `anfs src list` | `source` (the alias), `status` (a clone's state, below; `local`: not a git repo; `missing`), `url` (the clone's `origin`; the list's URL when it is not cloned), `list` (`user`, `system`), `provides` (a list), `ahead` (`--json` only) |
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
+| `<tool> config list` | `name`, `value` (the effective value; null: empty), `from` (`env`, `local`, `shipped`, `default`), `file` (the file it is from; the shipped one for `default`; null for `env`); with `anfs config list --all` a leading `tool` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 
@@ -1202,6 +1230,9 @@ cli_dispatch "$@"
   (`lib/pmm/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
 - `cli_section "<title>"`: the top-level commands declared after it are listed under that heading
   in help, after the others (anfs's "Tools" and "From packages").
+- **A tool with settings calls `anfs_config_declare`** (`lib/anfs/config.sh`) among its
+  declarations, before `cli_standard`: that is its `config` group (Configuration). A tool ships
+  `<tool>.env` if and only if it declares the group (`registry.bats`); psm has neither.
 
 **The tools as `anfs <resource>`.** anfs declares one command per tool, named for what it manages,
 with the tool's name as an alias, and execs the tool with the rest of the line (output, exit status
@@ -1640,7 +1671,11 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME, then
                # the tool's settings), the settings: anfs_load_conf [tool] (<tool>.local.env, then
                # <tool>.env; the environment wins; anfs's when sourced), anfs_conf_read <file>,
-               # anfs_conf_files <tool>, anfs_conf_expand <value> (a leading ~), anfs_conf_env_only <name>
+               # anfs_conf_files <tool>, anfs_conf_expand <value> (a leading ~), anfs_conf_env_only <name>,
+               # ANFS_CONF_LOADED (the names it exported)
+  config.sh    # the `config` group (Configuration): anfs_config_declare (cmd_config_list/get/set/
+               # unset, complete_setting, complete_assignment), anfs_config_rows <tool>. A tool that
+               # ships <tool>.env calls it among its declarations; stack's tools when core has it
   skill.sh     # agent skills through the skills CLI (npx skills@$ANFS_SKILLS_CLI_VERSION) with a
                # scope, -g or a directory: anfs_skill_cli, _require, _agents (ppm's meta.agent),
                # _package_agents, _display/_id, _dir_skills, _load, _has, _status, _sync_rows,
