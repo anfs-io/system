@@ -296,6 +296,84 @@ YML
   [ "$status" -ne 0 ]
 }
 
+@test "repo push: names as repo ls does, --all the ones ahead, a space not installed is not cloned" {
+  local a b c d before br
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  a=$(mkbare alpha) b=$(mkbare beta) c=$(mkbare gamma)
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+    path: repos/alpha
+  - url: $b
+YML
+  space_def acme spikes/tech <<YML
+repositories:
+  - url: $c
+YML
+  wsm install acme/main/tech >/dev/null
+  d="$HOME/spaces/acme/main/tech"
+  br=$(git -C "$d/repos/alpha" branch --show-current)
+  # neither names nor --all: a usage error naming what is ahead
+  run wsm repo push
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"name the repositories to push, or --all (none is ahead of its upstream)"* ]]
+  git -C "$d/repos/alpha" commit -q --allow-empty -m a
+  git -C "$d/beta" commit -q --allow-empty -m b
+  run wsm repo push
+  [ "$status" -eq 64 ]
+  [[ "$output" == *"every one ahead of its upstream: acme/main/tech/repos/alpha, acme/main/tech/beta"* ]]
+  # -n pushes nothing
+  before=$(git -C "$a" rev-parse "$br")
+  run wsm repo push -n acme/main/tech/repos/alpha
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/tech/repos/alpha"$'\t'"would push 1"$'\t'"$br"$'\t'"origin/$br" ]
+  [ "$(git -C "$a" rev-parse "$br")" = "$before" ]
+  # a name: that one only
+  run wsm repo push acme/main/tech/repos/alpha
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/tech/repos/alpha"$'\t'"pushed 1"$'\t'"$br"$'\t'"origin/$br" ]
+  [ "$(git -C "$a" rev-parse "$br")" = "$(git -C "$d/repos/alpha" rev-parse HEAD)" ]
+  # --all: what is still ahead
+  run wsm repo push --all
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/tech/beta"$'\t'"pushed 1"$'\t'"$br"$'\t'"origin/$br" ]
+  run wsm repo push --all
+  [ "$output" = "Nothing to push: no repository is ahead of its upstream" ]
+  # a space not installed: not cloned, a failure; an unknown id is 1
+  run wsm repo push acme/spikes/tech/gamma acme/main/tech/beta
+  [ "$status" -eq 1 ]
+  [[ "$output" == *$'acme/spikes/tech/gamma\tnot cloned'* && "$output" == *$'acme/main/tech/beta\tup to date'* ]]
+  run wsm repo push acme/main/tech/nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no repository 'acme/main/tech/nope' (wsm repo ls)"* ]]
+  run wsm repo push --json acme/main/tech/beta
+  [ "$output" = '[{"repository":"acme/main/tech/beta","status":"up to date","branch":"'"$br"'","upstream":"origin/'"$br"'","commits":"0","error":null}]' ]
+}
+
+@test "repo push completes the clones of installed spaces, not a tree linked out of one" {
+  local a
+  a=$(mkbare alpha)
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+    path: repos/alpha
+links:
+  - src: $BATS_TEST_TMPDIR/out
+    dest: out
+YML
+  space_def acme spikes/tech <<YML
+repositories:
+  - url: $a
+YML
+  mkdir -p "$BATS_TEST_TMPDIR/out/other"
+  git init -q "$BATS_TEST_TMPDIR/out/other"
+  wsm install acme/main/tech >/dev/null
+  [ -L "$HOME/spaces/acme/main/tech/out" ]
+  run wsm __complete repo push ""
+  [ "$status" -eq 0 ]
+  [ "$output" = acme/main/tech/repos/alpha ]
+}
+
 # --- path ----------------------------------------------------------------------------------
 
 @test "path resolves an id, then the end of one: one segment or two" {

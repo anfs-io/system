@@ -30,7 +30,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.9.0
+WSM_VERSION=0.10.0
 
 # Paths, sources and the command line come from anfs
 if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
@@ -122,6 +122,12 @@ the one REPOSITORY (as repo list names it); nothing is linked, nothing is pulled
   --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
 cli_cmd "repo ssh" "Switch the clones under SPEC from GitHub https to ssh (their origin);
 space.yml is the source's and is not edited" --arg "[spec]"
+cli_cmd "repo push" "Push the current branch of each clone to its upstream (plain git
+push: never forced, no --set-upstream); one with uncommitted changes
+still pushes its commits. Name repositories (as repo list does), or --all" \
+  --opt "--all: Every repository ahead of its upstream" \
+  --opt "-n --dry-run: Say what would be pushed: the branch, its upstream, the commits" \
+  --arg "[repository...]"
 cli_group skill "The agent skills the spaces' space.yml files declare, installed into each space"
 cli_cmd "skill list" "Each skill an installed space declares, and its state there" --alias ls --arg "[spec]"
 cli_cmd "skill install" "Install the skills of the installed spaces under SPEC into their
@@ -173,7 +179,8 @@ for the agents ppm installed (meta.agent; installing one installs them). remove 
 and the links that still point at their src first.
 
 A repository is cloned when it is missing and never pulled or deleted: what is checked out is
-yours. repo ssh switches a clone's origin from GitHub https to ssh.
+yours. repo ssh switches a clone's origin from GitHub https to ssh; repo push pushes the ones you
+name, or every one ahead of its upstream (--all).
 
 Nothing is recorded: list reads the state off the links (ok, partial with what is missing, wrong,
 in the way or left over, or not in the source).
@@ -2100,6 +2107,30 @@ cmd_repo_ssh() {
   [[ -z "$spec" ]] || $any || fail "$EX_NOTFOUND" "no space '$spec' (wsm ls)"
 }
 
+# `wsm repo push [REPOSITORY...] [--all] [-n]`: every repository the spaces declare (a valid path),
+# named as repo list names it, and its clone (none while its space is not installed), for
+# lib/anfs/repo.sh's push command
+cmd_repo_push() {
+  local id url path ref
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load false
+  ANFS_PUSH_IDS=() ANFS_PUSH_DIRS=()
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+      [[ -n "$path" ]] || continue
+      _repo_invalid "$id" "$path"
+      [[ -z "$REPLY" ]] || continue
+      ANFS_PUSH_IDS+=("$id/$path")
+      if [[ -n "${INSTALLED[$id]:-}" ]]; then _home_of "$id"; ANFS_PUSH_DIRS+=("$REPLY/$path")
+      else ANFS_PUSH_DIRS+=("")
+      fi
+    done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
+  done
+  anfs_repo_push_cli repository "wsm repo ls" "$@"
+}
+
 # `wsm new SPACE`: SOURCE/PATH anywhere, or a PATH below where you are (in the tree, or in a source
 # checkout: below its spaces/). The space is created in the source, and installed when the space
 # around it is.
@@ -2512,6 +2543,23 @@ complete_space() {
     [[ "$id" != */ ]] || continue
     [[ -L "$root/$id/space.yml" ]] && printf '%s\n' "$id"
   done < <(complete_spec)
+}
+# The clones in the installed spaces (repo push), as <space id>/<path>: a <path>/.git up to three
+# levels below the space's directory, no part of <path> a link (a links: entry out of the tree is
+# not the space's clone). A clone in a child space is the same id from either.
+complete_repository() {
+  local id root g p q
+  root=$(_spaces_home)
+  while IFS= read -r id; do
+    for g in "$root/$id"/*/.git "$root/$id"/*/*/.git "$root/$id"/*/*/*/.git; do
+      [[ -e "$g" ]] || continue
+      p="${g%/.git}" p="${p#"$root/$id/"}" q="$p"
+      while [[ -n "$q" && ! -L "$root/$id/$q" ]]; do
+        if [[ "$q" == */* ]]; then q="${q%/*}"; else q=""; fi
+      done
+      [[ -n "$q" ]] || printf '%s/%s\n' "$id" "$p"
+    done
+  done < <(complete_space) | awk '!seen[$0]++'
 }
 # The sources (move's destination)
 complete_source() { gitsrc_collect 2>/dev/null; printf '%s\n' ${GITSRC_NAMES[@]+"${GITSRC_NAMES[@]}"}; }

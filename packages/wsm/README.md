@@ -46,6 +46,7 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
 | `wsm repo install [SPEC\|REPOSITORY] [-n]` | Clones what the installed spaces under `SPEC` declare and is missing, or one repository; links nothing, pulls nothing (the clone half of `install`) |
 | `wsm repo ssh [SPEC]` | Switches the clones under `SPEC` whose origin is a GitHub https URL to ssh (`<id>: origin -> git@...`), as `anfs src ssh`. `space.yml` is the source's and is not edited: an https URL in it is noted (`<id>: https in space.yml`) |
+| `wsm repo push [REPOSITORY...] [--all] [-n]` | Pushes the current branch of each named clone (as `repo ls` names it), or of every one ahead of its upstream (`--all`), with plain `git push`: never forced, no `--set-upstream`; uncommitted changes stay and the commits still go. One row each, `REPOSITORY STATUS BRANCH UPSTREAM` (`pushed N`, `up to date`, `no upstream`, `detached`, `rejected`, `not cloned`); `-n` says what would be pushed. Exit 1 when one was not pushed. Neither names nor `--all` lists the ones ahead. As `anfs src push` |
 | `wsm skill ls [SPEC]` | Each skill the spaces under `SPEC` declare, and its state in the space: `SKILL STATUS REPO` (`ok`, `partial`, `missing`, `waiting` for an agent, `*` for a whole remote repo; `-` while the space is not installed) |
 | `wsm skill install [SPEC] [-n]` | Installs the declared skills of the installed spaces under `SPEC` into their directories (the skills half of `install`) |
 | `wsm skill rm [-y] SPEC...` | Asks, then removes a space's declared skills from it, or one (`<space id>/<name>`); skills it does not declare stay |
@@ -96,7 +97,8 @@ Nothing is recorded. What is installed is read off the links:
 
 There is no `repo update`: a space's repositories are never pulled (what is checked out is
 yours), and no `repo add`/`remove`: a repository is declared in the source's `space.yml`. Cloning
-and the states are `lib/anfs/repo.sh`, shared with `anfs src`.
+and the states are `lib/anfs/repo.sh`, shared with `anfs src`, and so is `repo push` (`anfs src
+push`): pushing is the one thing wsm does to a clone after it is made, and only when asked.
 
 ## Working in the tree
 
