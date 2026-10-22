@@ -28,7 +28,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.7.0
+WSM_VERSION=0.8.0
 
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
@@ -43,21 +43,12 @@ source "$ANFS_LIB/bash.sh"
 source "$ANFS_LIB/paths.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB/log.sh"
-# The linker. A pull that brings a new lib/anfs file has it in the clone before an install links
-# it, so until core/anfs is installed again wsm reads the clone's copy
-# shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/link.sh" ]]; then
-  source "$ANFS_LIB/link.sh"
-else
-  source "$ANFS_SOURCES_HOME/core/packages/anfs/home/.local/lib/anfs/link.sh"
-fi
-# Agent skills through the skills CLI (lib/anfs/skill.sh), the same fallback as link.sh
-# shellcheck source=/dev/null
-if [[ -f "$ANFS_LIB/skill.sh" ]]; then
-  source "$ANFS_LIB/skill.sh"
-else
-  source "$ANFS_SOURCES_HOME/core/packages/anfs/home/.local/lib/anfs/skill.sh"
-fi
+# The platform, the linker, the manifests (links:, files:), copies and agent skills. lib/anfs is
+# one link into core/anfs, so a library a pull brings is there at once
+for _wsm_lib in platform link manifest files skill; do
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB/$_wsm_lib.sh"
+done
 # shellcheck source=/dev/null
 source "$ANFS_LIB/callbacks.sh"
 # shellcheck source=/dev/null
@@ -154,9 +145,12 @@ space above it; a file under no space is not linked.
     - repo: owner/repo        # owner/repo, a URL or a path, as the skills CLI takes it
       skills: [a-skill]       # optional: all of them when left out
     - repo: ./skills          # relative: from this space.yml in the source
-  links:                      # absolute links in the space's directory
-    - src: ~/.local/share/anfs/sources   # ~ and $VAR expanded; relative: from the space's directory
-      dest: sources           # optional: src's basename; must stay inside the space
+  links:                      # how the space's files are linked (each on its own by default)
+    - docs/                   # a directory as one link
+    - {path: notes.md, platforms: [macos]}   # only on those platforms
+    - src: ~/.local/share/anfs/sources   # a link out of the tree (relative); ~ and $VAR expanded;
+      dest: sources           #   relative: from the space's directory; dest defaults to the basename
+  files: [local.conf]         # copied when missing, then yours: never overwritten, left by remove
 
 install links each space into $WSM_SPACES_HOME/<source>/<path>/ (a relative link per file, so
 directories stay real), then clones its repositories. A prefix (lgat/, lgat/tech/) is every space
@@ -164,7 +158,8 @@ at or under it; installing a space does not install the spaces above it. Re-runn
 what is missing and removes the links whose file left the source; it never pulls. Anything in the
 way fails the space; -f moves it aside, and remove never puts it back.
 
-install then makes the links: (a src that is not there is said, not made) and installs the skills,
+install copies the files: that are missing, then makes the links: out of the tree (a src that is
+not there is said, not made) and installs the skills,
 for the agents ppm installed (meta.agent; installing one installs them). remove takes the skills
 and the links that still point at their src first.
 
@@ -529,6 +524,14 @@ _state_load() {
   [[ "$full" != true ]] || _files_load
   local -a srcs=("$@") args=() done_srcs=() counts=() names=() files=()
   [[ ${#srcs[@]} -gt 0 ]] || srcs=(${ANFS_SRC_NAMES[@]+"${ANFS_SRC_NAMES[@]}"})
+  if [[ "$full" == true ]]; then
+    # what each space links is its manifest's: every space of these sources read in one yq
+    local -a sids=()
+    for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+      _in_list "${SPACE_SRC[$id]}" "${srcs[@]}" && sids+=("$id")
+    done
+    _meta_load ${sids[@]+"${sids[@]}"}
+  fi
   for src in ${srcs[@]+"${srcs[@]}"}; do
     [[ -n "${SRC_SD[$src]:-}" ]] || continue
     [[ "${STATE_DONE[$src]:-}" != full ]] || continue
@@ -658,9 +661,15 @@ _home_of() {
 }
 _space_home() { _home_of "$1"; printf '%s\n' "$REPLY"; }
 
-# The files of space <id> into FILES (mapfile: a read loop takes a pipe a byte at a time)
+# What space <id> links, into FILES: its own files, as its manifest says (a directory link is one
+# entry, another platform's paths are left out; _mf_plan). mapfile: a read loop takes a pipe a byte
+# at a time.
 FILES=()
-_files_of() { FILES=(); [[ -z "${SPACE_FILES[$1]}" ]] || mapfile -t FILES <<< "${SPACE_FILES[$1]%$'\n'}"; }
+_files_of() {
+  FILES=()
+  _mf_plan "$1"
+  [[ -z "${MF_LINKS[$1]}" ]] || mapfile -t FILES <<< "${MF_LINKS[$1]%$'\n'}"
+}
 
 # A JSON string for <text> into REPLY, as table.sh's _anfs_json_str prints it
 _json() {
@@ -686,8 +695,8 @@ _space_counts() {
       "in the way") C_WAY=$((C_WAY + 1)) ;;
     esac
   done
-  # links: count like files; a missing src does not (it is not wsm's to make), nor an invalid entry
-  local i
+  # links: count like files; a missing src does not (it is not wsm's to make)
+  local i line
   _links_eval "$id"
   for i in ${LK_STATE[@]+"${!LK_STATE[@]}"}; do
     case "${LK_STATE[$i]}" in
@@ -696,6 +705,14 @@ _space_counts() {
       "in the way") C_WAY=$((C_WAY + 1)) ;;
     esac
   done
+  # files: a copy that is missing or in the way counts; one that differs is the user's
+  _copies_plan "$id"
+  while IFS= read -r line; do
+    case "$line" in
+      missing$'\t'*) C_MISSING=$((C_MISSING + 1)) ;;
+      "in the way"$'\t'*) C_WAY=$((C_WAY + 1)) ;;
+    esac
+  done <<< "$CP_LINES"
   _leftovers_of "$id"
   C_LEFT=${#LEFT[@]}
   [[ $C_MISSING -eq 0 ]] || note+="${note:+, }$C_MISSING missing"
@@ -721,27 +738,64 @@ _backup() {
   echo "  moved aside $(_display "$ROOT/$src/$rel") -> $(_display "$dest")"
 }
 
-# Link one space's files into <root>/<source>/<path> (lib/anfs/link.sh): a relative link per file,
-# so every directory is real and what install clones lands in the root, never in the source. All
-# or nothing: anything in the way fails the space before anything is linked, unless -f moves it
-# aside. Then its leftovers go.
+# Whether a plan's detail is an obstacle on the way (or another package's links): never moved
+_wsm_blocked() {
+  case "$1" in
+    *" on the way: "*|"a file where a directory goes: "*|"inside a directory link: "*|*"with links into another package: "*) return 0 ;;
+  esac
+  return 1
+}
+
+# Link one space's files into <root>/<source>/<path> (lib/anfs/link.sh), as its manifest says (a
+# directory link is one link), and copy its files: when missing (lib/anfs/files.sh): a relative link
+# per file, so every directory is real and what install clones lands in the root, never in the
+# source. All or nothing: anything in the way of a link or a copy fails the space before anything
+# is linked or copied, unless -f moves it aside. Then its leftovers go. An invalid manifest fails
+# the space, every error said.
 # Usage: _install_space <id> <dry> <force>
 _install_space() {
   local id="$1" dry="$2" force="$3" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" sd r dir
-  local plan class rest f why rc=0 made=0 total=0 conflicts=0 list
-  local -a aside=() left=()
+  local plan class rest f why rc=0 made=0 total=0 conflicts=0 list copies=0 e
+  local -a aside=() left=() cpaside=()
   sd="${SRC_SD[$src]}" r="$ROOT/$src" dir=$(_space_home "$id")
+  _mf_plan "$id"
+  if [[ -n "${MF_ERR[$id]}" ]]; then
+    warn "invalid space.yml, $id not installed:"
+    while IFS= read -r e; do [[ -z "$e" ]] || warn "  - $e"; done <<< "${MF_ERR[$id]}"
+    return 1
+  fi
   _files_of "$id"
   list=""
   for f in "${FILES[@]}"; do list+="${p:+$p/}$f"$'\n'; done
   echo "space $id -> $(_display "$dir")"
+
+  # The copies first: one in the way stops the links too
+  _copies_plan "$id"
+  local cpbad=0
+  while IFS= read -r class; do
+    rest="${class#*$'\t'}" class="${class%%$'\t'*}"
+    [[ -n "$class" ]] || continue
+    f="${rest%%$'\t'*}" why=""
+    [[ "$rest" != *$'\t'* ]] || why="${rest#*$'\t'}"
+    case "$class" in
+      missing) copies=$((copies + 1)) ;;
+      "in the way")
+        if $force && ! _wsm_blocked "$why"; then
+          cpaside+=("$f") copies=$((copies + 1))
+        else
+          warn "in the way: $(_display "$dir/$f")${why:+ ($why)}"
+          cpbad=$((cpbad + 1))
+        fi
+        ;;
+    esac
+  done <<< "$CP_LINES"
 
   # Every link is as apply writes it (the check said so, relative): nothing to plan
   local fresh=true
   for f in "${FILES[@]}"; do
     [[ "${FSTATE["$src|${p:+$p/}$f"]:-}" == ok && -z "${FABS["$src|${p:+$p/}$f"]:-}" ]] || { fresh=false; break; }
   done
-  if $fresh && ! $force; then
+  if $fresh && ! $force && [[ $cpbad -eq 0 ]]; then
     _leftovers_of "$id"
     left=(${LEFT[@]+"${LEFT[@]}"})
     if ! $dry; then
@@ -749,19 +803,21 @@ _install_space() {
         rm -f -- "$r/$f"
         [[ "$f" != */* ]] || _rmdir_empty_up "$r/${f%/*}" "$r"
       done
+      _copies_apply "$id" || return 1
     fi
     printf '  %s 0 of %d file(s)' "$($dry && echo "would link" || echo linked)" "${#FILES[@]}"
+    [[ $copies -eq 0 ]] || printf ', %s %d' "$($dry && echo "would copy" || echo copied)" "$copies"
     [[ ${#left[@]} -eq 0 ]] || printf ', %s %d leftover(s)' "$($dry && echo "would unlink" || echo unlinked)" "${#left[@]}"
     printf '\n'
     return 0
   fi
 
-  # Not a dry run: apply at once, which links only when nothing is in the way, and prints the
-  # plan it carried out (one classification); else the plan alone
+  # Not a dry run and no copy in the way: apply at once, which links only when nothing is in the
+  # way, and prints the plan it carried out (one classification); else the plan alone
   _wsm_tmp
   printf '%s' "$list" > "$WSM_TMP/install.list"
   local applied=false
-  if $dry; then
+  if $dry || [[ $cpbad -gt 0 ]]; then
     plan=$(anfs_link_plan "$sd" "$r" "$WSM_TMP/install.list") || rc=$?
   else
     plan=$(anfs_link_apply "$sd" "$r" "$WSM_TMP/install.list") || rc=$?
@@ -780,7 +836,7 @@ _install_space() {
       link|replace) made=$((made + 1)) ;;
       other|conflict)
         # What is on the way to it is not the file's to move: -f never clears that
-        if $force && [[ "$why" != *" on the way: "* && "$why" != "a file where a directory goes: "* ]]; then
+        if $force && ! _wsm_blocked "$why"; then
           aside+=("$f")
           made=$((made + 1))
         else
@@ -790,6 +846,7 @@ _install_space() {
         ;;
     esac
   done
+  conflicts=$((conflicts + cpbad))
   if [[ $conflicts -gt 0 ]]; then
     $force || warn "wsm install -f $id moves them aside"
     return 1
@@ -807,13 +864,27 @@ _install_space() {
       rm -f -- "$r/$f"
       [[ "$f" != */* ]] || _rmdir_empty_up "$r/${f%/*}" "$r"
     done
+    for f in ${cpaside[@]+"${cpaside[@]}"}; do _backup "$src" "${p:+$p/}$f"; done
+    _copies_apply "$id" || return 1
   else
     for f in ${aside[@]+"${aside[@]}"}; do echo "  would move aside $(_display "$r/$f")"; done
+    for f in ${cpaside[@]+"${cpaside[@]}"}; do echo "  would move aside $(_display "$dir/$f")"; done
   fi
 
   printf '  %s %d of %d file(s)' "$($dry && echo "would link" || echo linked)" "$made" "$total"
+  [[ $copies -eq 0 ]] || printf ', %s %d' "$($dry && echo "would copy" || echo copied)" "$copies"
   [[ ${#left[@]} -eq 0 ]] || printf ', %s %d leftover(s)' "$($dry && echo "would unlink" || echo unlinked)" "${#left[@]}"
   printf '\n'
+}
+
+# Copy space <id>'s files: that are missing (lib/anfs/files.sh); what is there is left as it is
+_copies_apply() {
+  local id="$1"
+  [[ -n "${MF_COPIES[$id]:-}" ]] || return 0
+  _home_of "$id"
+  mkdir -p -- "$REPLY"
+  anfs_files_apply "${SPACE_DIR[$id]}" "$REPLY" <(printf '%s' "${MF_COPIES[$id]}") >/dev/null ||
+    { warn "copying failed for $(_display "$REPLY")"; return 1; }
 }
 
 # Unlink an installed space: its files that still point at their source file, its leftovers, then
@@ -1020,43 +1091,103 @@ _in_repository() {
   return 1
 }
 
-# --- links: and skills: ------------------------------------------------------------------
+# --- The manifest: links:, files: and skills: -------------------------------------------------
 #
-# A space.yml's other two lists, read for every space a command needs with one yq:
-#   links:  [{src, dest?}]       absolute links in the space's directory, dest -> src
-#   skills: [{repo, skills?}]    agent skills installed into the space's directory by the skills
-#                                CLI (lib/anfs/skill.sh, the space's directory as the scope)
-# META_LINKS[id] and META_SKILLS[id] hold the entries, a line each, fields split by $ANFS_US.
+# A space.yml's links: and files: are the vocabulary a package.yml has (lib/anfs/manifest.sh):
+#   links:  - docs/                       a directory of the space as one link
+#           - {path: p, platforms: [...]} only on those platforms
+#           - {src: s, dest: d}           a link at d (default: s's basename) to s, relative; ~ and
+#                                         $VAR expanded, a relative s is from the space's directory
+#   files:  - p | {path, platforms}       copied when missing, then the user's; remove leaves it
+#   skills: [{repo, skills?}]             agent skills installed into the space's directory by the
+#                                         skills CLI (lib/anfs/skill.sh, the space's directory as
+#                                         the scope)
+# Every space a command needs is read with one yq (_meta_load), skills: in the same call. A space
+# whose manifest is refused is invalid: listed so, installed not at all.
+#   MF_ROWS[id]                            its links:/files: rows; META_SKILLS[id] its skills:
+#   MF_LINKS MF_SRCS MF_COPIES MF_OFF MF_DIRS MF_ERR [id]   its plan (_mf_plan), as ANFS_MF_*
 
-declare -A META_LINKS=() META_SKILLS=() META_DONE=()
+declare -A MF_ROWS=() META_SKILLS=() META_DONE=() MF_DONE=()
+declare -A MF_LINKS=() MF_SRCS=() MF_COPIES=() MF_OFF=() MF_DIRS=() MF_ERR=()
+WSM_PLATFORM=""
 _meta_load() {
-  local id f kind file a b c line sep="$ANFS_US"
-  local -a files=()
-  local -A of=()
+  local id f i line rest sep="$ANFS_US"
+  local -a files=() ids=()
   for id in "$@"; do
     [[ -z "${META_DONE[$id]:-}" && -n "${SPACE_DIR[$id]:-}" ]] || continue
-    META_DONE[$id]=1 META_LINKS[$id]="" META_SKILLS[$id]=""
-    f="${SPACE_DIR[$id]}/space.yml"
-    files+=("$f") of[$f]="$id"
+    META_DONE[$id]=1 MF_ROWS[$id]="" META_SKILLS[$id]=""
+    files+=("${SPACE_DIR[$id]}/space.yml") ids+=("$id")
   done
   [[ ${#files[@]} -gt 0 ]] || return 0
-  local expr='(.links[]? | select(tag == "!!map") | ["L", filename, (.src // ""), (.dest // "")] | join(strenv(WSM_SEP))), (.skills[]? | select(tag == "!!map") | ["S", filename, (.repo // ""), ((.skills // []) | join(",")), (.skills | tag)] | join(strenv(WSM_SEP)))'
   local out
-  if ! out=$(WSM_SEP="$sep" yq -r "$expr" "${files[@]}" 2>/dev/null); then
-    # One at a time, to keep what can be read
-    out=""
-    for f in "${files[@]}"; do
-      if line=$(WSM_SEP="$sep" yq -r "$expr" "$f" 2>/dev/null); then out+="$line"$'\n'
-      else warn "cannot read links: and skills: of ${of[$f]} ($(_display "$f"))"; fi
-    done
-  fi
-  while IFS="$sep" read -r kind file a b c; do
-    # yq puts --- between the files it printed for
-    [[ ( "$kind" == L || "$kind" == S ) && -n "$file" && -n "${of[$file]:-}" ]] || continue
-    id="${of[$file]}"
-    if [[ "$kind" == L ]]; then META_LINKS[$id]+="$a$sep$b"$'\n'
-    else META_SKILLS[$id]+="$a$sep$b$sep$c"$'\n'; fi
+  out=$(ANFS_MF_YQ_EXTRA='(.skills[]? | select(tag == "!!map") | [fileIndex, "X", (.repo // ""), ((.skills // []) | join(",")), (.skills | tag)] | join(strenv(ANFS_MF_SEP)))' \
+    anfs_manifest_read "${files[@]}")
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    i="${line%%$'\t'*}" rest="${line#*$'\t'}"
+    id="${ids[$i]:-}"
+    [[ -n "$id" ]] || continue
+    case "$rest" in
+      extra$'\t'*) META_SKILLS[$id]+="${rest#extra$'\t'}"$'\n' ;;
+      *) MF_ROWS[$id]+="$line"$'\n' ;;
+    esac
   done <<< "$out"
+}
+
+# The plan of space <id>'s manifest for this platform, into MF_*[id] (once): its own files are the
+# candidates (_files_load first), and what only wsm knows is refused too: a directory link that is,
+# holds or lies in a child space or a repository, a directory link where the skills CLI writes (a
+# hidden directory, when the space declares skills:), and space.yml in files: or a path entry (it
+# is how wsm knows the space is installed: always linked).
+_mf_plan() {
+  local id="$1" d c cp p url path ref err="" line
+  [[ -z "${MF_DONE[$id]:-}" ]] || return 0
+  MF_DONE[$id]=1
+  _meta_load "$id"
+  MF_SRCS[$id]="" MF_COPIES[$id]="" MF_OFF[$id]="" MF_DIRS[$id]="" MF_ERR[$id]=""
+  if [[ -z "${MF_ROWS[$id]}" ]]; then
+    MF_LINKS[$id]="${SPACE_FILES[$id]}"
+    return 0
+  fi
+  [[ -n "$WSM_PLATFORM" ]] || WSM_PLATFORM=$(platform)
+  _wsm_tmp
+  printf '%s' "${SPACE_FILES[$id]}" > "$WSM_TMP/mf.files"
+  _home_of "$id"
+  ANFS_MF_SRC_BASE="$REPLY" anfs_manifest_plan "${MF_ROWS[$id]}" "${SPACE_DIR[$id]}" "$WSM_PLATFORM" "$WSM_TMP/mf.files" || true
+  err="$ANFS_MF_ERR"
+  # What only wsm knows
+  while IFS= read -r line; do
+    line="${line#*$'\t'}"
+    case "$line" in
+      file$'\t'space.yml$'\t'*|path$'\t'space.yml$'\t'*)
+        err+="space.yml is how wsm knows the space is installed: it is always linked"$'\n' ;;
+    esac
+  done <<< "${MF_ROWS[$id]}"
+  while IFS= read -r d; do
+    [[ -n "$d" ]] || continue
+    for c in "${SPACE_IDS[@]}"; do
+      [[ "$c" != "$id" && "${SPACE_SRC[$c]}" == "${SPACE_SRC[$id]}" ]] || continue
+      cp="${SPACE_PATH[$c]}" p="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$d"
+      if [[ "$cp" == "$p" || "$cp" == "$p"/* ]]; then err+="the directory link $d/ holds the space $c"$'\n'
+      elif [[ "$p" == "$cp"/* ]]; then err+="the directory link $d/ is inside the space $c"$'\n'; fi
+    done
+    while IFS= read -r url && IFS= read -r path && IFS= read -r ref; do
+      [[ -n "$path" ]] || continue
+      if [[ "$path" == "$d" || "$path" == "$d"/* || "$d" == "$path"/* ]]; then
+        err+="the directory link $d/ and the repository $path overlap"$'\n'
+      fi
+    done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
+    if [[ -n "${META_SKILLS[$id]}" && "$d" == .* ]]; then
+      err+="the directory link $d/ is where the skills CLI writes (this space declares skills:)"$'\n'
+    fi
+  done <<< "$ANFS_MF_DIRS$(printf '%s' "${MF_ROWS[$id]}" | awk -F'\t' '$2 == "dir" { print $3 }')"
+  if [[ -n "$err" ]]; then
+    MF_ERR[$id]=$(printf '%s' "$err" | awk '!seen[$0]++')$'\n'
+    MF_LINKS[$id]="${SPACE_FILES[$id]}"
+    return 0
+  fi
+  MF_LINKS[$id]="$ANFS_MF_LINKS" MF_SRCS[$id]="$ANFS_MF_SRCS" MF_COPIES[$id]="$ANFS_MF_COPIES"
+  MF_OFF[$id]="$ANFS_MF_OFF" MF_DIRS[$id]="$ANFS_MF_DIRS"
 }
 
 # Whether <home> is a space's directory wsm may act in: set, absolute, strictly below the root (which
@@ -1069,98 +1200,32 @@ _home_ok() {
   [[ -d "$h" && ! -L "$h" ]] || return 1
 }
 
-# --- links: ---
+# --- links: {src} ---
 
-# ~ and $NAME / ${NAME} expanded from the environment, no eval, into REPLY; 1 (REPLY the name)
-# when a variable is unset
-_expand_vars() {
-  local s="$1" out="" name
-  case "$s" in
-    "~")   s="$HOME" ;;
-    "~/"*) s="$HOME/${s#\~/}" ;;
-  esac
-  while [[ "$s" == *'$'* ]]; do
-    out+="${s%%\$*}" s="${s#*\$}"
-    if [[ "$s" =~ ^\{([A-Za-z_][A-Za-z0-9_]*)\}(.*)$ || "$s" =~ ^([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
-      name="${BASH_REMATCH[1]}" s="${BASH_REMATCH[2]}"
-      [[ -n "${!name+x}" ]] || { REPLY="$name"; return 1; }
-      out+="${!name}"
-    else
-      out+='$'
-    fi
-  done
-  REPLY="$out$s"
-}
-
-# An absolute path with . and .. taken out, as written (nothing resolved), into REPLY
-_norm() {
-  local p="$1" part
-  local -a out=()
-  local IFS=/
-  for part in $p; do
-    case "$part" in
-      ""|.) ;;
-      ..) [[ ${#out[@]} -eq 0 ]] || unset 'out[${#out[@]}-1]' ;;
-      *) out+=("$part") ;;
-    esac
-  done
-  REPLY="/${out[*]}"
-}
-
-# The links: of space <id>, evaluated: LK_SRC, LK_DEST (relative to the space's directory), LK_STATE
-# (ok, missing, missing src, wrong, in the way, invalid) and LK_WHY (what makes one invalid)
-LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
+# The links out of the tree of space <id> (its manifest's src: entries for this platform):
+# LK_SRC, LK_DEST (relative to the space's directory) and LK_STATE (anfs_link_src_state: ok,
+# missing, missing src, wrong, in the way)
+LK_SRC=() LK_DEST=() LK_STATE=()
 _links_eval() {
-  local id="$1" home src dest d st why t
-  LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
-  _meta_load "$id"
-  [[ -n "${META_LINKS[$id]:-}" ]] || return 0
+  local id="$1" home dest src
+  LK_SRC=() LK_DEST=() LK_STATE=()
+  _mf_plan "$id"
+  [[ -n "${MF_SRCS[$id]:-}" ]] || return 0
   _home_of "$id"
   home="$REPLY"
-  while IFS="$ANFS_US" read -r src dest; do
-    [[ -n "$src$dest" ]] || continue
-    st="" why="" d=""
-    if [[ -z "$src" ]]; then
-      why="a link needs a src"
-    elif ! _expand_vars "$src"; then
-      why="\$$REPLY is not set"
-    else
-      src="$REPLY"
-      [[ "$src" == /* ]] || src="$home/$src"
-      _norm "$src"
-      src="$REPLY"
-      [[ "$src" != / ]] || why="a link to / is not one"
-    fi
-    if [[ -z "$why" ]]; then
-      d="${dest:-${src##*/}}"
-      while [[ "$d" == */ ]]; do d="${d%/}"; done
-      d="${d#./}"
-      _repo_path_ok "$d" && [[ "$d" != . ]] || why="dest must stay inside the space: '${dest:-$d}'"
-    fi
-    if [[ -n "$why" ]]; then
-      st=invalid
-    elif [[ -L "$home/$d" ]]; then
-      t=$(readlink -- "$home/$d") || t=""
-      if [[ "$t" != "$src" ]]; then st=wrong
-      elif [[ -e "$src" ]]; then st=ok
-      else st="missing src"; fi
-    elif [[ -e "$home/$d" ]]; then
-      st="in the way"
-    elif [[ -e "$src" ]]; then
-      st=missing
-    else
-      st="missing src"
-    fi
-    LK_SRC+=("$src") LK_DEST+=("$d") LK_STATE+=("$st") LK_WHY+=("$why")
-  done <<< "${META_LINKS[$id]}"
+  while IFS=$'\t' read -r dest src; do
+    [[ -n "$dest" ]] || continue
+    LK_SRC+=("$src") LK_DEST+=("$dest") LK_STATE+=("$(anfs_link_src_state "$home/$dest" "$src")")
+  done <<< "${MF_SRCS[$id]}"
 }
 
-# Make the links: of space <id>: an absolute link per entry. What is there and right stays; a src
-# that does not exist is said and not made (no failure); a link elsewhere or anything else in the
-# way fails the entry, unless -f moves it aside (_backup; nothing restores it).
+# Make the links out of the tree of space <id>, relative (anfs_link_one). What is there and right
+# stays (an absolute one too); a src that does not exist is said and not made (no failure); a link
+# elsewhere or anything else in the way fails the entry, unless -f moves it aside (_backup; nothing
+# restores it).
 # Usage: _space_links <id> <dry> <force>
 _space_links() {
-  local id="$1" dry="$2" force="$3" i home st d rel failed=0 made=0
+  local id="$1" dry="$2" force="$3" i home st d rel failed=0
   _links_eval "$id"
   [[ ${#LK_DEST[@]} -gt 0 ]] || return 0
   _home_of "$id"
@@ -1174,11 +1239,6 @@ _space_links() {
     rel="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$d"
     case "$st" in
       ok) continue ;;
-      invalid)
-        warn "invalid link in $id: ${LK_WHY[$i]}"
-        failed=$((failed + 1))
-        continue
-        ;;
       "missing src")
         echo "  missing src $d -> $(_display "${LK_SRC[$i]}") (not linked)"
         continue
@@ -1195,21 +1255,17 @@ _space_links() {
     esac
     if $dry; then
       echo "  would link $d -> $(_display "${LK_SRC[$i]}")"
+    elif anfs_link_one "${LK_SRC[$i]}" "$home/$d"; then
+      echo "  linked $d -> $(_display "${LK_SRC[$i]}")"
     else
-      mkdir -p -- "$(dirname -- "$home/$d")"
-      if ln -s -- "${LK_SRC[$i]}" "$home/$d"; then
-        echo "  linked $d -> $(_display "${LK_SRC[$i]}")"
-      else
-        failed=$((failed + 1))
-        continue
-      fi
+      failed=$((failed + 1))
     fi
-    made=$((made + 1))
   done
   [[ $failed -eq 0 ]]
 }
 
-# Remove the links: of space <id> that still point at their src; one the user repointed stays
+# Remove the links out of the tree of space <id> while they still point at their src; one the user
+# repointed stays
 _remove_links() {
   local id="$1" i home
   _links_eval "$id"
@@ -1218,12 +1274,25 @@ _remove_links() {
   home="$REPLY"
   _home_ok "$home" || return 0
   for i in "${!LK_DEST[@]}"; do
-    case "${LK_STATE[$i]}" in
-      ok|"missing src") [[ -L "$home/${LK_DEST[$i]}" ]] && rm -f -- "$home/${LK_DEST[$i]}" ;;
-    esac
+    anfs_unlink_src "$home/${LK_DEST[$i]}" "${LK_SRC[$i]}"
     [[ "${LK_DEST[$i]}" != */* ]] || _rmdir_empty_up "$home/${LK_DEST[$i]%/*}" "$home"
   done
   return 0
+}
+
+# --- files: ---
+
+# The copies of space <id> planned (anfs_files_plan, from its directory in the source to its
+# directory under the root), into CP_LINES ("<state>\t<path>[\t<detail>]"); nothing when it has
+# none
+CP_LINES=""
+_copies_plan() {
+  local id="$1"
+  CP_LINES=""
+  _mf_plan "$id"
+  [[ -n "${MF_COPIES[$id]:-}" ]] || return 0
+  _home_of "$id"
+  CP_LINES=$(anfs_files_plan "${SPACE_DIR[$id]}" "$REPLY" <(printf '%s' "${MF_COPIES[$id]}") 2>/dev/null) || true
 }
 
 # --- skills: ---
@@ -1645,6 +1714,14 @@ cmd_list() {
   for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match "$id" || continue
     [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
+    # a refused manifest (links:, files:): invalid, its first error the note
+    _mf_plan "$id"
+    if [[ -n "${MF_ERR[$id]:-}" ]]; then
+      note="${MF_ERR[$id]%%$'\n'*}"
+      if [[ -n "${INSTALLED[$id]:-}" ]]; then _home_of "$id"; else REPLY=""; fi
+      _row "$id" invalid "$REPLY" "$note" "" "" "" ""
+      continue
+    fi
     if [[ -z "${INSTALLED[$id]:-}" ]]; then
       _row "$id" "" "" "" "" "" "" ""
       continue
@@ -1684,8 +1761,8 @@ cmd_list() {
     _json "${f#"${p:+$p/}"}"; files+="$sep{\"file\":$REPLY,\"status\":\"leftover\"}"
     sep=,
   done
-  # Its links: (an installed space's): dest, src, state
-  local links="" i
+  # Its links out of the tree and its copies (an installed space's): dest, src, state; path, state
+  local links="" copies="" i line
   sep=""
   if [[ -n "${INSTALLED[$detail]:-}" ]]; then
     _links_eval "$detail"
@@ -1695,8 +1772,17 @@ cmd_list() {
       _json "${LK_STATE[$i]}"; links+=",\"status\":$REPLY}"
       sep=,
     done
+    sep=""
+    _copies_plan "$detail"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      f="${line#*$'\t'}" f="${f%%$'\t'*}"
+      _json "$f"; copies+="$sep{\"path\":$REPLY"
+      _json "${line%%$'\t'*}"; copies+=",\"status\":$REPLY}"
+      sep=,
+    done <<< "$CP_LINES"
   fi
-  printf '%s,"files":[%s],"links":[%s]}]\n' "${out%\}]}" "$files" "$links"
+  printf '%s,"files":[%s],"links":[%s],"copies":[%s]}]\n' "${out%\}]}" "$files" "$links" "$copies"
 }
 
 # `wsm repo ls [SPEC]`: the repositories the space.yml files under SPEC declare, and their state
@@ -1839,9 +1925,13 @@ repositories: []
 #  - repo: owner/repo      # owner/repo, a URL or a path, as the skills CLI takes it
 #    skills: [a-skill]     # optional: every skill in it when left out
 #  - repo: ./skills        # relative: from this space.yml in the source
-#links:                    # absolute links in this space's directory
-#  - src: ~/somewhere      # ~ and \$VAR expanded; relative: from the space's directory
+#links:                    # how this space's files are linked (each file on its own by default)
+#  - docs/                 # a directory as one link
+#  - {path: notes.md, platforms: [macos]}   # only on those platforms (macos, linux, debian, fedora)
+#  - src: ~/somewhere      # a link out of the tree: ~ and \$VAR expanded; relative: from the space's directory
 #    dest: somewhere       # optional: src's basename; must stay inside the space
+#files:                    # copied when missing, then yours: never overwritten, left by remove
+#  - local.conf
 EOF
   printf 'created %s\n' "$(_display "$dir/space.yml")"
 
@@ -1878,7 +1968,7 @@ _walk_local() {
 }
 
 # Move one file of the tree into its source and link it back (relative, to the canonical file:
-# anfs_relpath), so the next install sees it as linked. <explicit> is false when it was found
+# anfs_link_one), so the next install sees it as linked. <explicit> is false when it was found
 # under a directory given to add, which skips quietly what an explicit file would be refused for,
 # and leaves a copy of a source file alone.
 # Usage: _add_one <canonical path> <explicit:true|false>
@@ -1943,7 +2033,7 @@ _add_one() {
     # explicitly, the copy goes back to the source, where git shows what changed
     if $explicit; then
       mv -f -- "$path" "$dest"
-      ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
+      anfs_link_one "$dest" "$path"
       printf 'updated %s (git diff in %s)\n' "$src/$rel" "$(_display "$srcdir")"
       _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
       return 0
@@ -1954,7 +2044,7 @@ _add_one() {
 
   mkdir -p -- "$(dirname -- "$dest")"
   mv -- "$path" "$dest"
-  ln -s -- "$(anfs_relpath "$(dirname -- "$path")" "$(_canon_file "$dest")")" "$path"
+  anfs_link_one "$dest" "$path"
   printf 'added %s\n' "$src/$rel"
   _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
 }

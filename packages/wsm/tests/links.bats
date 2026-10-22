@@ -1,7 +1,9 @@
 #!/usr/bin/env bats
-# links: in space.yml: absolute links in a space's directory, dest -> src. States ok, missing,
-# missing src, wrong, in the way (and invalid); -f moves what is in the way aside; remove takes a
-# link only while it still points at its src.
+# links: in space.yml: the vocabulary a package.yml has (lib/anfs/manifest.sh). {src, dest} links
+# out of the tree, relative (anfs_link_one), states ok, missing, missing src, wrong, in the way; -f
+# moves what is in the way aside; remove takes a link only while it still points at its src.
+# Directory links, path entries with platforms, files: copies; a refused manifest makes the space
+# invalid.
 # Run: bats packages/wsm/tests/links.bats
 
 load helper
@@ -14,8 +16,10 @@ setup() {
 }
 
 links_json() { wsm ls acme/tech --json | yq -p json -r '.[0].links[] | .dest + "|" + .src + "|" + .status'; }
+# <link> is relative and resolves to <dir>
+points() { [[ "$(readlink "$1")" != /* ]] && [ "$(cd -P "$1" && pwd -P)" = "$(cd -P "$2" && pwd -P)" ]; }
 
-@test "src with ~ and \$VAR expanded; dest defaults to src's basename; an absolute link" {
+@test "src with ~ and \$VAR expanded; dest defaults to src's basename; a relative link" {
   mkdir -p "$HOME/data"
   export WSM_T_DIR="$T/target"
   space_def acme tech <<'EOF'
@@ -28,14 +32,14 @@ links:
 EOF
   run wsm install acme/tech
   [ "$status" -eq 0 ]
-  [ "$(readlink "$H/data")" = "$HOME/data" ]
-  [ "$(readlink "$H/here/sub")" = "$T/target/sub" ]
-  [ "$(readlink "$H/t")" = "$T/target" ]
+  points "$H/data" "$HOME/data"
+  points "$H/here/sub" "$T/target/sub"
+  points "$H/t" "$T/target"
   run wsm ls acme/tech
   [[ "$output" == *$'\tok\t'* ]]
 }
 
-@test "an unset variable, a dest with .. or a leading / are invalid and fail the space" {
+@test "an unset variable, a dest with .. or a leading / make the space invalid; nothing is linked" {
   unset WSM_T_NOPE
   space_def acme tech <<'EOF'
 links:
@@ -45,21 +49,23 @@ links:
 EOF
   run wsm install acme/tech
   [ "$status" -eq 1 ]
-  [[ "$output" == *'invalid link in acme/tech: $WSM_T_NOPE is not set'* ]]
-  [[ "$output" == *"dest must stay inside the space: '../out'"* ]]
-  [[ "$output" == *"dest must stay inside the space: '/abs'"* ]]
-  [ ! -e "$T/out" ] && [ ! -e /abs ]
+  [[ "$output" == *"invalid space.yml, acme/tech not installed:"* ]]
+  [[ "$output" == *'$WSM_T_NOPE is not set'* ]]
+  [[ "$output" == *"dest must stay inside the target: '../out'"* ]]
+  [[ "$output" == *"dest must stay inside the target: '/abs'"* ]]
+  [ ! -e "$T/out" ] && [ ! -e /abs ] && [ ! -e "$H/space.yml" ]
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tinvalid\t'* ]]
 }
 
-@test "a relative src is from the space's directory, written absolute" {
+@test "a relative src is from the space's directory; the link is relative" {
   space_def acme tech <<'EOF'
 links:
   - {src: ../../../../target, dest: up}
 EOF
   # $HOME/spaces/acme/tech/../../../../target is $T/target
   wsm install acme/tech >/dev/null
-  # HOME is canonical (helper), so the path written is too
-  [ "$(readlink "$H/up")" = "$(cd -P "$T" && pwd)/target" ]
+  points "$H/up" "$T/target"
 }
 
 @test "missing src: not linked, said, exit 0, not counted" {
@@ -94,12 +100,12 @@ EOF
   run wsm install acme/tech
   [ "$status" -eq 1 ]
   [[ "$output" == *"wrong: ~/spaces/acme/tech/b"* ]]
-  [ "$(readlink "$H/a")" = "$T/target" ]
+  points "$H/a" "$T/target"
   [ "$(readlink "$H/b")" = /etc ]
   run wsm install -f acme/tech
   [ "$status" -eq 0 ]
-  [ "$(readlink "$H/b")" = "$T/target" ]
-  [ "$(readlink "$H/c")" = "$T/target" ]
+  points "$H/b" "$T/target"
+  points "$H/c" "$T/target"
   [ "$(cat "$XDG_STATE_HOME/wsm/backup/acme/tech/c")" = mine ]
   [ "$(readlink "$XDG_STATE_HOME/wsm/backup/acme/tech/b")" = /etc ]
   run wsm ls acme/tech
@@ -122,7 +128,7 @@ EOF
   [ -d "$T/target/sub" ]
 }
 
-@test "an existing link that is already right is left as it is (ok, untouched)" {
+@test "an existing absolute link that is already right is ok and left as it is (not rewritten)" {
   mkdir -p "$H"
   ln -s "$T/target" "$H/target"
   space_def acme tech <<<"links: [{src: $T/target}]"
@@ -130,6 +136,10 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" != *"linked target"* ]]
   [ "$(links_json)" = "target|$T/target|ok" ]
+  [ "$(readlink "$H/target")" = "$T/target" ]
+  # and remove takes it
+  wsm remove -y acme/tech >/dev/null
+  [ ! -L "$H/target" ]
 }
 
 @test "ls --json: links is empty for a space without, and dry-run makes nothing" {
@@ -148,5 +158,108 @@ EOF
   [[ "$output" == *"#skills:"* ]]
   [[ "$output" == *"#links:"* ]]
   [[ "$output" == *'$VAR expanded'* ]]
+  [[ "$output" == *"#files:"* ]]
+  [[ "$output" != *"absolute"* ]]
   [ "$(yq -r '.repositories | length' "$T/srcs/acme/spaces/fresh/space.yml")" = 0 ]
+}
+
+# --- linker 02: directory links, platforms, files: -------------------------------------------
+
+@test "a directory link: one link, ok in ls; a file added in the source is there; the leftover walk does not enter it" {
+  space_def acme tech <<<'links: [docs/]'
+  space_file acme tech/docs/a.md a
+  space_file acme tech/notes.md n
+  run wsm install acme/tech
+  [ "$status" -eq 0 ]
+  [ -L "$H/docs" ] && [[ "$(readlink "$H/docs")" != /* ]] && [ -L "$H/notes.md" ]
+  space_file acme tech/docs/b.md b
+  [ "$(cat "$H/docs/b.md")" = b ]
+  # a dangling link inside the source's directory is the source's, not a leftover
+  ln -s nowhere "$T/srcs/acme/spaces/tech/docs/dangling"
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tok\t'* ]]
+  [ "$(wsm ls acme/tech --json | yq -p json -r '.[0].files[] | select(.file == "docs") | .status')" = ok ]
+  run wsm install acme/tech
+  [ -L "$T/srcs/acme/spaces/tech/docs/dangling" ]
+  wsm remove -y acme/tech >/dev/null
+  [ ! -e "$H/docs" ] && [ -f "$T/srcs/acme/spaces/tech/docs/a.md" ]
+}
+
+@test "a directory link holding a child space, or a hidden directory with skills:, is invalid" {
+  space_def acme tech <<<'links: [team/]'
+  space_def acme tech/team/web <<<'repositories: []'
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tinvalid\t'*"the directory link team/ holds the space acme/tech/team/web"* ]]
+  run wsm install acme/tech
+  [ "$status" -eq 1 ]
+  space_def acme tech <<'EOF'
+links: [.agents/]
+skills: [{repo: owner/repo}]
+EOF
+  space_file acme tech/.agents/x x
+  run wsm ls acme/tech
+  [[ "$output" == *"where the skills CLI writes"* ]]
+}
+
+@test "a path entry with platforms: [linux] on macOS is not linked and not counted missing" {
+  space_def acme tech <<<'links: [{path: linux.conf, platforms: [linux]}]'
+  space_file acme tech/linux.conf l
+  space_file acme tech/all.conf a
+  run wsm install acme/tech
+  [ "$status" -eq 0 ]
+  [ ! -e "$H/linux.conf" ] && [ -L "$H/all.conf" ]
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tok\t'* ]]
+}
+
+@test "files: copied when missing, then left; differs is not partial, missing is; remove leaves it" {
+  space_def acme tech <<<'files: [local.conf]'
+  space_file acme tech/local.conf defaults
+  run wsm install acme/tech
+  [ "$status" -eq 0 ]
+  [ -f "$H/local.conf" ] && [ ! -L "$H/local.conf" ]
+  echo mine > "$H/local.conf"
+  wsm install acme/tech >/dev/null
+  [ "$(cat "$H/local.conf")" = mine ]
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tok\t'* ]]
+  [ "$(wsm ls acme/tech --json | yq -p json -r '.[0].copies[0].status')" = differs ]
+  rm "$H/local.conf"
+  run wsm ls acme/tech
+  [[ "$output" == *$'\tpartial\t'*"1 missing"* ]]
+  wsm install acme/tech >/dev/null
+  [ "$(cat "$H/local.conf")" = defaults ]
+  wsm remove -y acme/tech >/dev/null
+  [ "$(cat "$H/local.conf")" = defaults ] && [ ! -e "$H/space.yml" ]
+}
+
+@test "files: in the way fails the space before anything is linked; -f moves it aside" {
+  space_def acme tech <<<'files: [local.conf]'
+  space_file acme tech/local.conf defaults
+  mkdir -p "$H/local.conf"
+  run wsm install acme/tech
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"in the way: ~/spaces/acme/tech/local.conf (a directory)"* ]]
+  [ ! -e "$H/space.yml" ]
+  run wsm install -f acme/tech
+  [ "$status" -eq 0 ]
+  [ "$(cat "$H/local.conf")" = defaults ]
+  [ -d "$XDG_STATE_HOME/wsm/backup/acme/tech/local.conf" ]
+}
+
+@test "space.yml in files: is refused" {
+  space_def acme tech <<<'files: [space.yml]'
+  run wsm install acme/tech
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"space.yml is how wsm knows the space is installed"* ]]
+}
+
+@test "wsm add makes a relative link through anfs_link_one" {
+  space_def acme tech <<<'repositories: []'
+  wsm install acme/tech >/dev/null
+  echo mine > "$H/new.md"
+  run wsm add "$H/new.md"
+  [ "$status" -eq 0 ]
+  [[ "$(readlink "$H/new.md")" == ../* ]]
+  [ "$(cat "$T/srcs/acme/spaces/tech/new.md")" = mine ]
 }
