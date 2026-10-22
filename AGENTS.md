@@ -512,6 +512,49 @@ help` documents the commands.
   space is its space (`_repo_split`). Cloned with `anfs_repo_clone` (`lib/anfs/repo.sh`; a failed
   clone or checkout of the ref leaves nothing). Install never pulls (wsm never calls
   `anfs_repo_update`: what is checked out is the user's), and never deletes a clone.
+- **`space.yml`'s `links:`** (`[{src, dest?}]`): absolute links in the space's directory, `dest ->
+  src`. `src` has `~` and `$NAME`/`${NAME}` expanded from the environment (no `eval`; an unset
+  variable makes the entry `invalid`), and a relative one is from the space's directory; `dest`
+  defaults to `src`'s basename and must stay inside the space (`_repo_path_ok`'s rule). States:
+  `ok` (a link whose text is `src`), `missing`, `missing src` (said at install, not made, not a
+  failure, not counted), `wrong` (a link elsewhere), `in the way`, `invalid`. Install makes them
+  after the clones; `wrong` and `in the way` fail the entry, `-f` moves them aside as for files.
+  `remove` deletes one only while its text is still `src`. They overlap with ovm's vault links
+  into a space; a dest and an ovm link at one path meet as `in the way` on whichever comes second.
+- **`space.yml`'s `skills:`** (`[{repo, skills?}]`): agent skills installed into the space's
+  directory by the skills CLI (`lib/anfs/skill.sh` with the space's directory as the scope, `npx
+  skills` without `-g`). `repo` is what the CLI takes (`owner/repo`, a URL, a path); a relative
+  path is from the `space.yml`'s directory in the source, resolved with `cd -P`. `skills` left out
+  is every skill: a path's by name (each gets a real status), a remote's as `*`. The agents are the
+  detected ones (ppm packages with `meta.agent`). **Only the declaring space**: a child space's
+  directory is never a scope for its parent's skills (Claude Code itself loads `.claude/skills`
+  from parent directories up to the repository root: `packages/psm/AGENTS.md`).
+  - Install ends with them (after files, clones, `links:`): a path's skills are copied again every
+    run (they are the space's own, edits arrive that way), a remote's when missing for an agent.
+    No agent yet is `waiting`; no npx is one warning. Neither fails. A space with no `skills:`
+    never runs npx.
+  - `wsm skill install [SPEC] [-n]` is that half alone; `wsm skill ls [SPEC]` (`SKILL STATUS
+    REPO`) runs one `skills list` per installed space that declares any; `wsm skill rm SPEC...`
+    takes a space's declared skills from it, or one (`<space id>/<name>`), asking first.
+  - `remove` and `implode` take a space's skills first. **Never an unscoped `skills remove` in a
+    space**: in a project it sweeps every agent's directory, `skills/<name>` and
+    `data/skills/<name>` included (a space's own files, or the user's). wsm removes with `-a` for
+    the agents the skill is on, then deletes what the CLI keeps for universal agents: the copy in
+    `.agents/skills/<name>` and its `skills-lock.json` entry. A skill the space does not declare (a
+    `npx skills add` by hand, a `*` repo's that the lock does not trace to it) is never removed.
+  - What the CLI writes is wsm's to step around: `wsm add` skips (refuses when named)
+    `skills-lock.json` and the files of the skills that lock names under `.agents/skills/<name>/`
+    and `<.agent dir>[/<sub>]/skills/<name>/`, read with yq, no npx. Then `remove` deletes a
+    `skills-lock.json` whose `skills` is empty and the empty skill directories (`rmdir` only).
+  - Agents come and go: `wsm_ppm_changed` (wsm's `install.sh`, registered with ppm like psm's) runs
+    `wsm skill install` when a package in an install run declares `meta.agent`, and on a remove
+    unlinks each removed id no installed package still declares from every installed space's
+    declared skills (`wsm __agents_rm <id>...`, plumbing). wsm's own: it needs neither psm nor psm
+    it.
+  - `wsm list` never runs the CLI: skills are not in its STATUS.
+  - Every links:/skills: function acts only in a space's directory that is set, below the root and
+    a real directory (`_home_ok`), and `anfs_skill_cli` refuses a scope that is not an existing
+    absolute directory (`cd ""` would leave the CLI in the cwd).
 - **`wsm install [SPEC...] [-n] [-f] [-y]` links, as ppm does** (`lib/anfs/link.sh`): each space's
   files into `$WSM_SPACES_HOME/<source>/<path>/`, one relative link per file, so directories stay
   real and a clone never lands in the source. Every file is linked but `.DS_Store`, `README.*`
@@ -543,11 +586,13 @@ help` documents the commands.
     source` row.
   - The old `~/.local/state/wsm/installed/` trackers are neither read nor deleted.
 - **`wsm ls [SPEC]`**: `SPACE STATUS DIR NOTE`. STATUS is null (not installed), `ok`, `partial`
-  (NOTE counts `missing`, `wrong`, `in the way`, `leftover`), or `not in the source`. `wsm ls <id>
-  --json` adds `files: [{file, status}]` (the check's states plus `leftover`, relative to the
-  space). `wsm status` is gone; drift across the machine is `anfs status` (linker plan 03).
+  (NOTE counts `missing`, `wrong`, `in the way`, `leftover`; `links:` count in the first three),
+  or `not in the source`. `wsm ls <id> --json` adds `files: [{file, status}]` (the check's states
+  plus `leftover`, relative to the space) and `links: [{dest, src, status}]`. The installed
+  spaces' `links:` are read with one yq per run. `wsm status` is gone; drift across the machine is `anfs status` (linker plan 03).
 - **wsm acts only on what it derives from the source**: the spaces' files (links), their
-  leftovers, the repository paths, and `space.yml`. The user's files, their links and other
+  leftovers, the repository paths, `links:` dests, the skill directories and lock the skills CLI
+  writes for declared skills, and `space.yml`. The user's files, their links and other
   tools' (ovm's absolute links into vaults) are never listed, changed or removed.
 - **The tree mirrors the source, both ways.**
   - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
@@ -706,9 +751,9 @@ higher layer — your `user/anfs` — can replace it) and `~/.config/anfs/anfs.l
 machine only, seeded by install.sh with `PPM_GROUP_ID`). Every tool loads them through
 `lib/anfs/paths.sh` (`anfs_load_conf`):
 
-- Each variable is named for the tool that reads it: `PCM_HEALTH_TIMEOUT`, `PSM_CLI_VERSION`,
-  `HOMEBREW_*` (ppm); `ANFS_` for what every tool shares (`ANFS_UPDATE_CACHE_DURATION`,
-  `ANFS_QUIET_SKIPPED_REPOS`).
+- Each variable is named for the tool that reads it: `PCM_HEALTH_TIMEOUT`, `HOMEBREW_*` (ppm);
+  `ANFS_` for what more than one tool shares (`ANFS_UPDATE_CACHE_DURATION`,
+  `ANFS_QUIET_SKIPPED_REPOS`, `ANFS_SKILLS_CLI_VERSION`: the skills CLI psm and wsm run).
 - **The environment wins**, then `anfs.local.conf`, then `anfs.conf`: a variable already set is
   never overwritten, so `PCM_HEALTH_TIMEOUT=300 pcm up x` does what it says.
 - The files are read, not sourced: `NAME=value` lines, a value optionally quoted. A setting can't
@@ -858,7 +903,9 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - For a removal, the package directory normally still exists, so the callback can read the
   removed packages' `package.yml`. It is gone only if its repo was removed first.
 - `core/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
-  unlink them (`psm agents rm`) when one is removed.
+  unlink them (`psm agents rm`) when one is removed. `core/wsm` does the same for the spaces'
+  skills (`wsm_ppm_changed`: `wsm skill install`, `wsm __agents_rm`). Both read the ids with
+  `anfs_skill_package_agents` (`lib/anfs/skill.sh`).
 
 The mechanism is not ppm's: it is `lib/anfs/callbacks.sh`, shared by every tool that emits
 events. ppm keeps the package-facing names (`ppm_register_callback`, `ppm_unregister_callback`)
@@ -966,7 +1013,8 @@ The keys, which are the interface:
 | `pmm network list` | `network` (`source/name`; the plain name: made with `network create`, or the definition is gone), `status` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `kind`, `subnet` (a bridged network: its bridge), `machines` (comma-separated) |
 | `psm list` | `skill` (`<config>/<skill>`: the source's alias, or the config's name; `<config>/*` for a whole repo), `status` (`ok`, `partial`, `missing`, `*`), `config`, `repo` |
 | `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
-| `wsm list` | `space` (the id: `lgat`, `lgat/tech/web`), `status` (`ok`, `partial`, `not in the source`; null: not installed), `dir` (null: not installed), `note` (`2 missing, 1 leftover`), `missing`, `wrong`, `in_the_way`, `leftover` (counts, `--json` only); `wsm list <id> --json` adds `files` (`[{file, status}]`) |
+| `wsm list` | `space` (the id: `lgat`, `lgat/tech/web`), `status` (`ok`, `partial`, `not in the source`; null: not installed), `dir` (null: not installed), `note` (`2 missing, 1 leftover`), `missing`, `wrong`, `in_the_way`, `leftover` (counts, `--json` only); `wsm list <id> --json` adds `files` (`[{file, status}]`) and `links` (`[{dest, src, status}]`: `ok`, `missing`, `missing src`, `wrong`, `in the way`, `invalid`) |
+| `wsm skill list` | `skill` (`<space id>/<name>`; `<space id>/*` for a whole remote repo), `status` (`ok`, `partial`, `missing`, `waiting`: no agent yet, `*`; null: the space is not installed), `repo` (as the CLI is given it: a path resolved), `space`, `name` (the last three `--json` only) |
 | `wsm repo list` | `repository` (`<space id>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`, `invalid`), `url`, `ahead`, `space`, `path`, `dir` (the clone's path; null while its space is not installed) (the last four `--json` only) |
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
 | `anfs show <stack>` | `kind` (`stacks`, then the resource kinds in install order), `resource`, `declared` (the manifest's `status:`, null when none), `actual` (the tool's word: `installed`, `running`, `stopped`, `partial`; null: not there), `from` (the stack that brought it in) |
@@ -1440,6 +1488,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # anfs_result, anfs_json_on
   paths.sh     # ANFS_* paths, anfs_tool_paths <tool> (<TOOL>_{CONFIG,DATA,STATE,CACHE}_HOME),
                # anfs_load_conf (anfs.local.conf, anfs.conf; the environment wins)
+  skill.sh     # agent skills through the skills CLI (npx skills@$ANFS_SKILLS_CLI_VERSION) with a
+               # scope, -g or a directory: anfs_skill_cli, _require, _agents (ppm's meta.agent),
+               # _package_agents, _display/_id, _dir_skills, _load, _has, _status, _sync_rows,
+               # _remove, _remove_for, _unlink. psm runs it with -g, wsm with a space's directory
   repo.sh      # one clone at one path: anfs_repo_name (the directory git clone would make),
                # anfs_repo_clone <url> <dir> [ref], anfs_repo_status, anfs_repo_ahead,
                # anfs_repo_dirty, anfs_repo_update (pull; 2 when dirty), anfs_repo_ssh_url,
@@ -1527,15 +1579,17 @@ change. Their helpers skip every test and `tests/all` leaves them out; the perso
 hand with `ANFS_TESTS_PMM_PCM=1` (ROADMAP.md, "Last"). Agents do not turn them back on.
 
 ```
-bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
+bats packages/anfs/tests     # lib/anfs: sources.sh, repo.sh, skill.sh, resolve.sh, link.sh, bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n
 bats packages/pcm/tests      # pcm: sources, validate, remove
-bats packages/psm/tests      # psm: skills from sources, install, implode (skills CLI stubbed)
+bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
-                             # repositories), the state (ls), path/remove/new/add/repo/implode, events
+                             # repositories), the state (ls), path/remove/new/add/repo/implode, events,
+                             # links: (links.bats), skills: and wsm skill, the ppm callback (skills.bats,
+                             # npx stubbed: it logs its cwd)
 bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
                              # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart

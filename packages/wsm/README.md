@@ -46,7 +46,10 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm repo ls [SPEC]` | The repositories the `space.yml` files under `SPEC` declare, and their state: `REPOSITORY STATUS URL` |
 | `wsm repo install [SPEC\|REPOSITORY] [-n]` | Clones what the installed spaces under `SPEC` declare and is missing, or one repository; links nothing, pulls nothing (the clone half of `install`) |
 | `wsm repo ssh [SPEC]` | Switches the clones under `SPEC` whose origin is a GitHub https URL to ssh (`<id>: origin -> git@...`), as `anfs src ssh`. `space.yml` is the source's and is not edited: an https URL in it is noted (`<id>: https in space.yml`) |
-| `wsm install [SPEC...] [-n] [-f] [-y]` | Links spaces into `$WSM_SPACES_HOME/<id>` and clones their repositories, dependencies first. With no `SPEC`, the space at `.`, which must hold a `space.yml` |
+| `wsm skill ls [SPEC]` | Each skill the spaces under `SPEC` declare, and its state in the space: `SKILL STATUS REPO` (`ok`, `partial`, `missing`, `waiting` for an agent, `*` for a whole remote repo; `-` while the space is not installed) |
+| `wsm skill install [SPEC] [-n]` | Installs the declared skills of the installed spaces under `SPEC` into their directories (the skills half of `install`) |
+| `wsm skill rm [-y] SPEC...` | Asks, then removes a space's declared skills from it, or one (`<space id>/<name>`); skills it does not declare stay |
+| `wsm install [SPEC...] [-n] [-f] [-y]` | Links spaces into `$WSM_SPACES_HOME/<id>`, clones their repositories, makes their `links:` and installs their `skills:`, dependencies first. With no `SPEC`, the space at `.`, which must hold a `space.yml` |
 | `wsm remove [-y] SPEC...` | Asks, then unlinks installed spaces; cloned repos and your own files stay |
 | `wsm new [SOURCE/]PATH` | Creates a space in a source; installs it when the space around it is installed |
 | `wsm add FILE...` | Moves files (or every file under a directory) into the source, then links them back |
@@ -130,6 +133,13 @@ repositories:               # paths relative to the space's directory
     path: repos/app         # optional; left out, the name git clone would use (app)
     ref: main               # optional; a branch, tag or commit, checked out after the clone
   - url: git@github.com:lgat/docs    # cloned into docs
+skills:                     # agent skills installed into the space's directory, for it alone
+  - repo: vercel-labs/agent-skills   # owner/repo, a URL or a path, as the skills CLI takes it
+    skills: [deploy-to-vercel]       # optional: every skill in it when left out
+  - repo: ./skills                   # relative: from this space.yml in the source
+links:                      # absolute links in the space's directory
+  - src: ~/.local/share/anfs/sources # ~ and $VAR expanded; relative: from the space's directory
+    dest: sources                    # optional: src's basename, as `ln -s src`; inside the space
 ```
 
 `depends` resolves the way ppm's package dependencies do: an id names its source (by its alias on
@@ -139,6 +149,23 @@ not layer: an id means one space, the highest-priority one.
 A repository's id is `<space id>/<path>` (`lgat/tech/web/app`). Its path may not leave the space,
 lie inside a child space or hold one (`invalid`), so the longest prefix of an id that is a space is
 always its space. Two repositories of one `space.yml` may not share a path.
+
+**`links:`** are absolute links, `dest -> src`. `wsm ls` shows each one's state in `wsm ls <id>
+--json`'s `links`: `ok`, `missing`, `missing src` (said, not made, not a failure: the target may
+come later), `wrong` (a link elsewhere), `in the way`, `invalid` (an unset variable, a `dest` with
+`..` or a leading `/`). `wrong` and `in the way` fail install; `-f` moves them aside as for files.
+`remove` takes a link only while it still points at its `src`.
+
+**`skills:`** go through the skills CLI (`npx skills`, without `-g`, run in the space's directory),
+for the agents ppm installed (packages that declare `meta.agent`). The CLI writes
+`.agents/skills/<name>/`, an agent's own directory (`.claude/skills/<name>`) and
+`skills-lock.json`; `wsm add` steps around them. A path's skills are copied again on every
+install (edits in the source arrive that way); a remote's when missing for an agent. No agent yet
+is `waiting` and no npx a warning: neither fails an install, and a space without `skills:` never
+runs npx. A space's skills are its own: a child space's install never installs its parent's.
+Installing an agent package (`ppm install`) installs every installed space's skills for it;
+removing one unlinks them from it. `remove` takes a space's declared skills first, never one you
+added by hand. The CLI version is `ANFS_SKILLS_CLI_VERSION` in `anfs.conf`.
 
 Install never pulls: what is checked out is yours. Re-running it is how a space picks up files
 and repositories added since, and drops the links to files the source no longer has.
@@ -160,7 +187,8 @@ and repositories added since, and drops the links to files the source no longer 
 - **No root inside a source**: the source would be linked into itself, and the clones would land
   in it.
 - **wsm acts only on what it derives from the source**: the spaces' files, its leftovers, the
-  repository paths (cloned when missing, never pulled, never deleted). Your files, your links and
+  repository paths (cloned when missing, never pulled, never deleted), the `links:` dests, and
+  what the skills CLI writes for the skills a space declares. Your files, your links and
   other tools' links in the tree (ovm's) are never listed, changed or removed.
 - **remove and implode only take links** still pointing at the space's files, the leftovers, and
   `space.yml` last (an interrupted remove leaves the space `partial`), then the directories that
