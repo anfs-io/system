@@ -237,24 +237,30 @@ remote() {
   [ "$(gitsrc_provides b)" = "machines" ]
 }
 
-@test "ssh: rewrites user-list https entries; system-list ones are reported with the hint" {
+@test "ssh: rewrites user-list https entries; the system list is never edited, its URL only used to clone" {
   printf 'https://github.com/me/u.git  u\n' > "$GITSRC_USER_LIST"
   printf 'https://github.com/me/s.git  s\n' > "$GITSRC_SYSTEM_LIST"
-  GITSRC_SYSTEM_LIST_HINT="protect it"
   run gitsrc_ssh
   [ "${lines[0]}" = "u: user.list -> git@github.com:me/u.git" ]
-  [ "${lines[1]}" = "s: https in system.list (tool-managed); protect it" ]
+  [ "${lines[1]}" = "s: https in system.list, only used for the first clone" ]
   grep -q '^git@github.com:me/u.git  u$' "$GITSRC_USER_LIST"
   grep -q '^https://github.com/me/s.git' "$GITSRC_SYSTEM_LIST"
 }
 
-@test "ssh: the system list is rewritten when the hook allows it" {
+@test "ssh: a system source's clone has its origin switched; the list keeps https" {
   printf 'https://github.com/me/s.git  s\n' > "$GITSRC_SYSTEM_LIST"
-  gitsrc_hook_system_writable() { return 0; }
+  mkdir -p "$T/repos/s"
+  git -C "$T/repos/s" init -q
+  git -C "$T/repos/s" remote add origin https://github.com/me/s.git
   run gitsrc_ssh s
-  [ "$output" = "s: system.list -> git@github.com:me/s.git" ]
+  [ "$output" = "s: origin -> git@github.com:me/s.git; system.list's https URL is only used for the first clone" ]
+  grep -q '^https://github.com/me/s.git' "$GITSRC_SYSTEM_LIST"
+  # and src list shows the clone's origin, what it pulls from
+  gitsrc_collect
+  run gitsrc_list_file "$GITSRC_SYSTEM_LIST" system
+  [[ "$output" == *"git@github.com:me/s.git"* ]]
+  [[ "$output" != *"https://github.com/me/s.git"* ]]
 }
-
 
 @test "provides: core's containers/ is ui only (the test boxes are anfs-dev's), machines/ only images" {
   local core

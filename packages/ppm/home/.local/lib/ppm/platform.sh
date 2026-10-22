@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Platform: OS/distro detection, and Homebrew's location and ownership
+# Platform: Homebrew's location and ownership, system packages (platform() and os() are
+# lib/anfs/platform.sh's)
 #
 # BOOTSTRAP SET: install.sh sources this under whatever bash started it, which on a vanilla Mac is
 # 3.2. Keep it parseable and runnable there: no bash 4+ syntax (see lib/anfs/bash.sh)
@@ -10,24 +11,7 @@
 # Apple silicon macOS and Linux; Intel Macs (/usr/local) are not supported
 PPM_BREW_PREFIXES="/opt/homebrew /home/linuxbrew/.linuxbrew"
 
-# macos, or the supported distro family from os-release (ID first, then ID_LIKE):
-# debian (Debian and derivatives such as Ubuntu) or fedora (Fedora, and RHEL-family distros
-# that declare ID_LIKE=fedora). The value is also the key for per-platform maps in package.yml.
-platform() {
-  if [[ "$OSTYPE" == darwin* ]]; then
-    echo "macos"
-    return
-  fi
-
-  local os_release="${PPM_OS_RELEASE:-/etc/os-release}" candidates="" candidate
-  [[ -r "$os_release" ]] && candidates=$(. "$os_release" && echo "${ID:-} ${ID_LIKE:-}")
-  for candidate in $candidates; do
-    case "$candidate" in
-      debian|fedora) echo "$candidate"; return ;;
-    esac
-  done
-  echo "unsupported"
-}
+# platform() is anfs's (lib/anfs/platform.sh), sourced before this file
 
 # First Homebrew prefix that exists; prints nothing if Homebrew is not installed
 brew_prefix() {

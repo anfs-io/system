@@ -18,12 +18,10 @@
 #                         path); false: it lives at $GITSRC_REPOS_DIR/<alias> like a clone, and
 #                         `src update` links it there when nothing is in the way (anfs)
 #   GITSRC_DIRS           top-level directories `src list` reports a source as providing
-#   GITSRC_SYSTEM_LIST_HINT  appended when `src ssh` finds an https entry only in the system list
 #
 # Optional hooks a tool may define:
 #   gitsrc_hook_user_list_file  echo the user list to write (ppm migrates a legacy name here)
 #   gitsrc_hook_user_list_read  echo the user list to read, or nothing
-#   gitsrc_hook_system_writable true when the system list may be edited by `src ssh`
 #
 # Source list format, one per line: <git-url-or-path> [alias]  (alias defaults to the directory git
 # clone would make: anfs_repo_name)
@@ -159,13 +157,20 @@ gitsrc_provides() {
   echo "${out# }"
 }
 
-# One row per entry of a list file: alias, status, url, which list, what it provides
+# One row per entry of a list file: alias, status, url, which list, what it provides. The url is
+# the clone's origin when the source is cloned (what it really pulls from: `src ssh` switches it,
+# and the list's URL is only used for the first clone), else the list's.
 gitsrc_list_file() {
-  local file="$1" list="$2" line
+  local file="$1" list="$2" line url
   [[ -n "$file" && -f "$file" ]] || return 0
   while IFS= read -r line || [[ -n "$line" ]]; do
     gitsrc_parse_line "$line" || continue
-    anfs_row "$GITSRC_LINE_NAME" "$(gitsrc_status "$GITSRC_LINE_NAME")" "$GITSRC_LINE_URL" "$list" \
+    url="$GITSRC_LINE_URL"
+    gitsrc_dir_reply "$GITSRC_LINE_NAME"
+    if [[ -e "$REPLY/.git" ]]; then
+      url=$(git -C "$REPLY" remote get-url origin 2>/dev/null) || url="$GITSRC_LINE_URL"
+    fi
+    anfs_row "$GITSRC_LINE_NAME" "$(gitsrc_status "$GITSRC_LINE_NAME")" "$url" "$list" \
       "$(gitsrc_provides "$GITSRC_LINE_NAME")" "$(gitsrc_dir_reply "$GITSRC_LINE_NAME"; anfs_repo_ahead "$REPLY")"
   done < "$file"
 }
@@ -272,21 +277,19 @@ gitsrc_ssh_rewrite_in_file() {
   printf '%s\n' "$tmp" > "$file"
 }
 
-# Switch GitHub HTTPS entries and the origin remotes of cloned sources to SSH. The user list is
-# always writable; the system list only when gitsrc_hook_system_writable says so.
+# Switch GitHub HTTPS entries of the user list and the origin remotes of cloned sources to SSH.
+# The system list is never edited: its URL is only used for a source's first clone, and a clone's
+# origin is what it pulls from (src list shows it).
 gitsrc_ssh() {
   local filter="${1:-}" user_file
   user_file=$(gitsrc_user_list_file)
 
   local writable=("$user_file")
-  if declare -F gitsrc_hook_system_writable >/dev/null && gitsrc_hook_system_writable; then
-    writable+=("$GITSRC_SYSTEM_LIST")
-  fi
 
   gitsrc_collect
 
-  local i name url repo_dir remote changed noted found=false f
-  local sys_name hint="${GITSRC_SYSTEM_LIST_HINT:-}"
+  local i name url repo_dir remote changed noted found=false f sys
+  local sys_name
   sys_name=$(basename "$GITSRC_SYSTEM_LIST")
   for i in "${!GITSRC_NAMES[@]}"; do
     name="${GITSRC_NAMES[$i]}"
@@ -294,6 +297,7 @@ gitsrc_ssh() {
     found=true
     changed=false
     noted=false
+    sys=false
     url="${GITSRC_URLS[$i]}"
     repo_dir=$(gitsrc_dir "$name")
 
@@ -306,17 +310,19 @@ gitsrc_ssh() {
           break
         fi
       done
-      # An https entry that only lives in the (read-only) system list
+      # An https entry that only lives in the system list, which is not edited
       if ! $changed && [[ -f "$GITSRC_SYSTEM_LIST" ]] &&
          awk -v u="$url" '$1 == u { f=1 } END { exit !f }' "$GITSRC_SYSTEM_LIST"; then
-        echo "$name: https in $sys_name ($GITSRC_TOOL-managed)${hint:+; $hint}"
-        noted=true
+        sys=true
       fi
     fi
 
     if remote=$(anfs_repo_ssh "$repo_dir"); then
-      echo "$name: origin -> $remote"
+      echo "$name: origin -> $remote$($sys && echo "; $sys_name's https URL is only used for the first clone")"
       changed=true
+    elif $sys; then
+      echo "$name: https in $sys_name, only used for the first clone"
+      noted=true
     fi
 
     { $changed || $noted; } || echo "$name: already SSH"
@@ -492,5 +498,4 @@ anfs_gitsrc_env() {
   for t in $ANFS_TOOLS; do GITSRC_DIRS="$GITSRC_DIRS $(anfs_tool_dir "$t")"; done
   # stacks/ is anfs's own (lib/anfs/stacks.sh), no tool's
   GITSRC_DIRS="${GITSRC_DIRS# } stacks"
-  GITSRC_SYSTEM_LIST_HINT="run 'ppm file protect ~/.config/anfs/system.list' to edit it here"
 }

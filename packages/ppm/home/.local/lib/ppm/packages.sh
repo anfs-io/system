@@ -253,7 +253,7 @@ meta_deps() {
 # A key with no handler is not an error, so an unhandled key is a debug line rather than a warning.
 # `meta:` is ppm's but ppm never reads it: a free-form map for other packages to read, such as the
 # `meta.agent` ids core/psm syncs skills to. Put package metadata there, not in a top-level key.
-PPM_CORE_KEYS="version author depends platforms categories brew cask system meta onboard"
+PPM_CORE_KEYS="version author depends platforms categories brew cask system meta onboard links files"
 
 # Top-level keys of a package.yml that ppm core does not own, one per line
 # Usage: meta_extra_keys <package_dir>
@@ -287,10 +287,11 @@ _tracker_path() {
 # Record a package as installed with its stowed files and the brew formulas and casks ppm
 # installed for it. Dependencies recorded by an earlier install are kept, so a later install that
 # finds them already present doesn't lose track of who installed them.
-# Usage: meta_mark_installed <repo_name> <package_name> <package_dir> <files> [brew_names] [cask_names]
-# files are newline-separated; brew/cask names are whitespace-separated
+# Usage: meta_mark_installed <repo_name> <package_name> <package_dir> <files> [brew_names] [cask_names] [links]
+# files are newline-separated (a directory link is one); brew/cask names are whitespace-separated;
+# links are the links out of the tree (links: {src}), "<dest>\t<src>" lines
 meta_mark_installed() {
-  local repo_name="$1" pkg_name="$2" pkg_dir="$3" stowed_files="$4" new_brew="${5:-}" new_cask="${6:-}"
+  local repo_name="$1" pkg_name="$2" pkg_dir="$3" stowed_files="$4" new_brew="${5:-}" new_cask="${6:-}" links="${7:-}"
   local tracker
   tracker=$(_tracker_path "$repo_name" "$pkg_name")
   local version
@@ -321,6 +322,15 @@ meta_mark_installed() {
         f="${f//\\/\\\\}"
         printf '  - "%s"\n' "${f//\"/\\\"}"
       done
+    fi
+    if [[ -n "$links" ]]; then
+      echo "links:"
+      local dest src
+      while IFS=$'\t' read -r dest src; do
+        [[ -n "$dest" ]] || continue
+        dest="${dest//\\/\\\\}" src="${src//\\/\\\\}"
+        printf '  - {dest: "%s", src: "%s"}\n' "${dest//\"/\\\"}" "${src//\"/\\\"}"
+      done <<< "$links"
     fi
     if [[ -n "$brew$cask" ]]; then
       echo "installed_deps:"
@@ -398,6 +408,15 @@ meta_installed_files() {
   yq -r '.files[]? // ""' "$tracker" 2>/dev/null
 }
 
+# The links out of the tree a package made (links: {src}), "<dest>\t<src>" per line
+# Usage: meta_installed_links <repo_name> <package_name>
+meta_installed_links() {
+  local tracker
+  tracker=$(_tracker_path "$1" "$2")
+  [[ -f "$tracker" ]] || return 0
+  yq -r '.links[]? | .dest + "\t" + .src' "$tracker" 2>/dev/null
+}
+
 # Brew formulas or casks that ppm installed for a package, one per line
 # Usage: meta_installed_deps <repo_name> <package_name> <brew|cask>
 meta_installed_deps() {
@@ -415,7 +434,7 @@ _tracker_add_file() {
   if [[ -f "$tracker" ]]; then
     F="$rel" yq -i '.files = ((.files // []) + [strenv(F)] | unique)' "$tracker"
   else
-    meta_mark_installed "$repo" "$pkg" "$pkg_dir" "$(package_links "$pkg_dir/home")"
+    meta_mark_installed "$repo" "$pkg" "$pkg_dir" "$(_pkg_links "$pkg_dir")"
   fi
 }
 
@@ -550,6 +569,7 @@ cmd_show() {
       fi
     done
     ! $shown || echo ""
+    _show_placement "$repo_name" "$package_name" "$package_dir"
 
     if meta_is_installed "$repo_name" "$package_name"; then
       local inst_version
@@ -592,6 +612,59 @@ cmd_show() {
       echo ""
     fi
   done 3<<< "$matches"
+}
+
+# What a package's links: and files: say (lib/anfs/manifest.sh), each entry with its platforms and,
+# when the package is installed, its state here; or why the manifest is invalid
+# Usage: _show_placement <repo> <package> <package_dir>
+_show_placement() {
+  local repo="$1" pkg="$2" dir="$3" rows kind p dest plats line label state installed=false shown=false
+  [[ -f "$dir/package.yml" ]] || return 0
+  rows=$(anfs_manifest_read "$dir/package.yml")
+  [[ -n "$rows" ]] || return 0
+  meta_is_installed "$repo" "$pkg" && installed=true
+  if ! anfs_manifest_plan "$rows" "$dir/home" "$(platform)"; then
+    echo "Invalid package.yml (not installed by ppm install):$(_pkg_manifest_errors)"
+    echo ""
+    return 0
+  fi
+  local tab=$'\t'
+  while IFS= read -r line; do
+    line="${line#*$tab}"
+    kind="${line%%$tab*}" line="${line#*$tab}"
+    p="${line%%$tab*}" line="${line#*$tab}"
+    dest="${line%%$tab*}" plats="${line#*$tab}"
+    state=""
+    case "$kind" in
+      dir) label="link     ~/$p/ (one link)" ;;
+      path) label="link     ~/$p" ;;
+      src) label="link     ~/${dest:-${p##*/}} -> $p" ;;
+      file) label="copy     ~/$p" ;;
+      *) continue ;;
+    esac
+    if [[ -n "$plats" ]] && ! anfs_manifest_match "$(platform)" "$plats"; then
+      state="off here"
+    elif $installed; then
+      case "$kind" in
+        dir|path)
+          if [[ "$kind" == dir || ! -d "$dir/home/$p" ]]; then
+            state=$(anfs_link_check "$dir/home" "$HOME" <(echo "$p") | cut -f1)
+          fi
+          ;;
+        file) state=$(anfs_files_plan "$dir/home" "$HOME" <(echo "$p") 2>/dev/null | cut -f1) || true ;;
+      esac
+    fi
+    $shown || { echo "Placed:"; shown=true; }
+    printf '  %s%s%s\n' "$label" "${plats:+  [$plats]}" "${state:+  ($state)}"
+  done <<< "$rows"
+  # links out of the tree, their state from the plan's own expansion
+  if $installed && [[ -n "$ANFS_MF_SRCS" ]]; then
+    while IFS=$'\t' read -r dest p; do
+      [[ -n "$dest" ]] || continue
+      printf '  ~/%s: %s\n' "$dest" "$(anfs_link_src_state "$HOME/$dest" "$p")"
+    done <<< "$ANFS_MF_SRCS"
+  fi
+  ! $shown || echo ""
 }
 
 # Output the path to a package directory (the highest-priority layer)

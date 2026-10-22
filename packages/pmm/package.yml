@@ -1,4 +1,4 @@
-version: 0.1.4
+version: 0.1.5
 author: rjayroach
 depends:
   - qemu
@@ -6,3 +6,4 @@ depends:
 # declared here. Linux has no tart: tart images and the machines from them are macOS-only.
 brew:
   macos: [openai/tools/tart]
+links: [.local/lib/pmm/]

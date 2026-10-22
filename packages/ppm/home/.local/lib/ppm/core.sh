@@ -19,16 +19,7 @@ arch() {
   fi
 }
 
-# Detect the OS
-os() {
-  if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-    echo "linux"
-  elif [[ "$OSTYPE" == "darwin"* ]]; then
-    echo "macos"
-  else
-    echo "unsupported"
-  fi
-}
+# os() is anfs's (lib/anfs/platform.sh), sourced before this file
 
 # search in file and add/remove as requested
 add_to_file() {

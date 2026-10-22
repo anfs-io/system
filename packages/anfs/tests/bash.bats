@@ -96,7 +96,7 @@ need_old_bash() {
 @test "the bootstrap set parses under the older bash" {
   need_old_bash
   local f
-  for f in install.sh packages/anfs/home/.local/lib/anfs/{bash,link,manifest,files}.sh \
+  for f in install.sh packages/anfs/home/.local/lib/anfs/{bash,platform,link,manifest,files}.sh \
            packages/ppm/home/.local/lib/ppm/{core,platform,file,installer}.sh; do
     "$OLD" -n "$REPO/$f" || { echo "$f does not parse under $("$OLD" -c 'echo $BASH_VERSION')"; return 1; }
   done
@@ -117,7 +117,7 @@ need_old_bash() {
   # If install.sh starts sourcing another library, it joins the set (and the test above)
   run grep -E '^PPM_BOOTSTRAP_LIBS=' "$REPO/install.sh"
   [ "$output" = 'PPM_BOOTSTRAP_LIBS="core.sh platform.sh file.sh installer.sh"' ]
-  # and lib/anfs/link.sh, which ppm's installer.sh links with
+  # and lib/anfs's platform() and os(), and what ppm's installer.sh links and copies with
   run grep -E '^ANFS_BOOTSTRAP_LIBS=' "$REPO/install.sh"
-  [ "$output" = 'ANFS_BOOTSTRAP_LIBS="link.sh"' ]
+  [ "$output" = 'ANFS_BOOTSTRAP_LIBS="platform.sh link.sh manifest.sh files.sh"' ]
 }

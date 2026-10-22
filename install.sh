@@ -8,9 +8,9 @@
 # must stay parseable and runnable there. Everything else is written for bash 5.2 (lib/anfs/bash.sh)
 #
 # WHAT THIS SCRIPT DOES:
-#   1. Sources ppm's libraries and anfs's linker (lib/anfs/link.sh), so this bootstrap reuses
-#      ppm's own os()/platform()/brew_* helpers and the way it links instead of copies: from the
-#      checkout it runs from, an existing clone, or a download (curl ... | bash)
+#   1. Sources ppm's libraries and anfs's (lib/anfs/platform.sh, link.sh, manifest.sh, files.sh),
+#      so this bootstrap reuses os()/platform(), ppm's brew_* helpers and the way it links instead
+#      of copies: from the checkout it runs from, an existing clone, or a download (curl ... | bash)
 #   2. Installs Homebrew's prerequisites (Debian: apt, Fedora: dnf packages, including git;
 #      macOS: Xcode Command Line Tools), asking for sudo only when something is missing
 #   3. Installs Homebrew if the machine has none (this user becomes its owner), or uses
@@ -19,10 +19,11 @@
 #      package.yml (yq) until these exist, so they stay an imperative bootstrap and never become
 #      tracked dependencies. ppm links files itself (lib/anfs/link.sh): no GNU stow
 #   5. Clones anfs to ~/.local/share/anfs/sources/core (git is available now) and links its two
-#      base packages into $HOME: anfs (the anfs command, the libraries every tool shares, the
-#      default config — anfs.conf and system.list) and ppm (the ppm command, its libraries and
-#      shell integration). That is what puts ~/.local/bin/{anfs,ppm} on PATH. Files protected with
-#      `ppm file protect` are left alone.
+#      base packages into $HOME as their package.yml says: anfs (the anfs command, the libraries
+#      every tool shares — ~/.local/lib/anfs, one directory link — and the default config,
+#      anfs.conf and system.list) and ppm (the ppm command, its libraries and shell integration).
+#      That is what puts ~/.local/bin/{anfs,ppm} on PATH. Files protected with `ppm file protect`
+#      are left alone.
 #   6. Adds GitHub's published SSH host keys to ~/.ssh/known_hosts
 #   7. Seeds an empty ~/.config/anfs/user.list (your sources) and ~/.config/anfs/anfs.local.conf
 #      (machine-local settings)
@@ -37,7 +38,7 @@
 # FILES CREATED:
 #   ~/.local/share/anfs/sources/<alias>/  one clone per source; anfs/ is the toolkit's own repo
 #   ~/.local/bin/{anfs,ppm,pcm,psm,wsm}   the commands (linked)
-#   ~/.local/lib/{anfs,ppm,pcm}/          their libraries; lib/anfs is what every tool shares
+#   ~/.local/lib/{anfs,ppm,pcm}/          their libraries; lib/anfs (one link) is what every tool shares
 #   ~/.config/anfs/system.list            default sources (linked from core/anfs)
 #   ~/.config/anfs/user.list              your sources (a link into your repo with --repo)
 #   ~/.config/anfs/anfs.conf              default settings for every tool (linked from core/anfs)
@@ -47,8 +48,8 @@
 # EXTERNAL FETCHES:
 #   https://github.com/anfs-io/system.git                                  the anfs repo
 #   https://raw.githubusercontent.com/anfs-io/system/...                  ppm's libraries and anfs's
-#                                                                      linker, only when piped (no
-#                                                                      checkout to read)
+#                                                                      bootstrap set, only when piped
+#                                                                      (no checkout to read)
 #   https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh  only when Homebrew is missing
 #
 # SUDO USAGE:
@@ -61,8 +62,8 @@
 # OPTIONS:
 #   --repo <url>    your customization repo (see `anfs onboard`), added as the "user" source
 #                   (or set ANFS_INSTALL_REPO)
-#   --script-only   only clone anfs, link the base packages and seed config (needs yq only
-#                   when files are protected)
+#   --script-only   only clone anfs, link the base packages and seed config (needs yq: the
+#                   base packages' package.yml says how they are linked)
 #   --skip-deps     skip prerequisites and Homebrew setup (you manage them)
 #   --no-shell      do not install your login shell's package (or set ANFS_INSTALL_SHELL=false)
 #   <package...>    packages to install (or set ANFS_INSTALL_PACKAGES; none by default)
@@ -106,9 +107,9 @@ ANFS_TOOL_HOMES=".ssh .local/share/mise .local/state/mise .cache/mise .config/mi
 
 # ppm's libraries this bootstrap reuses: platform/brew helpers, and how it links (protected files)
 PPM_BOOTSTRAP_LIBS="core.sh platform.sh file.sh installer.sh"
-# and anfs's, which ppm's installer.sh links with
+# and anfs's: the platform, and what ppm's installer.sh links and copies with
 ANFS_LIB_SUBDIR=packages/anfs/home/.local/lib/anfs
-ANFS_BOOTSTRAP_LIBS="link.sh"
+ANFS_BOOTSTRAP_LIBS="platform.sh link.sh manifest.sh files.sh"
 
 # This script's own path; empty when piped (curl ... | bash), a file when run from a checkout
 PPM_INSTALLER_PATH="${BASH_SOURCE[0]:-}"
@@ -149,9 +150,10 @@ fetch() {
 }
 
 
-# Source ppm's own libraries so this bootstrap reuses os(), platform(), brew_prefix(),
-# brew_owner(), brew_env(), system_pkg_*(), brew_missing(), brew_is_owner() instead of
-# keeping copies here, and anfs's link.sh, which ppm's installer.sh links with. This runs before
+# Source ppm's own libraries so this bootstrap reuses brew_prefix(), brew_owner(), brew_env(),
+# system_pkg_*(), brew_missing(), brew_is_owner() instead of keeping copies here, and anfs's
+# bootstrap set: os() and platform() (platform.sh), and link.sh, manifest.sh and files.sh, which
+# ppm's installer.sh links and copies with. This runs before
 # the clone: the prerequisites it installs are what provide git. The libraries come from, in order:
 #   1. the checkout this script is running from (./install.sh, bash /src/ppm/install.sh)
 #   2. an existing clone (a re-run)
@@ -329,7 +331,8 @@ setup_known_hosts() {
 
 # Link the base packages, anfs and ppm, into $HOME: this is what puts ~/.local/bin/{anfs,ppm} on
 # PATH and ~/.local/lib/{anfs,ppm} in place, so `anfs` and `ppm` become runnable. Idempotent. Uses
-# ppm's own stow_package (lib/anfs/link.sh), seeded with the files `ppm file protect` detached, so
+# ppm's own stow_package (their package.yml's links:, lib/anfs/link.sh), seeded with the files
+# `ppm file protect` detached, so
 # a re-run leaves protected files alone exactly as `ppm install` does. The plan keeps what is
 # already linked and replaces a dangling link into the sources (a file that moved out of a
 # package). A live link into any *other* package belongs to a higher-priority layer (user/anfs's
@@ -346,9 +349,9 @@ stow_base() {
 }
 
 
-# Seed the machine's own config. anfs.conf and system.list come from linking core/anfs; here we
-# seed an empty user.list the user can add repos to, and machine-local settings. A repo's
-# package can later replace user.list with a link into that repo (install_repo).
+# Seed the machine's own config. anfs.conf and system.list are linked from core/anfs; here we
+# seed an empty user.list the user can add repos to, and an anfs.local.conf for machine-local
+# settings. A repo's package can later replace user.list with a link into that repo (install_repo).
 install_configs() {
   if [[ ! -e "$ANFS_USER_LIST" ]]; then
     printf '# Your anfs sources (highest priority). Add with: anfs src add <git-url> [alias]\n' \
@@ -356,8 +359,7 @@ install_configs() {
   fi
 
   if [[ ! -f "$ANFS_CONFIG_HOME/anfs.local.conf" ]]; then
-    printf '# Settings for this machine only; they win over anfs.conf\nPPM_GROUP_ID=%s\n' "$(os)" \
-      > "$ANFS_CONFIG_HOME/anfs.local.conf"
+    printf '# Settings for this machine only; they win over anfs.conf\n' > "$ANFS_CONFIG_HOME/anfs.local.conf"
   fi
 }
 

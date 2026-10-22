@@ -10,6 +10,10 @@
 # higher ones. cmd_install starts it again when moving on to a different package name.
 PPM_SKIP_FILE=""
 
+# The mise tomls the current run linked (absolute, newline-separated): _mise_install_declared
+# installs what they name, and nothing a layer left unlinked (another platform's, a lower layer's)
+PPM_MISE_TOMLS=""
+
 # Brew formulas and casks installed by the current run (newline-separated), for the trackers
 PPM_NEW_BREW=""
 PPM_NEW_CASK=""
@@ -23,6 +27,7 @@ PPM_REMOVED=()
 cmd_install() {
   # -n: the plan, and nothing else (no pull, no brew, no hooks, no links, no tracker)
   local dry=${dry_run:-false}
+  PPM_MISE_TOMLS=""
   $dry || update_ppm_if_needed
   $dry || update_brew_if_needed
   expand_packages "install" "$@"
@@ -97,7 +102,7 @@ cmd_install() {
 # `ppm install -n`: each resolved layer's plan, as an install would carry it out (lib/anfs/link.sh),
 # changing nothing. Exits 1 when the install would stop on something in the way.
 _install_plan() {
-  local idx=0 prev_name="" qualified package_name subdir failed=false
+  local idx=0 prev_name="" qualified package_name failed=false
   echo "Plan for ${#RESOLVE_ORDER[@]} package(s); nothing is changed (-n):"
   for qualified in "${RESOLVE_ORDER[@]}"; do
     package_name="${qualified##*/}"
@@ -106,9 +111,7 @@ _install_plan() {
       prev_name="$package_name"
     fi
     echo "Install $qualified"
-    for subdir in home ${PPM_GROUP_ID:-}; do
-      plan_subdir "${RESOLVE_DIRS[$idx]}" "$subdir" || failed=true
-    done
+    plan_package "${RESOLVE_DIRS[$idx]}" || failed=true
     idx=$((idx + 1))
   done
   if $failed; then
@@ -130,7 +133,8 @@ cmd_remove() {
 # --- Lifecycle ---
 
 # Install a single resolved package: pre_install, stow, install_<os>, post_install, track
-# Hooks are skipped with -c (config only)
+# Hooks are skipped with -c (config only). A package whose package.yml is invalid (links:, files:)
+# is not installed, every error said; the run goes on.
 # Arguments: repo_name package_name package_dir
 install_single_package() {
   local repo_name="$1" pkg_name="$2" pkg_dir="$3"
@@ -140,6 +144,10 @@ install_single_package() {
   PPM_CURRENT_PACKAGE="$repo_name/$pkg_name"
   echo "Install $repo_name/$pkg_name"
   debug "Package dir: $pkg_dir"
+  if ! _pkg_manifest "$pkg_dir"; then
+    ppm_fail "invalid package.yml, not installed:$(_pkg_manifest_errors)" || true
+    return 0
+  fi
 
   if $run_hooks; then
     (
@@ -150,8 +158,9 @@ install_single_package() {
     )
   fi
 
-  stow_package "$pkg_dir"
-  meta_cleanup_stale "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES"
+  # something in the way stops the run (stow_package said what): no hook, no tracker
+  stow_package "$pkg_dir" read || exit 1
+  meta_cleanup_stale "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES" "$STOWED_SRCS"
   _reload_stowed_libs "$STOWED_FILES"
   _install_declared_resources "$repo_name" "$pkg_name" "$pkg_dir"
 
@@ -182,7 +191,7 @@ install_single_package() {
     done
     [[ "$manager" == "brew" ]] && new_brew="$new" || new_cask="$new"
   done
-  meta_mark_installed "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES" "$new_brew" "$new_cask"
+  meta_mark_installed "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES" "$new_brew" "$new_cask" "$STOWED_SRCS"
 }
 
 # Remove packages by name; "pkg" removes every layer, "repo/pkg" only that one
@@ -400,16 +409,16 @@ _install_declared_deps() {
   fi
 }
 
-# Install the mise tools named in the resolved packages' mise config (.config/mise/**/*.toml),
-# in one call from $HOME so a project's config in the current directory doesn't interfere
+# Install the mise tools named in the mise config (.config/mise/**/*.toml) the run's layers linked
+# (PPM_MISE_TOMLS, stow_package): another platform's toml, or a lower layer's that a higher one
+# replaced, is not read. One call from $HOME so a project's config in the current directory doesn't
+# interfere.
 _mise_install_declared() {
-  local dir file tools=""
-  for dir in "${RESOLVE_DIRS[@]}"; do
-    while IFS= read -r file; do
-      [[ -n "$file" ]] || continue
-      tools=$(_list_add "$tools" $(yq -p toml -oy -r '.tools // {} | keys | .[]' "$file" 2>/dev/null))
-    done < <(find "$dir/home/.config/mise" ${PPM_GROUP_ID:+"$dir/$PPM_GROUP_ID/.config/mise"} -name '*.toml' 2>/dev/null)
-  done
+  local file tools=""
+  while IFS= read -r file; do
+    [[ -n "$file" && -f "$file" ]] || continue
+    tools=$(_list_add "$tools" $(yq -p toml -oy -r '.tools // {} | keys | .[]' "$file" 2>/dev/null))
+  done <<< "$PPM_MISE_TOMLS"
   [[ -n "$tools" ]] || return 0
 
   if ! command -v mise >/dev/null 2>&1; then
@@ -486,62 +495,207 @@ _dep_needed_elsewhere() {
 }
 
 # Remove the links a previous install of this layer made that it no longer ships: the tracker's
-# files that are not in the new list, when they still point into the package (lib/anfs/link.sh)
-# Usage: meta_cleanup_stale <repo_name> <package_name> <package_dir> <new_files>
+# files that are not in the new list, when they still point into the package, and its links out of
+# the tree whose dest is gone, while they still point at their src (lib/anfs/link.sh)
+# Usage: meta_cleanup_stale <repo_name> <package_name> <package_dir> <new_files> [new_srcs]
 meta_cleanup_stale() {
-  local repo_name="$1" pkg_name="$2" pkg_dir="$3" new_files="$4" old_files
+  local repo_name="$1" pkg_name="$2" pkg_dir="$3" new_files="$4" new_srcs="${5:-}" old_files old_srcs dest src
   old_files=$(meta_installed_files "$repo_name" "$pkg_name")
-  [[ -n "$old_files" ]] || return 0
-  anfs_unlink "$pkg_dir" "$HOME" <(printf '%s\n' "$old_files" | grep -vxF -f <(printf '%s\n' "$new_files") || true)
+  if [[ -n "$old_files" ]]; then
+    anfs_unlink "$pkg_dir" "$HOME" <(printf '%s\n' "$old_files" | grep -vxF -f <(printf '%s\n' "$new_files") || true)
+  fi
+  old_srcs=$(meta_installed_links "$repo_name" "$pkg_name")
+  new_srcs=$'\n'$(printf '%s' "$new_srcs" | cut -f1)$'\n'
+  while IFS=$'\t' read -r dest src; do
+    [[ -n "$dest" ]] || continue
+    case "$new_srcs" in *$'\n'"$dest"$'\n'*) ;; *) anfs_unlink_src "$HOME/$dest" "$src" ;; esac
+  done <<< "$old_srcs"
 }
 
-# --- Linking (lib/anfs/link.sh) ---
+# --- Linking (lib/anfs/link.sh, manifest.sh, files.sh) ---
+#
+# A package says how its files are placed in package.yml (lib/anfs/manifest.sh): home/ is linked
+# file by file unless links: makes a directory one link, limits a path to some platforms or links a
+# path outside the tree (src:), and files: are copied when missing (then they are the user's).
+# home/ is the only directory linked: a macos/ or linux/ beside it is not.
 
-# Link a package's home/ and $PPM_GROUP_ID subdirs into $HOME
-# Files in PPM_SKIP_FILE (a higher-priority layer's, or protected) are skipped
-# Sets STOWED_FILES to the newline-separated files this layer links
-# (a global, not stdout: stow_subdir must add to PPM_SKIP_FILE in this shell)
+# The manifest of <package_dir> for this platform (ANFS_MF_*, lib/anfs/manifest.sh). 2 when it is
+# invalid: ANFS_MF_ERR lists why.
+# Usage: _pkg_manifest <package_dir>
+_pkg_manifest() {
+  local rows=""
+  [[ ! -f "$1/package.yml" ]] || rows=$(anfs_manifest_read "$1/package.yml")
+  anfs_manifest_plan "$rows" "$1/home" "$(platform)"
+}
+
+# ANFS_MF_ERR as the lines of a message
+_pkg_manifest_errors() {
+  local e
+  while IFS= read -r e; do
+    [[ -z "$e" ]] || printf '\n  - %s' "$e"
+  done <<< "$ANFS_MF_ERR"
+}
+
+# The paths a package links (one per line; a directory link is one), from its manifest; every file
+# of home/ when the manifest is invalid
+_pkg_links() {
+  if _pkg_manifest "$1"; then printf '%s' "$ANFS_MF_LINKS"; else package_links "$1/home"; fi
+}
+
+# The whole plan of the current manifest (ANFS_MF_*) of <package_dir>, against PPM_SKIP_FILE: the
+# links (anfs_link_plan), the copies (anfs_files_plan) and the links out of the tree
+# (anfs_link_src_state), as "<kind><TAB><class><TAB><path>[<TAB><detail>]" lines in _PPM_PLAN, kind
+# link, copy or src (a src line's detail is its src). Returns 2 when the link plan refuses.
+_pkg_plan() {
+  local home="$1/home" out rc=0 dest src st
+  _PPM_PLAN=""
+  if [[ -n "$ANFS_MF_LINKS" && -d "$home" ]]; then
+    out=$(anfs_link_plan "$home" "$HOME" <(printf '%s' "$ANFS_MF_LINKS") "$PPM_SKIP_FILE") || rc=$?
+    [[ $rc -ne 2 ]] || return 2
+    [[ -z "$out" ]] || _PPM_PLAN+=$(printf '%s\n' "$out" | sed 's/^/link	/')$'\n'
+  fi
+  if [[ -n "$ANFS_MF_COPIES" ]]; then
+    rc=0
+    out=$(anfs_files_plan "$home" "$HOME" <(printf '%s' "$ANFS_MF_COPIES") "$PPM_SKIP_FILE") || rc=$?
+    [[ $rc -ne 2 ]] || return 2
+    [[ -z "$out" ]] || _PPM_PLAN+=$(printf '%s\n' "$out" | sed 's/^/copy	/')$'\n'
+  fi
+  while IFS=$'\t' read -r dest src; do
+    [[ -n "$dest" ]] || continue
+    if grep -qxF -- "$dest" "$PPM_SKIP_FILE"; then
+      st=skip
+    else
+      st=$(anfs_link_src_state "$HOME/$dest" "$src")
+    fi
+    _PPM_PLAN+="src"$'\t'"$st"$'\t'"$dest"$'\t'"$src"$'\n'
+  done <<< "$ANFS_MF_SRCS"
+  return 0
+}
+
+# Whether a plan line's detail is an obstacle on the way, or another package's links: never
+# cleared, -f or not
+_pkg_blocked() {
+  case "$1" in
+    *" on the way: "*|*"where a directory goes: "*|"inside a directory link: "*|*"with links into another package: "*) return 0 ;;
+  esac
+  return 1
+}
+
+# Link a package into $HOME as its manifest says, after one plan over everything it places:
+# home/'s files and directory links, its links out of the tree (links: {src}) and its copies
+# (files:). Everything in the way is listed in one block and nothing is touched unless nothing is
+# in the way, or -f cleared it: a link into the sources deleted, anything else moved to the backup
+# dir (_backup_file). A copy that differs is the user's and never cleared. Files in PPM_SKIP_FILE
+# (a higher layer's, or protected) are skipped.
+# Sets STOWED_FILES (the links, a directory link as one path) and STOWED_SRCS ("<dest>\t<src>"),
+# globals for the tracker (stow_package must add to PPM_SKIP_FILE in this shell), and adds the mise
+# tomls it linked to PPM_MISE_TOMLS. Returns 1 when something is in the way, 2 when the manifest is
+# invalid (said with ppm_fail). <read>: the manifest is read already (install_single_package).
+# Usage: stow_package <package_dir> [read]
 stow_package() {
-  local pkg_dir="$1" subdir file
-  STOWED_FILES=""
+  local pkg_dir="$1" home="$1/home" kind class rel why bad="" made=""
+  STOWED_FILES="" STOWED_SRCS=""
   [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
+  if [[ "${2:-}" != read ]] && ! _pkg_manifest "$pkg_dir"; then
+    ppm_fail "invalid package.yml, not installed:$(_pkg_manifest_errors)" || true
+    return 2
+  fi
+  debug "Linking $pkg_dir"
+  _pkg_plan "$pkg_dir" || return 1
 
-  for subdir in home ${PPM_GROUP_ID:-}; do
-    [[ -d "$pkg_dir/$subdir" ]] || continue
+  while IFS=$'\t' read -r kind class rel why; do
+    [[ -n "$kind" ]] || continue
+    case "$kind:$class" in
+      link:other)
+        if _pkg_blocked "$why"; then bad+="  * $why: $rel"$'\n'
+        elif ${force:-false}; then rm -f -- "$HOME/$rel"
+        else bad+="  * existing target is stowed to a different package: $rel => $why"$'\n'; fi
+        ;;
+      link:conflict|"copy:in the way")
+        if _pkg_blocked "$why"; then bad+="  * $why: $rel"$'\n'
+        elif ${force:-false}; then _backup_file "$rel"
+        else bad+="  * existing target is in the way ($why): $rel"$'\n'; fi
+        ;;
+      src:wrong|"src:in the way")
+        if ${force:-false}; then _backup_file "$rel"
+        else bad+="  * existing target is in the way ($class; a link to $why goes there): $rel"$'\n'; fi
+        ;;
+    esac
+  done <<< "$_PPM_PLAN"
+  if [[ -n "$bad" ]]; then
+    printf 'WARNING! stowing %s would cause conflicts:\n%sAll operations aborted. (ppm install -f moves them aside)\n' \
+      "${PPM_CURRENT_PACKAGE:-$pkg_dir}" "$bad" >&2
+    return 1
+  fi
 
-    while IFS= read -r file; do
-      if [[ -n "$file" ]] && ! grep -qxF -- "$file" "$PPM_SKIP_FILE"; then
-        STOWED_FILES="${STOWED_FILES:+${STOWED_FILES}$'\n'}${file}"
-      fi
-    done < <(package_links "$pkg_dir/$subdir")
+  if [[ -n "$ANFS_MF_LINKS" && -d "$home" ]]; then
+    anfs_link_apply "$home" "$HOME" <(printf '%s' "$ANFS_MF_LINKS") "$PPM_SKIP_FILE" >/dev/null || return 1
+  fi
+  if [[ -n "$ANFS_MF_COPIES" ]]; then
+    anfs_files_apply "$home" "$HOME" <(printf '%s' "$ANFS_MF_COPIES") "$PPM_SKIP_FILE" >/dev/null || return 1
+  fi
+  while IFS=$'\t' read -r kind class rel why; do
+    [[ "$kind" == src && "$class" != skip ]] || continue
+    STOWED_SRCS+="$rel"$'\t'"$why"$'\n'
+    case "$class" in
+      ok) ;;
+      "missing src") echo "  missing src ~/$rel -> $why (not linked)" ;;
+      *) anfs_link_one "$why" "$HOME/$rel" || return 1 ;;
+    esac
+  done <<< "$_PPM_PLAN"
 
-    stow_subdir "$pkg_dir" "$subdir"
-  done
+  # What this layer placed, for the tracker and for the layers below it
+  STOWED_FILES=$(printf '%s' "$ANFS_MF_LINKS" | grep -vxF -f "$PPM_SKIP_FILE" || true)
+  { printf '%s' "$ANFS_MF_LINKS$ANFS_MF_COPIES"; printf '%s' "$ANFS_MF_SRCS" | cut -f1; } |
+    grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
+  _collect_mise_tomls "$home" "$STOWED_FILES"
 }
 
-# Unlink a package's home/ and $PPM_GROUP_ID subdirs from $HOME: the tracker's files when there is
-# one, else every file the package has. Only links into the package go.
+# The mise tomls (.config/mise/**/*.toml) among the paths a layer linked, a directory link's
+# included, into PPM_MISE_TOMLS (absolute, the package's files): what _mise_install_declared reads
+# Usage: _collect_mise_tomls <home> <linked paths>
+_collect_mise_tomls() {
+  local home="$1" f
+  while IFS= read -r f; do
+    case "$f" in
+      .config/mise/*.toml) PPM_MISE_TOMLS+="$home/$f"$'\n' ;;
+      .config/mise|.config/mise/*|.config|.)
+        [[ -d "$home/$f" && ! -L "$home/$f" ]] || continue
+        PPM_MISE_TOMLS+=$(find "$home/$f" -name '*.toml' 2>/dev/null | grep -F "$home/.config/mise/" || true)$'\n'
+        ;;
+    esac
+  done <<< "$2"
+}
+
+# Unlink a package from $HOME: the tracker's files (a directory link is one of them) and its links
+# out of the tree, each only while it still points into the package or at its src; without a
+# tracker, what the manifest links; with neither, every file under home/. Copies (files:) stay:
+# they are the user's.
 unstow_package() {
-  local pkg_dir="$1" subdir files="" repo pkg
+  local pkg_dir="$1" files="" srcs="" repo pkg dest src
   pkg="${pkg_dir##*/}"
   repo="${pkg_dir%/packages/*}"
   repo="${repo##*/}"
-  meta_is_installed "$repo" "$pkg" 2>/dev/null && files=$(meta_installed_files "$repo" "$pkg")
-
-  for subdir in home ${PPM_GROUP_ID:-}; do
-    [[ -d "$pkg_dir/$subdir" ]] || continue
-    if [[ -n "$files" ]]; then
-      anfs_unlink "$pkg_dir/$subdir" "$HOME" <(printf '%s\n' "$files")
-    else
-      anfs_unlink_tree "$pkg_dir/$subdir" "$HOME"
-    fi
-  done
+  if meta_is_installed "$repo" "$pkg" 2>/dev/null; then
+    files=$(meta_installed_files "$repo" "$pkg")
+    srcs=$(meta_installed_links "$repo" "$pkg")
+  elif _pkg_manifest "$pkg_dir"; then
+    files="$ANFS_MF_LINKS" srcs="$ANFS_MF_SRCS"
+  elif [[ -d "$pkg_dir/home" ]]; then
+    anfs_unlink_tree "$pkg_dir/home" "$HOME"
+  fi
+  if [[ -n "$files" && -d "$pkg_dir/home" ]]; then
+    anfs_unlink "$pkg_dir/home" "$HOME" <(printf '%s\n' "$files")
+  fi
+  while IFS=$'\t' read -r dest src; do
+    [[ -z "$dest" ]] || anfs_unlink_src "$HOME/$dest" "$src"
+  done <<< "$srcs"
   return 0
 }
 
 # Start PPM_SKIP_FILE again from the user-protected baseline (files `ppm file protect` detached).
-# stow_subdir skips what it lists, under -f too, so protected files are never touched. Each layer
-# adds its files, so a lower layer of the same name skips what a higher one linked.
+# stow_package skips what it lists, under -f too, so protected files are never touched. Each layer
+# adds what it placed, so a lower layer of the same name skips what a higher one linked.
 _reset_skip_file() {
   if [[ -z "${PPM_SKIP_FILE:-}" ]]; then
     PPM_SKIP_FILE=$(mktemp "${TMPDIR:-/tmp}/ppm-skip.XXXXXX")
@@ -549,73 +703,48 @@ _reset_skip_file() {
   _protected_list > "$PPM_SKIP_FILE"
 }
 
-# Link a package subdirectory into $HOME and add its files to PPM_SKIP_FILE. The plan comes first
-# (lib/anfs/link.sh): what is ours is kept or replaced, and with -f what is in the way is cleared
-# (a link into the sources deleted, anything else moved to the backup dir). Without -f anything in
-# the way stops the install, every file named.
-stow_subdir() {
-  local pkg_dir="$1" subdir="$2"
-  local full_path="$pkg_dir/$subdir" list plan rc=0 class rest rel why bad=""
-
-  [[ -d "$full_path" ]] || return 0
+# The plan stow_package would carry out, for `ppm install -n`: one line per path (links, copies,
+# links out of the tree, and what this platform leaves out), and what -f would do with what is in
+# the way. Adds to PPM_SKIP_FILE as an install would. Returns 1 when the install would stop, or
+# the manifest is invalid.
+plan_package() {
+  local pkg_dir="$1" kind class rel why word stop=false p plats
   [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
-  debug "Linking $subdir from $pkg_dir"
-
-  list=$(package_links "$full_path")
-  plan=$(anfs_link_plan "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE") || rc=$?
-  [[ $rc -ne 2 ]] || return 1
-
-  if [[ $rc -ne 0 ]]; then
-    while IFS=$'\t' read -r class rest; do
-      rel="${rest%%$'\t'*}" why="${rest#*$'\t'}"
-      # what is in the way on the path (a file, a link out of $HOME) is never cleared, -f or not
-      case "$why" in *" on the way: "*|*"where a directory goes: "*) class=blocked ;; esac
-      case "$class" in
-        blocked) bad="$bad  * $why: $rel"$'\n' ;;
-        other)
-          if ${force:-false}; then rm -f -- "$HOME/$rel"; else bad="$bad  * existing target is stowed to a different package: $rel => $why"$'\n'; fi
-          ;;
-        conflict)
-          if ${force:-false}; then _backup_file "$rel"; else bad="$bad  * existing target is in the way ($why): $rel"$'\n'; fi
-          ;;
-      esac
-    done <<< "$plan"
-    if [[ -n "$bad" ]]; then
-      printf 'WARNING! stowing %s would cause conflicts:\n%sAll operations aborted. (ppm install -f moves them aside)\n' \
-        "${PPM_CURRENT_PACKAGE:-$pkg_dir}" "$bad" >&2
-      return 1
-    fi
+  if ! _pkg_manifest "$pkg_dir"; then
+    printf '  invalid package.yml: not installed%s\n' "$(_pkg_manifest_errors)"
+    return 1
   fi
-
-  anfs_link_apply "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE" >/dev/null || return 1
-  printf '%s\n' "$list" | grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
-}
-
-# The plan stow_subdir would carry out, for `ppm install -n`: one line per file, and what -f would
-# do with what is in the way. Adds the files to PPM_SKIP_FILE as an install would. Returns 1 when
-# the install would stop on a conflict.
-plan_subdir() {
-  local pkg_dir="$1" subdir="$2"
-  local full_path="$pkg_dir/$subdir" list plan rc=0 class rest rel why
-
-  [[ -d "$full_path" ]] || return 0
-  [[ -n "${PPM_SKIP_FILE:-}" ]] || _reset_skip_file
-  list=$(package_links "$full_path")
-  plan=$(anfs_link_plan "$full_path" "$HOME" <(printf '%s\n' "$list") "$PPM_SKIP_FILE") || rc=$?
-  [[ $rc -ne 2 ]] || return 1
-  while IFS=$'\t' read -r class rest; do
-    [[ -n "$class" ]] || continue
-    rel="${rest%%$'\t'*}" why=""
-    [[ "$rest" != *$'\t'* ]] || why="${rest#*$'\t'}"
-    case "$class:$why" in
-      *" on the way: "*|*"where a directory goes: "*) ;;
-      other:*) why="$why; -f removes the link" ;;
-      conflict:*) why="$why; -f moves it aside" ;;
+  _pkg_plan "$pkg_dir" || return 1
+  while IFS=$'\t' read -r kind class rel why; do
+    [[ -n "$kind" ]] || continue
+    word="$class"
+    case "$kind:$class" in
+      link:other|link:conflict|"copy:in the way")
+        if _pkg_blocked "$why"; then stop=true
+        else
+          [[ "$class" == other ]] && why="$why; -f removes the link" || why="$why; -f moves it aside"
+          ${force:-false} || stop=true
+        fi
+        ;;
+      copy:missing) word=copy ;;
+      copy:differs) why="yours; left as is" ;;
+      src:ok) word=keep why="-> $why" ;;
+      src:missing) word=link why="-> $why" ;;
+      "src:missing src") why="-> $why; not linked" ;;
+      src:wrong|"src:in the way")
+        why="a link to $why goes there; -f moves it aside"
+        ${force:-false} || stop=true
+        ;;
+      src:skip) why="" ;;
     esac
-    printf '  %-9s %s%s\n' "$class" "~/$rel" "${why:+  ($why)}"
-  done <<< "$plan"
-  printf '%s\n' "$list" | grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
-  [[ $rc -eq 0 ]] || ${force:-false}
+    printf '  %-9s %s%s\n' "$word" "~/$rel" "${why:+  ($why)}"
+  done <<< "$_PPM_PLAN"
+  while IFS=$'\t' read -r p plats; do
+    [[ -z "$p" ]] || printf '  %-9s %s  (%s)\n' off "~/$p" "$plats"
+  done <<< "$ANFS_MF_OFF"
+  { printf '%s' "$ANFS_MF_LINKS$ANFS_MF_COPIES"; printf '%s' "$ANFS_MF_SRCS" | cut -f1; } |
+    grep -vxF -f "$PPM_SKIP_FILE" >> "$PPM_SKIP_FILE" || true
+  ! $stop
 }
 
 # List the files of a package directory, relative to it (.DS_Store is never linked)

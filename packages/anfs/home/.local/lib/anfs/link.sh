@@ -553,11 +553,22 @@ EOF
 # a file, a link elsewhere, a link into another directory. Directories stay, as stow -D leaves them.
 # Usage: anfs_unlink <from> <to> <files-file>
 anfs_unlink() {
-  local from="$1" to="$2" f cfrom list
+  local from="$1" to="$2" f cfrom cto list d lastd="" inside=false
   _anfs_link_canon "$from"; cfrom="$_ANFS_P"
+  _anfs_link_canon "$to"; cto="$_ANFS_P"
+  _anfs_link_sources
   list=$(cat "$3") || return 1
   while IFS= read -r f; do
     [ -n "$f" ] && [ -L "$to/$f" ] || continue
+    # never through a directory link into the sources: what is there is a source's own file
+    case "$f" in */*) d="${f%/*}" ;; *) d=. ;; esac
+    if [ "$d" != "$lastd" ]; then
+      lastd="$d" inside=false
+      if ! _anfs_link_dir "$cto" "$d"; then
+        case "$_ANFS_WHY" in "inside a directory link: "*) inside=true ;; esac
+      fi
+    fi
+    ! $inside || continue
     _anfs_link_resolve "$to/$f" || continue
     case "$_ANFS_P" in
       "$cfrom"/*) rm -f -- "$to/$f" ;;

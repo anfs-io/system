@@ -143,6 +143,8 @@ _file_claim() {
 
   [[ -e "$src" ]] || { ppm_fail "File not found: ~/$rel"; return 1; }
   [[ -d "$src" ]] && { ppm_fail "Directories are not supported: ~/$rel (use ~/$rel/*)"; return 1; }
+  # a directory link brings the whole directory: one of its files is the source's
+  if _file_in_dir_link "$rel"; then ppm_fail "~/$rel is $REPLY"; return 1; fi
   # a protected file is the user's; claim would link it again
   _protected_has "$rel" && { ppm_fail "~/$rel is protected; run 'ppm file unprotect' first"; return 1; }
 
@@ -292,6 +294,7 @@ _file_protect() {
 
   [[ -e "$src" || -L "$src" ]] || { ppm_fail "File not found: ~/$rel"; return 1; }
   [[ -d "$src" ]] && { ppm_fail "Directories are not supported: ~/$rel"; return 1; }
+  if _file_in_dir_link "$rel"; then ppm_fail "~/$rel is $REPLY"; return 1; fi
 
   if _protected_has "$rel"; then
     echo "Already protected: ~/$rel"
@@ -349,6 +352,28 @@ _file_rel_path() {
   path="$dir/$(basename "$path")"
   [[ "$path" == "$HOME/"* ]] || return 1
   echo "${path#$HOME/}"
+}
+
+# Whether ~/<rel> lies inside a directory link into the sources (a package's links: <dir>/): REPLY
+# says whose ("inside core/anfs's directory link ~/.local/lib/anfs")
+_file_in_dir_link() {
+  local rel="$1" p="$HOME" c rest="${1%/*}" owner pkg
+  REPLY=""
+  [[ "$rel" == */* ]] || return 1
+  while [[ -n "$rest" ]]; do
+    c="${rest%%/*}"
+    [[ "$rest" == */* ]] && rest="${rest#*/}" || rest=""
+    p="$p/$c"
+    [[ -L "$p" ]] || continue
+    owner=$(anfs_link_owner "$p") || continue
+    pkg="$owner"
+    case "$owner" in
+      */packages/*) pkg="${owner%%/*}/${owner#*/packages/}"; pkg="${pkg%%/home/*}" ;;
+    esac
+    REPLY="inside $pkg's directory link ~/${p#"$HOME"/}"
+    return 0
+  done
+  return 1
 }
 
 # Print "repo/pkg" if $HOME/<rel> is a symlink into a ppm package, nothing otherwise

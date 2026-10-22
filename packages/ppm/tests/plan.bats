@@ -32,12 +32,15 @@ setup() {
   source "$anfs/log.sh"
   source "$anfs/callbacks.sh"
   source "$anfs/link.sh"
+  source "$anfs/manifest.sh"
+  source "$anfs/files.sh"
   # core.sh sets an EXIT trap of its own (its message file); bats needs its trap back to report a
   # skip, and teardown does the cleanup instead
   local bats_exit
   bats_exit=$(trap -p EXIT)
   source "$lib/core.sh"
   eval "$bats_exit"
+  source "$anfs/platform.sh"
   source "$lib/platform.sh"
   source "$lib/packages.sh"
   source "$lib/file.sh"

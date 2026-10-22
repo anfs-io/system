@@ -1,5 +1,6 @@
-version: 0.1.9
+version: 0.1.10
 author: rjayroach
 depends:
   - podman
   - varlock
+links: [.local/lib/pcm/]

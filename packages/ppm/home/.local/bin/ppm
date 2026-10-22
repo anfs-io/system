@@ -14,7 +14,7 @@
 #   file.sh        file (add, claim, reset, protect, unprotect)
 #   completion.sh  completion
 # core.sh holds the functions package hooks can call (install_dep, user_message, ...)
-# platform.sh detects the platform and locates Homebrew and its owner
+# platform.sh locates Homebrew and its owner (platform() and os() are lib/anfs/platform.sh's)
 set -euo pipefail
 
 # Paths and settings: anfs's layout (sources, libraries, anfs.conf) and ppm's own XDG dirs
@@ -34,13 +34,11 @@ PPM_INSTALLED_DIR="$PPM_STATE_HOME/installed"
 BIN_DIR="$ANFS_BIN_DIR"
 # The anfs repo's clone; ppm itself is its core/ppm package
 PPM_REPO_DIR="$ANFS_SOURCES_HOME/core"
-# The linker. A pull that brings a new lib/anfs file has it in the clone before an install links
-# it, so until core/anfs is installed again ppm reads the clone's copy
-if [[ -f "$HOME/.local/lib/anfs/link.sh" ]]; then
-  source "$HOME/.local/lib/anfs/link.sh"
-else
-  source "$PPM_REPO_DIR/packages/anfs/home/.local/lib/anfs/link.sh"
-fi
+# The platform, the linker, the manifests (links:, files:, platforms:) and copies. lib/anfs is one
+# link into core/anfs (its links:), so a library a pull brings is there at once
+for lib_file in platform.sh link.sh manifest.sh files.sh; do
+  source "$HOME/.local/lib/anfs/$lib_file"
+done
 
 # The command line: commands are cmd_<name> functions, registered here (and by extensions as they
 # are sourced) so help and completion are generated from what exists

@@ -26,6 +26,7 @@ setup() {
   export ANFS_LOG=off
   CLI_TOOL=ppm
   source "$lib/core.sh"
+  source "$anfs/platform.sh"
   source "$lib/platform.sh"
   source "$lib/packages.sh"
 

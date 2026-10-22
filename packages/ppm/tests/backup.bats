@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # What -f moves out of the way: backed up under the state dir, put back on remove and implode. And
-# how ppm links a package (stow_subdir over lib/anfs/link.sh): layers, conflicts, taking over what
+# how ppm links a package (stow_package over lib/anfs/link.sh): layers, conflicts, taking over what
 # stow linked. ppm's core libs are sourced from this clone, with $HOME, sources and state in the
 # temp dir.
 # Run: bats packages/ppm/tests/
@@ -26,6 +26,9 @@ setup() {
   source "$anfs/log.sh"
   source "$anfs/callbacks.sh"
   source "$anfs/link.sh"
+  source "$anfs/platform.sh"
+  source "$anfs/manifest.sh"
+  source "$anfs/files.sh"
   # core.sh sets an EXIT trap of its own (its message file); bats needs its trap back to report a
   # skip, and teardown does the cleanup instead
   local bats_exit
@@ -48,7 +51,7 @@ setup() {
 messages() { cat "$PPM_MSG_FILE" 2>/dev/null; }
 
 # Link the package's home/ the way `ppm install -f` does
-force_stow() { force=true stow_subdir "$PKG" home; }
+force_stow() { force=true stow_package "$PKG"; }
 
 mine() {
   mkdir -p "$HOME/.config/tool"
@@ -156,7 +159,7 @@ mine() {
   echo free > "$PKG/home/.config/tool/free"
   mine
   echo mine > "$HOME/.config/tool/two"
-  force=false run stow_subdir "$PKG" home
+  force=false run stow_package "$PKG"
   [ "$status" -eq 1 ]
   [[ "$output" == *"WARNING! stowing stack/tool would cause conflicts:"* ]]
   [[ "$output" == *"existing target is in the way (a file): .config/tool/rc"* ]]
@@ -168,7 +171,7 @@ mine() {
 @test "a dangling link into the sources is replaced without -f (a file moved between packages)" {
   mkdir -p "$HOME/.config/tool"
   ln -s ../../.local/share/anfs/sources/stack/packages/gone/home/.config/tool/rc "$HOME/.config/tool/rc"
-  force=false stow_subdir "$PKG" home
+  force=false stow_package "$PKG"
   [ "$(cat "$HOME/.config/tool/rc")" = "from the package" ]
 }
 

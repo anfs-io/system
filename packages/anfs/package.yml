@@ -6,3 +6,5 @@ author: rjayroach
 # which install.sh installs with `anfs install system` and `anfs implode` removes. The tools don't
 # declare a dependency back on anfs: like yq it is base software, always present.
 depends: [ppm]
+# ~/.local/lib/anfs is one link: a library a pull brings is there at once, with no reinstall
+links: [.local/lib/anfs/]

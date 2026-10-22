@@ -563,3 +563,15 @@ state_of() { awk -F'\t' -v p="$1" '$2 == p { print $1 }' <<< "$output"; }
   anfs_unlink_src "$T/space/v" "$src"
   [ ! -L "$T/space/v" ]
 }
+
+@test "anfs_unlink never removes through a directory link into the sources (a source's own link)" {
+  mkdir -p "$FROM/.local/lib/tool"
+  ln -s a.sh "$FROM/.local/lib/tool/b.sh"
+  echo a > "$FROM/.local/lib/tool/a.sh"
+  printf '.local/lib/tool\n' > "$LIST"
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  # a tracker from before the directory link names the files one by one
+  printf '.local/lib/tool/b.sh\n.local/lib/tool/a.sh\n' > "$LIST"
+  anfs_unlink "$FROM" "$T" "$LIST"
+  [ -L "$FROM/.local/lib/tool/b.sh" ] && [ -f "$FROM/.local/lib/tool/a.sh" ]
+}
