@@ -28,7 +28,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.6.0
+WSM_VERSION=0.7.0
 
 # Paths, sources and the command line come from anfs
 ANFS_LIB="$HOME/.local/lib/anfs"
@@ -50,6 +50,13 @@ if [[ -f "$ANFS_LIB/link.sh" ]]; then
   source "$ANFS_LIB/link.sh"
 else
   source "$ANFS_SOURCES_HOME/core/packages/anfs/home/.local/lib/anfs/link.sh"
+fi
+# Agent skills through the skills CLI (lib/anfs/skill.sh), the same fallback as link.sh
+# shellcheck source=/dev/null
+if [[ -f "$ANFS_LIB/skill.sh" ]]; then
+  source "$ANFS_LIB/skill.sh"
+else
+  source "$ANFS_SOURCES_HOME/core/packages/anfs/home/.local/lib/anfs/skill.sh"
 fi
 # shellcheck source=/dev/null
 source "$ANFS_LIB/callbacks.sh"
@@ -117,6 +124,14 @@ the one REPOSITORY (as repo list names it); nothing is linked, nothing is pulled
   --opt "-n --dry-run: Say what would be done" --arg "[spec|repository]"
 cli_cmd "repo ssh" "Switch the clones under SPEC from GitHub https to ssh (their origin);
 space.yml is the source's and is not edited" --arg "[spec]"
+cli_group skill "The agent skills the spaces' space.yml files declare, installed into each space"
+cli_cmd "skill list" "Each skill an installed space declares, and its state there" --alias ls --arg "[spec]"
+cli_cmd "skill install" "Install the skills of the installed spaces under SPEC into their
+directories, for every detected agent (wsm install does this too)" \
+  --opt "-n --dry-run: Say what would be done" --arg "[spec]"
+cli_cmd "skill remove" "Remove a space's declared skills from it (a SPEC), or one of them
+(<space id>/<name>); skills it does not declare stay" \
+  --alias rm --opt "-y --yes: Do not ask before removing" --arg "spec..."
 cli_standard
 
 cmd_cd() {
@@ -135,12 +150,23 @@ space above it; a file under no space is not linked.
     - url: git@github.com:you/thing
       path: repos/thing       # optional: git's name for it
       ref: main               # optional
+  skills:                     # installed into the space's directory, for this space only
+    - repo: owner/repo        # owner/repo, a URL or a path, as the skills CLI takes it
+      skills: [a-skill]       # optional: all of them when left out
+    - repo: ./skills          # relative: from this space.yml in the source
+  links:                      # absolute links in the space's directory
+    - src: ~/.local/share/anfs/sources   # ~ and $VAR expanded; relative: from the space's directory
+      dest: sources           # optional: src's basename; must stay inside the space
 
 install links each space into $WSM_SPACES_HOME/<source>/<path>/ (a relative link per file, so
 directories stay real), then clones its repositories. A prefix (lgat/, lgat/tech/) is every space
 at or under it; installing a space does not install the spaces above it. Re-running install links
 what is missing and removes the links whose file left the source; it never pulls. Anything in the
 way fails the space; -f moves it aside, and remove never puts it back.
+
+install then makes the links: (a src that is not there is said, not made) and installs the skills,
+for the agents ppm installed (meta.agent; installing one installs them). remove takes the skills
+and the links that still point at their src first.
 
 A repository is cloned when it is missing and never pulled or deleted: what is checked out is
 yours. repo ssh switches a clone's origin from GitHub https to ssh.
@@ -660,6 +686,16 @@ _space_counts() {
       "in the way") C_WAY=$((C_WAY + 1)) ;;
     esac
   done
+  # links: count like files; a missing src does not (it is not wsm's to make), nor an invalid entry
+  local i
+  _links_eval "$id"
+  for i in ${LK_STATE[@]+"${!LK_STATE[@]}"}; do
+    case "${LK_STATE[$i]}" in
+      missing) C_MISSING=$((C_MISSING + 1)) ;;
+      wrong) C_WRONG=$((C_WRONG + 1)) ;;
+      "in the way") C_WAY=$((C_WAY + 1)) ;;
+    esac
+  done
   _leftovers_of "$id"
   C_LEFT=${#LEFT[@]}
   [[ $C_MISSING -eq 0 ]] || note+="${note:+, }$C_MISSING missing"
@@ -788,6 +824,9 @@ _remove_space() {
   local id="$1" src="${SPACE_SRC[$1]}" p="${SPACE_PATH[$1]}" r dir f
   local -a dirs=()
   r="$ROOT/$src" dir=$(_space_home "$id")
+  # What the space put there besides its files: its skills (the CLI), then its links:
+  _remove_skills "$id" || true
+  _remove_links "$id"
   _files_of "$id"
   for f in ${FILES[@]+"${FILES[@]}"}; do
     [[ "$f" != space.yml ]] || continue
@@ -981,6 +1020,377 @@ _in_repository() {
   return 1
 }
 
+# --- links: and skills: ------------------------------------------------------------------
+#
+# A space.yml's other two lists, read for every space a command needs with one yq:
+#   links:  [{src, dest?}]       absolute links in the space's directory, dest -> src
+#   skills: [{repo, skills?}]    agent skills installed into the space's directory by the skills
+#                                CLI (lib/anfs/skill.sh, the space's directory as the scope)
+# META_LINKS[id] and META_SKILLS[id] hold the entries, a line each, fields split by $ANFS_US.
+
+declare -A META_LINKS=() META_SKILLS=() META_DONE=()
+_meta_load() {
+  local id f kind file a b c line sep="$ANFS_US"
+  local -a files=()
+  local -A of=()
+  for id in "$@"; do
+    [[ -z "${META_DONE[$id]:-}" && -n "${SPACE_DIR[$id]:-}" ]] || continue
+    META_DONE[$id]=1 META_LINKS[$id]="" META_SKILLS[$id]=""
+    f="${SPACE_DIR[$id]}/space.yml"
+    files+=("$f") of[$f]="$id"
+  done
+  [[ ${#files[@]} -gt 0 ]] || return 0
+  local expr='(.links[]? | select(tag == "!!map") | ["L", filename, (.src // ""), (.dest // "")] | join(strenv(WSM_SEP))), (.skills[]? | select(tag == "!!map") | ["S", filename, (.repo // ""), ((.skills // []) | join(",")), (.skills | tag)] | join(strenv(WSM_SEP)))'
+  local out
+  if ! out=$(WSM_SEP="$sep" yq -r "$expr" "${files[@]}" 2>/dev/null); then
+    # One at a time, to keep what can be read
+    out=""
+    for f in "${files[@]}"; do
+      if line=$(WSM_SEP="$sep" yq -r "$expr" "$f" 2>/dev/null); then out+="$line"$'\n'
+      else warn "cannot read links: and skills: of ${of[$f]} ($(_display "$f"))"; fi
+    done
+  fi
+  while IFS="$sep" read -r kind file a b c; do
+    # yq puts --- between the files it printed for
+    [[ ( "$kind" == L || "$kind" == S ) && -n "$file" && -n "${of[$file]:-}" ]] || continue
+    id="${of[$file]}"
+    if [[ "$kind" == L ]]; then META_LINKS[$id]+="$a$sep$b"$'\n'
+    else META_SKILLS[$id]+="$a$sep$b$sep$c"$'\n'; fi
+  done <<< "$out"
+}
+
+# Whether <home> is a space's directory wsm may act in: set, absolute, strictly below the root (which
+# must be set) and an existing directory, not a link. Every links:/skills: function asks this before
+# it touches the disk, so an empty ROOT or path can never make it write, remove or glob at / or $HOME.
+_home_ok() {
+  local h="$1"
+  [[ -n "$ROOT" && "$ROOT" == /?* && -n "$h" && "$h" == "$ROOT"/?* ]] || { warn "refusing to act on '$h': not below the spaces root"; return 1; }
+  [[ "$h" != *"/../"* && "$h" != */.. ]] || { warn "refusing to act on '$h'"; return 1; }
+  [[ -d "$h" && ! -L "$h" ]] || return 1
+}
+
+# --- links: ---
+
+# ~ and $NAME / ${NAME} expanded from the environment, no eval, into REPLY; 1 (REPLY the name)
+# when a variable is unset
+_expand_vars() {
+  local s="$1" out="" name
+  case "$s" in
+    "~")   s="$HOME" ;;
+    "~/"*) s="$HOME/${s#\~/}" ;;
+  esac
+  while [[ "$s" == *'$'* ]]; do
+    out+="${s%%\$*}" s="${s#*\$}"
+    if [[ "$s" =~ ^\{([A-Za-z_][A-Za-z0-9_]*)\}(.*)$ || "$s" =~ ^([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
+      name="${BASH_REMATCH[1]}" s="${BASH_REMATCH[2]}"
+      [[ -n "${!name+x}" ]] || { REPLY="$name"; return 1; }
+      out+="${!name}"
+    else
+      out+='$'
+    fi
+  done
+  REPLY="$out$s"
+}
+
+# An absolute path with . and .. taken out, as written (nothing resolved), into REPLY
+_norm() {
+  local p="$1" part
+  local -a out=()
+  local IFS=/
+  for part in $p; do
+    case "$part" in
+      ""|.) ;;
+      ..) [[ ${#out[@]} -eq 0 ]] || unset 'out[${#out[@]}-1]' ;;
+      *) out+=("$part") ;;
+    esac
+  done
+  REPLY="/${out[*]}"
+}
+
+# The links: of space <id>, evaluated: LK_SRC, LK_DEST (relative to the space's directory), LK_STATE
+# (ok, missing, missing src, wrong, in the way, invalid) and LK_WHY (what makes one invalid)
+LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
+_links_eval() {
+  local id="$1" home src dest d st why t
+  LK_SRC=() LK_DEST=() LK_STATE=() LK_WHY=()
+  _meta_load "$id"
+  [[ -n "${META_LINKS[$id]:-}" ]] || return 0
+  _home_of "$id"
+  home="$REPLY"
+  while IFS="$ANFS_US" read -r src dest; do
+    [[ -n "$src$dest" ]] || continue
+    st="" why="" d=""
+    if [[ -z "$src" ]]; then
+      why="a link needs a src"
+    elif ! _expand_vars "$src"; then
+      why="\$$REPLY is not set"
+    else
+      src="$REPLY"
+      [[ "$src" == /* ]] || src="$home/$src"
+      _norm "$src"
+      src="$REPLY"
+      [[ "$src" != / ]] || why="a link to / is not one"
+    fi
+    if [[ -z "$why" ]]; then
+      d="${dest:-${src##*/}}"
+      while [[ "$d" == */ ]]; do d="${d%/}"; done
+      d="${d#./}"
+      _repo_path_ok "$d" && [[ "$d" != . ]] || why="dest must stay inside the space: '${dest:-$d}'"
+    fi
+    if [[ -n "$why" ]]; then
+      st=invalid
+    elif [[ -L "$home/$d" ]]; then
+      t=$(readlink -- "$home/$d") || t=""
+      if [[ "$t" != "$src" ]]; then st=wrong
+      elif [[ -e "$src" ]]; then st=ok
+      else st="missing src"; fi
+    elif [[ -e "$home/$d" ]]; then
+      st="in the way"
+    elif [[ -e "$src" ]]; then
+      st=missing
+    else
+      st="missing src"
+    fi
+    LK_SRC+=("$src") LK_DEST+=("$d") LK_STATE+=("$st") LK_WHY+=("$why")
+  done <<< "${META_LINKS[$id]}"
+}
+
+# Make the links: of space <id>: an absolute link per entry. What is there and right stays; a src
+# that does not exist is said and not made (no failure); a link elsewhere or anything else in the
+# way fails the entry, unless -f moves it aside (_backup; nothing restores it).
+# Usage: _space_links <id> <dry> <force>
+_space_links() {
+  local id="$1" dry="$2" force="$3" i home st d rel failed=0 made=0
+  _links_eval "$id"
+  [[ ${#LK_DEST[@]} -gt 0 ]] || return 0
+  _home_of "$id"
+  home="$REPLY"
+  if ! $dry && ! _home_ok "$home"; then
+    warn "no directory for $id's links: $(_display "$home")"
+    return 1
+  fi
+  for i in "${!LK_DEST[@]}"; do
+    st="${LK_STATE[$i]}" d="${LK_DEST[$i]}"
+    rel="${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}$d"
+    case "$st" in
+      ok) continue ;;
+      invalid)
+        warn "invalid link in $id: ${LK_WHY[$i]}"
+        failed=$((failed + 1))
+        continue
+        ;;
+      "missing src")
+        echo "  missing src $d -> $(_display "${LK_SRC[$i]}") (not linked)"
+        continue
+        ;;
+      wrong|"in the way")
+        if ! $force; then
+          warn "$st: $(_display "$home/$d") (link to $(_display "${LK_SRC[$i]}"); wsm install -f $id moves it aside)"
+          failed=$((failed + 1))
+          continue
+        fi
+        if $dry; then echo "  would move aside $(_display "$home/$d")"
+        else _backup "${SPACE_SRC[$id]}" "$rel"; fi
+        ;;
+    esac
+    if $dry; then
+      echo "  would link $d -> $(_display "${LK_SRC[$i]}")"
+    else
+      mkdir -p -- "$(dirname -- "$home/$d")"
+      if ln -s -- "${LK_SRC[$i]}" "$home/$d"; then
+        echo "  linked $d -> $(_display "${LK_SRC[$i]}")"
+      else
+        failed=$((failed + 1))
+        continue
+      fi
+    fi
+    made=$((made + 1))
+  done
+  [[ $failed -eq 0 ]]
+}
+
+# Remove the links: of space <id> that still point at their src; one the user repointed stays
+_remove_links() {
+  local id="$1" i home
+  _links_eval "$id"
+  [[ ${#LK_DEST[@]} -gt 0 ]] || return 0
+  _home_of "$id"
+  home="$REPLY"
+  _home_ok "$home" || return 0
+  for i in "${!LK_DEST[@]}"; do
+    case "${LK_STATE[$i]}" in
+      ok|"missing src") [[ -L "$home/${LK_DEST[$i]}" ]] && rm -f -- "$home/${LK_DEST[$i]}" ;;
+    esac
+    [[ "${LK_DEST[$i]}" != */* ]] || _rmdir_empty_up "$home/${LK_DEST[$i]%/*}" "$home"
+  done
+  return 0
+}
+
+# --- skills: ---
+#
+# Only the declaring space: a child space's directory is never a scope for its parent's skills.
+
+# The install rows of space <id> (lib/anfs/skill.sh's <label>|<repo>|<skills csv>|<agents csv>)
+# into SK_ROWS, each repo as the CLI takes it: a path resolved through links (cd -P: the CLI does
+# not follow linked directories), a relative one from the space.yml's directory in the source;
+# every skill of a path by name (a real status for each), "*" for a remote. SK_BAD counts the
+# entries that cannot be.
+SK_ROWS=() SK_BAD=0
+_skill_rows() {
+  local id="$1" repo names tag d
+  SK_ROWS=() SK_BAD=0
+  _meta_load "$id"
+  while IFS="$ANFS_US" read -r repo names tag; do
+    [[ -n "$repo$names$tag" ]] || continue
+    [[ -n "$repo" ]] || { warn "a skills: entry of $id has no repo"; SK_BAD=$((SK_BAD + 1)); continue; }
+    case "$repo" in
+      .|./*|../*|/*|"~"|"~/"*)
+        d=$(anfs_skill_expand "$repo")
+        [[ "$d" == /* ]] || d="${SPACE_DIR[$id]}/$d"
+        if ! d=$(cd -P -- "$d" 2>/dev/null && pwd -P); then
+          warn "no such skills directory in $id: $repo"
+          SK_BAD=$((SK_BAD + 1))
+          continue
+        fi
+        repo="$d"
+        if [[ "$tag" == '!!null' ]]; then
+          names=$(anfs_skill_dir_skills "$d" | paste -sd, -)
+          [[ -n "$names" ]] || { warn "no <skill>/SKILL.md in $(_display "$d") ($id)"; SK_BAD=$((SK_BAD + 1)); continue; }
+        fi
+        ;;
+      *) [[ "$tag" != '!!null' ]] || names='*' ;;
+    esac
+    [[ -n "$names" ]] || continue
+    SK_ROWS+=("$id|$repo|$names|")
+  done <<< "${META_SKILLS[$id]:-}"
+}
+
+# The names the CLI recorded in a space's skills-lock.json, "<name><US><source>" a line each (yq,
+# no npx); nothing when there is none
+_skill_lock() {
+  local f="$1/skills-lock.json"
+  [[ -f "$f" ]] || return 0
+  WSM_SEP="$ANFS_US" yq -p json -r '.skills // {} | to_entries[] | .key + strenv(WSM_SEP) + (.value.source // "")' "$f" 2>/dev/null || true
+}
+
+# The skills space <id> declares, by name, into SK_NAMES: the named ones, and for a remote "*" what
+# its skills-lock.json says came from that repo. Only these are ever removed (a skill the user
+# added in the space by hand is not wsm's).
+SK_NAMES=()
+_skill_names() {
+  local id="$1" row repo names n src lock=""
+  local -a list=()
+  SK_NAMES=()
+  _skill_rows "$id" 2>/dev/null
+  for row in ${SK_ROWS[@]+"${SK_ROWS[@]}"}; do
+    repo="${row#*|}" repo="${repo%%|*}" names="${row#*|*|}" names="${names%|}"
+    if [[ "$names" == '*' ]]; then
+      if [[ -z "$lock" ]]; then _home_of "$id"; lock=$(_skill_lock "$REPLY")$'\n'; fi
+      while IFS="$ANFS_US" read -r n src; do
+        [[ -n "$n" && "$src" == "$repo" ]] && SK_NAMES+=("$n")
+      done <<< "$lock"
+      continue
+    fi
+    IFS=',' read -r -a list <<< "$names"
+    SK_NAMES+=(${list[@]+"${list[@]}"})
+  done
+  return 0
+}
+
+# npx, checked once per run; without it a space's skills are skipped with one warning
+NPX_OK=""
+_npx_ok() {
+  if [[ -z "$NPX_OK" ]]; then
+    if anfs_skill_require 2>/dev/null; then NPX_OK=true
+    else NPX_OK=false; warn "npx not found, so the spaces' skills are skipped: ppm install node, then wsm skill install"; fi
+  fi
+  $NPX_OK
+}
+
+# The agents, once per run (lib/anfs/skill.sh: ppm's packages that declare meta.agent)
+AGENTS=""
+AGENTS_DONE=false
+_agents() { $AGENTS_DONE || { AGENTS=$(anfs_skill_agents); AGENTS_DONE=true; }; }
+
+# Install the skills space <id> declares into its directory. A path's skills are copied again every
+# run (they are the space's own, and edits arrive that way); a remote's when missing for an agent.
+# No agent yet is waiting, and no npx a warning: neither fails.
+# Usage: _space_skills <id> <dry>
+_space_skills() {
+  local id="$1" dry="$2" row home rc=0
+  _skill_rows "$id"
+  [[ ${#SK_ROWS[@]} -gt 0 || $SK_BAD -gt 0 ]] || return 0
+  _home_of "$id"
+  home="$REPLY"
+  if $dry; then
+    for row in ${SK_ROWS[@]+"${SK_ROWS[@]}"}; do
+      row="${row#*|}"
+      echo "  would install skills ${row#*|}"
+    done
+    [[ $SK_BAD -eq 0 ]]
+    return
+  fi
+  if [[ ${#SK_ROWS[@]} -gt 0 ]] && ! _home_ok "$home"; then
+    warn "no directory for $id's skills: $(_display "$home")"
+    return 1
+  fi
+  if [[ ${#SK_ROWS[@]} -gt 0 ]] && _npx_ok; then
+    _agents
+    if [[ -z "$AGENTS" ]]; then
+      echo "  skills: waiting for an agent (installing an agent package installs them)"
+    else
+      anfs_skill_load "$home"
+      anfs_skill_sync_rows "$home" true "$AGENTS" < <(printf '%s\n' "${SK_ROWS[@]}") || rc=1
+      printf '  skills: %d synced, %d up to date, %d failed\n' "$ANFS_SKILL_SYNCED" "$ANFS_SKILL_CURRENT" "$ANFS_SKILL_FAILED"
+    fi
+  fi
+  [[ $SK_BAD -eq 0 && $rc -eq 0 ]]
+}
+
+# What the skills CLI leaves once a space has no skills: a skills-lock.json with none, and empty
+# skills directories (.agents/skills, .claude/skills, ...) with their parents; rmdir only
+_skills_tidy() {
+  local home="$1" d n
+  _home_ok "$home" || return 0
+  if [[ -f "$home/skills-lock.json" ]]; then
+    n=$(yq -p json -r '.skills // {} | length' "$home/skills-lock.json" 2>/dev/null) || n=""
+    [[ "$n" != 0 ]] || rm -f -- "$home/skills-lock.json"
+  fi
+  for d in "$home"/.*/skills "$home"/.*/*/skills; do
+    [[ -d "$d" && ! -L "$d" ]] || continue
+    _rmdir_empty_up "$d" "$home"
+  done
+}
+
+# Remove from space <id>'s directory the skills it declares that are installed there (the CLI
+# removes each for every agent), then tidy. Without npx they stay, said once.
+# Usage: _remove_skills <id> [name...]   (the names: only those, if declared)
+_remove_skills() {
+  local id="$1" home n
+  shift
+  local -a want=("$@") gone=()
+  _skill_names "$id"
+  [[ ${#SK_NAMES[@]} -gt 0 ]] || return 0
+  _home_of "$id"
+  home="$REPLY"
+  _home_ok "$home" || return 0
+  _npx_ok || return 0
+  anfs_skill_load "$home"
+  for n in "${SK_NAMES[@]}"; do
+    [[ ${#want[@]} -eq 0 ]] || _in_list "$n" "${want[@]}" || continue
+    anfs_skill_installed_agents "$n" >/dev/null || continue
+    _in_list "$n" ${gone[@]+"${gone[@]}"} || gone+=("$n")
+  done
+  if [[ ${#gone[@]} -gt 0 ]]; then
+    if ! anfs_skill_remove "$home" "${gone[@]}" >/dev/null; then
+      warn "skills remove in $id failed: ${gone[*]}"
+      return 1
+    fi
+    echo "  removed skills ${gone[*]} from $id"
+  fi
+  _skills_tidy "$home"
+}
+
 # --- install ------------------------------------------------------------------------------
 
 # The spaces a space depends on (anfs_resolve's deps callback): ids, or paths that resolve from
@@ -1083,6 +1493,8 @@ cmd_install() {
       [[ -n "${was[$id]:-}" ]] || WSM_EV_INSTALLED+=("$id")
     fi
     _space_repositories "$id" "$dry" || failed=$((failed + 1))
+    _space_links "$id" "$dry" "$force" || failed=$((failed + 1))
+    _space_skills "$id" "$dry" || failed=$((failed + 1))
   done
   [[ $failed -eq 0 ]]
 }
@@ -1226,6 +1638,10 @@ cmd_list() {
   fi
   [[ -z "$spec" || ${#srcs[@]} -gt 0 ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
   _state_load true ${srcs[@]+"${srcs[@]}"}
+  # Every installed space's links: in one yq
+  local -a inst=()
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do [[ -z "${INSTALLED[$id]:-}" ]] || inst+=("$id"); done
+  _meta_load ${inst[@]+"${inst[@]}"}
 
   for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match "$id" || continue
@@ -1269,7 +1685,19 @@ cmd_list() {
     _json "${f#"${p:+$p/}"}"; files+="$sep{\"file\":$REPLY,\"status\":\"leftover\"}"
     sep=,
   done
-  printf '%s,"files":[%s]}]\n' "${out%\}]}" "$files"
+  # Its links: (an installed space's): dest, src, state
+  local links="" i
+  sep=""
+  if [[ -n "${INSTALLED[$detail]:-}" ]]; then
+    _links_eval "$detail"
+    for i in ${LK_DEST[@]+"${!LK_DEST[@]}"}; do
+      _json "${LK_DEST[$i]}"; links+="$sep{\"dest\":$REPLY"
+      _json "${LK_SRC[$i]}"; links+=",\"src\":$REPLY"
+      _json "${LK_STATE[$i]}"; links+=",\"status\":$REPLY}"
+      sep=,
+    done
+  fi
+  printf '%s,"files":[%s],"links":[%s]}]\n' "${out%\}]}" "$files" "$links"
 }
 
 # `wsm repo ls [SPEC]`: the repositories the space.yml files under SPEC declare, and their state
@@ -1408,6 +1836,13 @@ repositories: []
 #  - url: git@github.com:you/thing
 #    path: repos/thing     # optional: git's name for it
 #    ref: main             # optional
+#skills:                   # installed into this space's directory (wsm skill), for this space only
+#  - repo: owner/repo      # owner/repo, a URL or a path, as the skills CLI takes it
+#    skills: [a-skill]     # optional: every skill in it when left out
+#  - repo: ./skills        # relative: from this space.yml in the source
+#links:                    # absolute links in this space's directory
+#  - src: ~/somewhere      # ~ and \$VAR expanded; relative: from the space's directory
+#    dest: somewhere       # optional: src's basename; must stay inside the space
 EOF
   printf 'created %s\n' "$(_display "$dir/space.yml")"
 
@@ -1485,6 +1920,10 @@ _add_one() {
   fi
   id="$REPLY"
   sub="${rel#"${SPACE_PATH[$id]:+${SPACE_PATH[$id]}/}"}"
+  if _written_by_skills "$id" "$sub"; then
+    $explicit && warn "written by the skills CLI (wsm skill), not added: $(_display "$path")"
+    $explicit && return 1 || return 0
+  fi
   if _in_repository "$id" "$sub"; then
     $explicit && warn "inside a repository of $id, not added: $(_display "$path")"
     $explicit && return 1 || return 0
@@ -1521,6 +1960,26 @@ _add_one() {
   _in_list "$src" ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"} || ADDED_SRCS+=("$src")
 }
 
+# Whether <rel> (below space <id>) is what the skills CLI wrote there: its skills-lock.json, or a
+# file of a skill that lock names, in .agents/skills/<name>/ or an agent's <.dir>[/sub]/skills/<name>/
+declare -A LOCK_NAMES=()
+_written_by_skills() {
+  local id="$1" rel="$2" n src pre name
+  [[ "$rel" != skills-lock.json ]] || return 0
+  [[ "$rel" == .*/skills/* ]] || return 1
+  if [[ -z "${LOCK_NAMES[$id]+x}" ]]; then
+    _home_of "$id"
+    LOCK_NAMES[$id]=$'\n'
+    while IFS="$ANFS_US" read -r n src; do
+      [[ -z "$n" ]] || LOCK_NAMES[$id]+="$n"$'\n'
+    done < <(_skill_lock "$REPLY")
+  fi
+  pre="${rel%%/skills/*}" name="${rel#*/skills/}" name="${name%%/*}"
+  # One or two directories above skills/, the first hidden: .agents, .claude, .pi/agent
+  [[ "$pre" == .* && "$pre" != */*/* ]] || return 1
+  [[ "${LOCK_NAMES[$id]}" == *$'\n'"$name"$'\n'* ]]
+}
+
 cmd_add() {
   local arg p rc=0 f
   _require_yq
@@ -1550,6 +2009,177 @@ cmd_add() {
   done
   for f in ${ADDED_SRCS[@]+"${ADDED_SRCS[@]}"}; do
     echo "commit it in $(_display "$(gitsrc_dir "$f")")"
+  done
+  return "$rc"
+}
+
+# --- skill --------------------------------------------------------------------------------
+
+# The spaces under SPEC (all when none), into SEL: each a space id; a SPEC naming no space is 1
+SEL=()
+_skill_select() {
+  local spec="${1:-}" id
+  SEL=()
+  [[ -z "$spec" ]] || _spec_parse "$spec"
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    [[ -z "$spec" ]] || _spec_match "$id" || continue
+    SEL+=("$id")
+  done
+  [[ -z "$spec" || ${#SEL[@]} -gt 0 ]] || fail "$EX_NOTFOUND" "no space matches '$spec' (wsm ls)"
+}
+
+# `wsm skill ls [SPEC]`: every skill the spaces under SPEC declare, and its state in the space's
+# directory: ok, partial, missing, waiting (no agent yet), * (a whole remote repo); null when the
+# space is not installed. One `skills list` per installed space that declares any.
+cmd_skill_list() {
+  local spec="${1:-}" id row repo names n st
+  local -a list=()
+  ROWS=""
+  [[ -z "$spec" ]] || _spec_ok "$spec"
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load false
+  _skill_select "$spec"
+  _meta_load ${SEL[@]+"${SEL[@]}"}
+  for id in ${SEL[@]+"${SEL[@]}"}; do
+    _skill_rows "$id"
+    [[ ${#SK_ROWS[@]} -gt 0 ]] || continue
+    if [[ -n "${INSTALLED[$id]:-}" ]]; then
+      _agents
+      if [[ -n "$AGENTS" ]]; then
+        _npx_ok || exit "$EX_UNAVAIL"
+        _home_of "$id"
+        _home_ok "$REPLY" || exit "$EX_NOTFOUND"
+        anfs_skill_load "$REPLY"
+      fi
+    fi
+    for row in "${SK_ROWS[@]}"; do
+      repo="${row#*|}" repo="${repo%%|*}" names="${row#*|*|}" names="${names%|}"
+      IFS=',' read -r -a list <<< "$names"
+      for n in "${list[@]}"; do
+        if [[ -z "${INSTALLED[$id]:-}" ]]; then st=""
+        elif [[ -z "$AGENTS" ]]; then st=waiting
+        elif [[ "$n" == '*' ]]; then st='*'
+        else st=$(anfs_skill_status "$n" "$AGENTS"); fi
+        _row "$id/$n" "$st" "$repo" "$id" "$n"
+      done
+    done
+  done
+  printf '%s' "$ROWS" | anfs_table "SKILL STATUS REPO" "skill status repo space name"
+}
+
+# `wsm skill install [SPEC] [-n]`: the skills half of install, for the spaces already installed
+cmd_skill_install() {
+  local dry=${CLI_OPT[dry-run]:-false} spec="${1:-}" id failed=0
+  [[ -z "$spec" ]] || _spec_ok "$spec"
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load false
+  _skill_select "$spec"
+  _meta_load ${SEL[@]+"${SEL[@]}"}
+  for id in ${SEL[@]+"${SEL[@]}"}; do
+    [[ -n "${INSTALLED[$id]:-}" && -n "${META_SKILLS[$id]:-}" ]] || continue
+    echo "$id"
+    _space_skills "$id" "$dry" || failed=$((failed + 1))
+  done
+  [[ $failed -eq 0 ]]
+}
+
+# `wsm skill rm SPEC...`: a space (or a prefix) loses every skill it declares; <space id>/<name>
+# only that one, which it must declare
+cmd_skill_remove() {
+  local arg id n any rc=0
+  local -a ids=() what=()
+  local -A only=()
+  _require_yq
+  _spaces_load
+  _root_load
+  _state_load false
+  for arg in "$@"; do
+    _spec_ok "$arg"
+    _spec_parse "$arg"
+    any=false
+    for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+      _spec_match "$id" || continue
+      any=true
+      [[ -n "${INSTALLED[$id]:-}" ]] || continue
+      _in_list "$id" ${ids[@]+"${ids[@]}"} || ids+=("$id")
+      only[$id]="*"
+    done
+    $any && continue
+    if _repo_split "${arg%/}" && [[ "$REPO_PATH" != */* ]]; then
+      _skill_names "$REPO_SPACE"
+      if ! _in_list "$REPO_PATH" ${SK_NAMES[@]+"${SK_NAMES[@]}"}; then
+        warn "$REPO_SPACE declares no skill $REPO_PATH (wsm skill ls $REPO_SPACE)"
+        rc=$EX_NOTFOUND
+        continue
+      fi
+      if [[ -z "${INSTALLED[$REPO_SPACE]:-}" ]]; then
+        warn "not installed: $REPO_SPACE"
+        rc=$EX_NOTFOUND
+        continue
+      fi
+      _in_list "$REPO_SPACE" ${ids[@]+"${ids[@]}"} || ids+=("$REPO_SPACE")
+      [[ "${only[$REPO_SPACE]:-}" == "*" ]] || only[$REPO_SPACE]+="$REPO_PATH"$'\n'
+      continue
+    fi
+    warn "no space or skill '$arg' (wsm ls, wsm skill ls)"
+    rc=$EX_NOTFOUND
+  done
+  [[ ${#ids[@]} -gt 0 ]] || return "$rc"
+  for id in "${ids[@]}"; do
+    if [[ "${only[$id]}" == "*" ]]; then what+=("$id (every skill it declares)")
+    else what+=("$id: $(printf '%s' "${only[$id]}" | paste -sd' ' -)"); fi
+  done
+  anfs_confirm "skill remove takes from their spaces: ${what[*]}" "Remove them?"
+  _meta_load "${ids[@]}"
+  for id in "${ids[@]}"; do
+    if [[ "${only[$id]}" == "*" ]]; then
+      _remove_skills "$id" || rc=1
+    else
+      local -a names=()
+      mapfile -t names <<< "${only[$id]%$'\n'}"
+      _remove_skills "$id" "${names[@]}" || rc=1
+    fi
+  done
+  return "$rc"
+}
+
+# Plumbing for wsm's ppm callback (install.sh): agent <id>s were removed and no installed package
+# declares them any more, so each installed space's declared skills are unlinked from them (the
+# others keep them). Not in help or completion.
+cmd___agents_rm() {
+  local id agent display n home rc=0
+  local -a names=()
+  _spaces_load
+  _root_load
+  _state_load false
+  local -a inst=()
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do [[ -z "${INSTALLED[$id]:-}" ]] || inst+=("$id"); done
+  _meta_load ${inst[@]+"${inst[@]}"}
+  for id in ${inst[@]+"${inst[@]}"}; do
+    [[ -n "${META_SKILLS[$id]:-}" ]] || continue
+    _skill_names "$id"
+    [[ ${#SK_NAMES[@]} -gt 0 ]] || continue
+    _home_of "$id"
+    home="$REPLY"
+    _home_ok "$home" || continue
+    _npx_ok || return 0
+    anfs_skill_load "$home"
+    for agent in "$@"; do
+      display=$(anfs_skill_display "$agent") || { warn "unknown agent '$agent'"; continue; }
+      names=()
+      for n in "${SK_NAMES[@]}"; do
+        local have
+        have=$(anfs_skill_installed_agents "$n") || continue
+        [[ ",$have," == *",$display,"* ]] && names+=("$n")
+      done
+      [[ ${#names[@]} -gt 0 ]] || continue
+      echo "unlink $agent in $id: ${names[*]}"
+      anfs_skill_unlink "$home" "$agent" "${names[@]}" >/dev/null || { warn "skills remove for $agent in $id failed"; rc=1; }
+    done
   done
   return "$rc"
 }

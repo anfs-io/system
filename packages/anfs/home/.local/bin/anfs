@@ -621,7 +621,7 @@ _tilde() { anfs_display "$1"; }
 # /dev/null, ANFS_RPC=1 (no terminal: confirm and sudo exit 77) and ANFS_RPC_TIMEOUT seconds
 # (60; a stream has none).
 
-RPC_GROUPS=" agents file image iso link machine network repo snapshot src "
+RPC_GROUPS=" agents file image iso link machine network repo skill snapshot src "
 RPC_READ=" list ls show status path validate --version version "
 
 # A JSON string, into REPLY

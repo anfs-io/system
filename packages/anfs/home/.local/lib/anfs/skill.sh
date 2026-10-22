@@ -38,6 +38,11 @@ anfs_skill_cli() {
     args=("${args[@]:0:i}" -g ${args[@]+"${args[@]:i}"})
     npx --yes "skills@${ANFS_SKILLS_CLI_VERSION:-latest}" "${args[@]}" </dev/null
   else
+    # A project scope is an existing absolute directory: `cd ""` would leave the CLI in the cwd
+    if [[ "$scope" != /?* || ! -d "$scope" ]]; then
+      anfs_warn "not a directory to install skills in: '$scope'"
+      return 1
+    fi
     ( cd -- "$scope" && exec npx --yes "skills@${ANFS_SKILLS_CLI_VERSION:-latest}" ${args[@]+"${args[@]}"} </dev/null )
   fi
 }

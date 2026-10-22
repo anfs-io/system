@@ -91,3 +91,16 @@ STUB
   [ "$ANFS_SKILL_WAITING" = 1 ]
   [ "$ANFS_SKILL_SYNCED" = 0 ]
 }
+
+@test "cli: an empty, relative or missing scope is refused, nothing run" {
+  run anfs_skill_cli "" list --json
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a directory to install skills in: ''"* ]]
+  run anfs_skill_cli relative add /x -y
+  [ "$status" -eq 1 ]
+  run anfs_skill_cli "$T/nope" add /x -y
+  [ "$status" -eq 1 ]
+  run anfs_skill_remove "" a
+  [ "$status" -eq 1 ]
+  [ ! -e "$NPX_LOG" ]
+}

@@ -262,3 +262,27 @@ tokens() {
 {"token":"anything"}'
   [ "${lines[1]}" = '{"error":"unknown request (run, watch or version)"}' ]
 }
+
+@test "a group's list is a read: wsm skill list (skill is a group), not a write" {
+  cat > "$BIN/wsm" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$LIB/log.sh"
+source "$LIB/table.sh"
+source "$LIB/cli.sh"
+CLI_TOOL=wsm CLI_VERSION=0.7.0
+cli_group skill "Skills"
+cli_cmd "skill list" "Skills" --alias ls
+cli_cmd "skill install" "Install"
+cmd_skill_list() { echo '[{"skill":"acme/tech/x","status":"ok"}]'; }
+cmd_skill_install() { echo installed; }
+cli_dispatch "\$@"
+SH
+  chmod +x "$BIN/wsm"
+  run rpc <<<'{"run":["wsm","skill","list"]}'
+  [ "$output" = '{"exit":0,"data":[{"skill":"acme/tech/x","status":"ok"}]}' ]
+  run rpc <<<'{"run":["anfs","space","skill","ls"]}'
+  [ "$output" = '{"exit":0,"data":[{"skill":"acme/tech/x","status":"ok"}]}' ]
+  run rpc <<<'{"run":["wsm","skill","install"]}'
+  [[ "$output" == *'refused: a write request (install) under --grant read'* ]]
+}
