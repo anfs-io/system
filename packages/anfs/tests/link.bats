@@ -408,3 +408,158 @@ state_of() { awk -F'\t' -v p="$1" '$2 == p { print $1 }' <<< "$output"; }
   [ "$(awk -F'\t' '$1 == "ok" { n++ } END { print n }' <<< "$output")" -eq 2 ]
   [ -z "$(find "$T" -type l)" ]
 }
+
+# --- linker 02: directory entries, the on-the-way rule, absolute across /, links out of a tree ---
+
+@test "a directory entry: link, keep, replace (dangling), conflict (a real directory); unlink takes it" {
+  mkdir -p "$FROM/.local/lib/tool"
+  echo a > "$FROM/.local/lib/tool/a.sh"
+  printf '.local/lib/tool\n.toolenv\n' > "$LIST"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$status" -eq 0 ]
+  [ "$(class_of .local/lib/tool)" = link ]
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  [ -L "$T/.local/lib/tool" ] && [ -d "$T/.local/lib" ] && [ ! -L "$T/.local/lib" ]
+  [ "$(readlink "$T/.local/lib/tool")" = ../../.local/share/anfs/sources/core/packages/tool/home/.local/lib/tool ]
+  # a file added to the directory afterwards is there at once
+  echo b > "$FROM/.local/lib/tool/b.sh"
+  [ "$(cat "$T/.local/lib/tool/b.sh")" = b ]
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$(class_of .local/lib/tool)" = keep ]
+
+  rm "$T/.local/lib/tool"
+  ln -s ../../.local/share/anfs/sources/core/packages/tool/home/.local/lib/gone "$T/.local/lib/tool"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$(class_of .local/lib/tool)" = replace ]
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  [ "$(cat "$T/.local/lib/tool/a.sh")" = a ]
+
+  anfs_unlink "$FROM" "$T" "$LIST"
+  [ ! -e "$T/.local/lib/tool" ] && [ ! -L "$T/.local/lib/tool" ]
+
+  mkdir -p "$T/.local/lib/tool"
+  ln -s ../../../.local/share/anfs/sources/core/packages/tool/home/.local/lib/tool/a.sh "$T/.local/lib/tool/a.sh"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *$'conflict\t.local/lib/tool\ta directory'* ]]
+  [[ "$output" != *"another package"* ]]
+}
+
+@test "a directory entry over a directory holding another package's links says whose" {
+  mkdir -p "$FROM/.local/lib/tool" "$OTHER/.local/lib/tool"
+  echo a > "$FROM/.local/lib/tool/a.sh"
+  echo y > "$OTHER/.local/lib/tool/y.sh"
+  mkdir -p "$T/.local/lib/tool"
+  ln -s ../../../.local/share/anfs/sources/stack/packages/other/home/.local/lib/tool/y.sh "$T/.local/lib/tool/y.sh"
+  printf '.local/lib/tool\n' > "$LIST"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *$'conflict\t.local/lib/tool\ta directory, with links into another package: stack/packages/other/home/.local/lib/tool/y.sh'* ]]
+}
+
+@test "check: a directory entry is ok, missing, or in the way" {
+  mkdir -p "$FROM/.local/lib/tool"
+  echo a > "$FROM/.local/lib/tool/a.sh"
+  printf '.local/lib/tool\n' > "$LIST"
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$output" = $'missing\t.local/lib/tool' ]
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$output" = $'ok\t.local/lib/tool' ]
+  rm "$T/.local/lib/tool"; mkdir "$T/.local/lib/tool"
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$output" = $'in the way\t.local/lib/tool' ]
+}
+
+@test "a path through a directory link into the sources is a conflict; through one inside the target, followed" {
+  mkdir -p "$OTHER/.local/lib/tool" "$FROM/.local/lib/tool"
+  echo y > "$OTHER/.local/lib/tool/y.sh"
+  echo x > "$FROM/.local/lib/tool/x.sh"
+  mkdir -p "$T/.local/lib"
+  ln -s ../../.local/share/anfs/sources/stack/packages/other/home/.local/lib/tool "$T/.local/lib/tool"
+  printf '.local/lib/tool/x.sh\n' > "$LIST"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *$'conflict\t.local/lib/tool/x.sh\tinside a directory link: .local/lib/tool -> stack/packages/other/home/.local/lib/tool'* ]]
+  run anfs_link_apply "$FROM" "$T" "$LIST"
+  [ "$status" -eq 1 ]
+  [ ! -e "$OTHER/.local/lib/tool/x.sh" ]
+  run anfs_link_check "$FROM" "$T" "$LIST"
+  [ "$output" = $'in the way\t.local/lib/tool/x.sh' ]
+
+  # a link inside the target that is not into the sources is followed, as before
+  rm "$T/.local/lib/tool"
+  mkdir -p "$T/mine/tool"
+  ln -s ../../mine/tool "$T/.local/lib/tool"
+  run anfs_link_apply "$FROM" "$T" "$LIST"
+  [ "$status" -eq 0 ]
+  [ -L "$T/mine/tool/x.sh" ]
+}
+
+@test "anfs_link_text: relative below /, absolute when only / is shared; the plan's text the same" {
+  [ "$(anfs_link_text /a/b/c /a/x/y)" = ../../x/y ]
+  [ "$(anfs_link_text /Users/me/vaults /Volumes/disk/apex)" = /Volumes/disk/apex ]
+  [ "$(anfs_link_text / /a/b)" = /a/b ]
+  [ "$(anfs_link_text /a /a/b)" = b ]
+  # A target and a source sharing only / cannot be made here (every writable temp dir is under
+  # /private on macOS): the plan is told so, and writes, keeps and checks absolute texts
+  _anfs_link_only_root() { return 0; }
+  list
+  anfs_link_apply "$FROM" "$T" "$LIST" >/dev/null
+  [ "$(readlink "$T/.config/tool/rc")" = "$FROM/.config/tool/rc" ]
+  [ "$(readlink "$T/.toolenv")" = "$FROM/.toolenv" ]
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$(class_of .config/tool/rc)" = keep ]
+  anfs_link_check "$FROM" "$T" "$LIST" >/dev/null
+  [ "${_ANFS_ST[*]}" = "ok ok" ]
+  [ -z "${_ANFS_ABS[*]:-}" ]
+  # and an absolute link where relative is expected is still replace, ok but marked
+  unset -f _anfs_link_only_root
+  source "$LIB"
+  run anfs_link_plan "$FROM" "$T" "$LIST"
+  [ "$(class_of .config/tool/rc)" = replace ]
+  anfs_link_check "$FROM" "$T" "$LIST" >/dev/null
+  [ "${_ANFS_ST[*]}" = "ok ok" ] && [ "${#_ANFS_ABS[@]}" -eq 2 ]
+}
+
+@test "anfs_link_one refuses a directory, a link, a file; makes a relative link" {
+  mkdir -p "$T/d"
+  run anfs_link_one "$FROM/.toolenv" "$T/d"
+  [ "$status" -eq 1 ]
+  [ -z "$(ls -A "$T/d")" ]
+  ln -s nowhere "$T/l"
+  run anfs_link_one "$FROM/.toolenv" "$T/l"
+  [ "$status" -eq 1 ]
+  [ "$(readlink "$T/l")" = nowhere ]
+  echo f > "$T/f"
+  run anfs_link_one "$FROM/.toolenv" "$T/f"
+  [ "$status" -eq 1 ]
+  anfs_link_one "$FROM/.config" "$T/x/cfg"
+  [ "$(readlink "$T/x/cfg")" = ../.local/share/anfs/sources/core/packages/tool/home/.config ]
+}
+
+@test "anfs_link_src_state: each state; an absolute link to src is ok; anfs_unlink_src leaves a repointed one" {
+  local src="$BATS_TEST_TMPDIR/outside/vault"
+  mkdir -p "$T/space"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = "missing src" ]
+  mkdir -p "$src"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = missing ]
+  anfs_link_one "$src" "$T/space/v"
+  [[ "$(readlink "$T/space/v")" == ../* ]]
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = ok ]
+  rm "$T/space/v"; ln -s "$src" "$T/space/v"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = ok ]
+  rmdir "$src"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = "missing src" ]
+  mkdir -p "$src"
+  rm "$T/space/v"; ln -s "$BATS_TEST_TMPDIR" "$T/space/v"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = wrong ]
+  anfs_unlink_src "$T/space/v" "$src"
+  [ -L "$T/space/v" ]
+  rm "$T/space/v"; mkdir "$T/space/v"
+  [ "$(anfs_link_src_state "$T/space/v" "$src")" = "in the way" ]
+  rmdir "$T/space/v"
+  anfs_link_one "$src" "$T/space/v"
+  anfs_unlink_src "$T/space/v" "$src"
+  [ ! -L "$T/space/v" ]
+}
