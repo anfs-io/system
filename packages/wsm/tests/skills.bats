@@ -295,7 +295,7 @@ callback() {
   : > "$NPX_LOG"
   run wsm skill rm -y acme/tech
   [ "$status" -eq 0 ]
-  [ "$(cat "$NPX_LOG")" = "$h|remove a -y -a claude-code pi opencode" ]
+  [ "$(cat "$NPX_LOG")" = "$h|remove a -y -a opencode claude-code" ]
   [ ! -e "$h/.agents/skills/a" ]
   [ "$(cat "$h/skills/a/SKILL.md")" = mine ]
   [ "$(yq -p json -r '.skills | keys | join(",")' "$h/skills-lock.json")" = keep ]

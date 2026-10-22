@@ -82,6 +82,13 @@ and no `package.json`, a temp `HOME` (what wsm does in a space's directory):
   `.agents/skills/<name>` copy and its `skills-lock.json` entry. The CLI also
   lists a skill as installed for AstrBot when a `data/skills/<name>` of the
   user's exists.
+- **The global scope sweeps too** (checked by the orchestrator and again here, 1.7.4, temp
+  `HOME`): `remove -g -y foo` deleted a user's own `~/agent/skills/foo/` (it left `~/skills` and
+  `~/data/skills`). So every remove psm makes (`remove`, `prune`, `implode`; `agents rm` already
+  did) goes through `anfs_skill_remove -g`: `-a` for the agents `list` puts the skill on, then the
+  `~/.agents/skills/<name>` copy and the `~/.agents/.skill-lock.json` entry go if the CLI kept
+  them. A skill not installed is skipped; one only on agents with no known id stays, with a
+  warning. **Never call `skills remove` without `-a`, in any scope.**
 - `remove -a <agent>` removes that agent's link or copy only; a full remove
   leaves empty `.agents/skills`, `.claude/skills` and a `skills-lock.json` with
   `"skills": {}`, which wsm tidies (`rmdir`, and the lock deleted when empty).

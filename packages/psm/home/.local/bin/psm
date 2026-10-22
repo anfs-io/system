@@ -477,13 +477,13 @@ cmd_prune() {
 
   printf 'undeclared  %s\n' "${orphans[@]}"
   anfs_confirm "prune removes ${#orphans[@]} skills no config declares" "Remove them?"
-  skills_cli remove -y "${orphans[@]}"
+  anfs_skill_remove -g "${orphans[@]}"
 }
 
 cmd_remove() {
   require_npx
   anfs_confirm "remove takes $* away from every agent" "Remove $*?"
-  skills_cli remove -y "$@"
+  anfs_skill_remove -g "$@"
 }
 
 cmd_path() {
@@ -546,7 +546,7 @@ cmd_implode() {
 
   local rc=0
   if [[ ${#names[@]} -gt 0 ]]; then
-    skills_cli remove "${names[@]}" -y || { warn "skills remove failed"; rc=1; }
+    anfs_skill_remove -g "${names[@]}" || { warn "skills remove failed"; rc=1; }
   fi
   for dir in "$PSM_CONFIG_HOME" "$PSM_DATA_HOME"; do
     [[ -e "$dir" ]] || continue

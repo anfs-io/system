@@ -22,12 +22,15 @@
 #   anfs_skill_sync_rows  <scope> <force_local> <detected>   install the rows on stdin,
 #                                               <label>|<repo>|<skills csv>|<agents csv>; the counts
 #                                               in ANFS_SKILL_SYNCED/_CURRENT/_FAILED/_WAITING
-#   anfs_skill_remove     <scope> <name>...     remove for every agent
+#   anfs_skill_remove     <scope> <name>...     remove for every agent it is installed on, never
+#                                               unscoped; then the shared .agents/skills/<name>
+#                                               copy and its lock entry (ANFS_SKILL_REMOVED: names)
 #   anfs_skill_unlink     <scope> <agent> <name>...   remove for one agent
 #   anfs_skill_remove_for <scope> <agents csv> <name>...  remove for those agents only. In a project
 #                                               scope a remove without -a sweeps every agent's
 #                                               directory, skills/<name> and data/skills/<name>
-#                                               among them (packages/psm/AGENTS.md)
+#                                               among them, and globally ~/agent/skills/<name>
+#                                               (packages/psm/AGENTS.md)
 #
 # Functions only, the bash floor. Messages go through log.sh (the caller's name). The version is
 # ANFS_SKILLS_CLI_VERSION (anfs.conf; default latest).
@@ -212,11 +215,54 @@ anfs_skill_sync_rows() {
   [[ $ANFS_SKILL_FAILED -eq 0 ]]
 }
 
+# A remove is never unscoped: without -a the CLI sweeps every agent's directory, which in a project
+# includes skills/<name> and data/skills/<name>, and globally ~/agent/skills/<name>: the user's own
+# files. So each name is removed for the agents `list` says it is on (the ids known), in one call,
+# and what that keeps for universal agents goes after: the copy in <base>/.agents/skills/<name> (a
+# real directory) and its lock entry (<dir>/skills-lock.json; globally ~/.agents/.skill-lock.json). A name not installed is skipped; one on
+# agents with no known id is said. Returns 1 when the CLI failed.
+ANFS_SKILL_REMOVED=()
 anfs_skill_remove() {
-  local scope="$1"
+  local scope="$1" base n have d a ids="," lock=""
   shift
+  ANFS_SKILL_REMOVED=()
   [[ $# -gt 0 ]] || return 0
-  anfs_skill_cli "$scope" remove "$@" -y
+  if [[ "$scope" == -g ]]; then base="$HOME" lock="$HOME/.agents/.skill-lock.json"
+  else
+    [[ "$scope" == /?* && -d "$scope" ]] || { anfs_warn "not a directory to remove skills from: '$scope'"; return 1; }
+    base="$scope" lock="$scope/skills-lock.json"
+  fi
+  [[ -n "$base" && "$base" == /?* ]] || return 1
+  anfs_skill_load "$scope"
+  for n in "$@"; do
+    [[ -n "$n" && "$n" != */* && "$n" != . && "$n" != .. ]] || continue
+    have=$(anfs_skill_installed_agents "$n") || continue
+    local known=false
+    while IFS= read -r d; do
+      [[ -n "$d" ]] || continue
+      if a=$(anfs_skill_id "$d"); then
+        known=true
+        [[ "$ids" == *",$a,"* ]] || ids+="$a,"
+      else
+        anfs_warn "$n stays for $d: no known agent id for it"
+      fi
+    done < <(tr ',' '\n' <<< "$have")
+    # Only on agents with no known id: left as it is, copy included
+    ! $known || ANFS_SKILL_REMOVED+=("$n")
+  done
+  [[ ${#ANFS_SKILL_REMOVED[@]} -gt 0 ]] || return 0
+  ids="${ids#,}" ids="${ids%,}"
+  if [[ -n "$ids" ]]; then
+    anfs_skill_remove_for "$scope" "$ids" "${ANFS_SKILL_REMOVED[@]}" || return 1
+  fi
+  for n in "${ANFS_SKILL_REMOVED[@]}"; do
+    d="$base/.agents/skills/$n"
+    if [[ -d "$d" && ! -L "$d" ]]; then rm -rf -- "$d"; fi
+    if [[ -n "$lock" && -f "$lock" ]]; then
+      ANFS_SKILL_N="$n" yq -i -p json -o json 'del(.skills[strenv(ANFS_SKILL_N)])' "$lock" 2>/dev/null ||
+        anfs_warn "cannot update $lock"
+    fi
+  done
 }
 
 # Names before -a: the CLI's -a takes every argument after it as an agent

@@ -42,10 +42,10 @@ STUB
   run cat "$NPX_LOG"
   [ "$output" = "$(cd "$T/space" && pwd)|skills@latest|add /x -y -s a -a pi" ]
   anfs_skill_unlink "$T/space" claude-code a b
-  anfs_skill_remove "$T/space" a
+  anfs_skill_remove "$T/space" a   # not installed (the list is empty): nothing run
   run cat "$NPX_LOG"
   [[ "${lines[1]}" == *"|remove a b -y -a claude-code" ]]
-  [[ "${lines[2]}" == *"|remove a -y" ]]
+  [ "${#lines[@]}" -eq 2 ]
 }
 
 @test "agents: meta.agent of installed ppm packages, one or a list, csv and sorted" {
@@ -112,4 +112,26 @@ STUB
   [ "$(anfs_skill_status a opencode)" = ok ]
   [ "$(anfs_skill_status b pi,claude-code)" = partial ]
   [ "$(anfs_skill_status a hermes-agent)" = partial ]
+}
+
+@test "remove: -a for the agents each is on, never unscoped; the shared copy and lock entry go, nothing else" {
+  mkdir -p "$T/space/.agents/skills/a" "$T/space/skills/a" "$HOME/.agents/skills/a" "$HOME/agent/skills/a"
+  printf '{"version":1,"skills":{"a":{},"keep":{}}}\n' > "$T/space/skills-lock.json"
+  printf '{"version":3,"skills":{"a":{},"keep":{}},"dismissed":{}}\n' > "$HOME/.agents/.skill-lock.json"
+  echo mine > "$T/space/skills/a/SKILL.md"
+  echo mine > "$HOME/agent/skills/a/SKILL.md"
+  export NPX_LIST='[{"name":"a","agents":["Claude Code","Pi"]}]'
+  anfs_skill_remove "$T/space" a gone
+  [ "${ANFS_SKILL_REMOVED[*]}" = a ]
+  anfs_skill_remove -g a
+  run cat "$NPX_LOG"
+  [[ "${lines[0]}" == *"|remove a -y -a claude-code pi" ]]
+  [[ "${lines[1]}" == *"|remove a -g -y -a claude-code pi" ]]
+  [ ! -e "$T/space/.agents/skills/a" ] && [ ! -e "$HOME/.agents/skills/a" ]
+  [ -f "$T/space/skills/a/SKILL.md" ]
+  [ -f "$HOME/agent/skills/a/SKILL.md" ]
+  [ "$(yq -p json -r '.skills | keys | join(",")' "$T/space/skills-lock.json")" = keep ]
+  [ "$(yq -p json -r '.skills | keys | join(",")' "$HOME/.agents/.skill-lock.json")" = keep ]
+  run anfs_skill_remove "" a
+  [ "$status" -eq 1 ]
 }

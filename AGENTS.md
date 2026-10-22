@@ -903,7 +903,8 @@ psm_ppm_changed() { local event="$1"; shift; ... "$@" ... }   # event: install |
 - For a removal, the package directory normally still exists, so the callback can read the
   removed packages' `package.yml`. It is gone only if its repo was removed first.
 - `core/psm` uses this to sync skills when an agent package (`meta.agent`) is installed, and to
-  unlink them (`psm agents rm`) when one is removed. `core/wsm` does the same for the spaces'
+  unlink them (`psm agents rm`) when one is removed. Every remove either makes is scoped with `-a`
+  (`anfs_skill_remove`). `core/wsm` does the same for the spaces'
   skills (`wsm_ppm_changed`: `wsm skill install`, `wsm __agents_rm`). Both read the ids with
   `anfs_skill_package_agents` (`lib/anfs/skill.sh`).
 
@@ -1491,7 +1492,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   skill.sh     # agent skills through the skills CLI (npx skills@$ANFS_SKILLS_CLI_VERSION) with a
                # scope, -g or a directory: anfs_skill_cli, _require, _agents (ppm's meta.agent),
                # _package_agents, _display/_id, _dir_skills, _load, _has, _status, _sync_rows,
-               # _remove, _remove_for, _unlink. psm runs it with -g, wsm with a space's directory
+               # _remove (never unscoped: -a for the agents a skill is on, then the shared
+               # .agents/skills copy and lock entry; an unscoped remove sweeps ~/agent/skills/<name>,
+               # a project's skills/<name>), _remove_for, _unlink. psm runs it with -g, wsm with a
+               # space's directory
   repo.sh      # one clone at one path: anfs_repo_name (the directory git clone would make),
                # anfs_repo_clone <url> <dir> [ref], anfs_repo_status, anfs_repo_ahead,
                # anfs_repo_dirty, anfs_repo_update (pull; 2 when dirty), anfs_repo_ssh_url,

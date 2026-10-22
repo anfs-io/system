@@ -79,9 +79,11 @@ psm() { "$PSM" "$@"; }
   run psm remove hello </dev/null
   [ "$status" -eq 77 ]
   [ ! -s "$NPX_LOG" ]
+  export NPX_LIST='[{"name":"hello","agents":["Pi"]}]'
   run psm remove -y hello
   [ "$status" -eq 0 ]
-  [[ "$(cat "$NPX_LOG")" == *"remove -g -y hello"* ]]
+  [ "$(cat "$NPX_LOG")" = "remove hello -g -y -a pi" ]
+  unset NPX_LIST
   run psm prune
   [ "$status" -eq 0 ]
   [[ "$output" == *"Nothing to prune"* ]]
@@ -164,7 +166,7 @@ psm() { "$PSM" "$@"; }
   [ ! -s "$NPX_LOG" ]
   run psm prune -y
   [ "$status" -eq 0 ]
-  [[ "$(cat "$NPX_LOG")" == "remove -g -y stray" ]]
+  [[ "$(cat "$NPX_LOG")" == "remove stray -g -y -a pi" ]]
   : > "$NPX_LOG"
   run psm agents remove pi </dev/null
   [ "$status" -eq 77 ]
@@ -206,4 +208,22 @@ psm() { "$PSM" "$@"; }
   run psm prune
   [ "$status" -eq 0 ]
   [[ "$output" == *"Nothing to prune"* ]]
+}
+
+@test "every remove carries -a (an unscoped one sweeps ~/agent/skills/<name>); the shared copy goes, the user's files stay" {
+  mkdir -p "$HOME/.agents/skills/a" "$HOME/agent/skills/a" "$HOME/.config/psm"
+  echo copy > "$HOME/.agents/skills/a/SKILL.md"
+  echo mine > "$HOME/agent/skills/a/SKILL.md"
+  export NPX_LIST='[{"name":"a","agents":["Claude Code","OpenCode"]},{"name":"b","agents":["Pi"]},{"name":"c","agents":["Some Agent"]}]'
+  psm remove -y a b c >/dev/null 2>&1
+  psm prune -y >/dev/null 2>&1
+  psm agents remove -y pi >/dev/null 2>&1
+  psm implode -y >/dev/null 2>&1
+  run grep -c . "$NPX_LOG"
+  [ "$output" -ge 4 ]
+  run grep -v -- ' -a ' "$NPX_LOG"
+  [ -z "$output" ]
+  [ "$(head -1 "$NPX_LOG")" = "remove a b -g -y -a claude-code opencode pi" ]
+  [ ! -e "$HOME/.agents/skills/a" ]
+  [ "$(cat "$HOME/agent/skills/a/SKILL.md")" = mine ]
 }
