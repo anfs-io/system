@@ -34,8 +34,8 @@
 
 ANFS_EVENTS_HOME="$ANFS_STATE_HOME/events"
 ANFS_EVENT_MAX=4096
-# The types toolkit code emits, anfsd's run.* included (completion; a glob of each noun is offered too)
-ANFS_EVENT_TYPES="report.filed report.closed source.updated run.submitted run.working run.completed run.failed run.canceled run.rejected"
+# The types toolkit code emits, anfsd's run.*, container.*, pod.* and podman.* included (completion; a glob of each noun is offered too)
+ANFS_EVENT_TYPES="report.filed report.closed source.updated run.submitted run.working run.completed run.failed run.canceled run.rejected container.created container.started container.stopped container.died container.removed container.paused container.unpaused container.health pod.created pod.started pod.stopped pod.removed podman.connected podman.disconnected"
 
 # --- space ids ------------------------------------------------------------------------------
 

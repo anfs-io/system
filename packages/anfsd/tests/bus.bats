@@ -115,6 +115,7 @@ spool() {
   sleep 30 & local p=$!
   running io.anfs.anfsd "$p"
   echo "$p" > "$AS/anfsd.pid"
+  echo '{"state":"connected","since":"2026-10-23T18:00:00Z"}' > "$AS/podman.json"
   ANFS_SERVICE_OS=macos bus status
   kill "$p"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
@@ -123,7 +124,8 @@ spool() {
   [ "${lines[2]}" = "anfsd	ok	pid $p, v0.1.0 (release)" ]
   [ "${lines[3]}" = "shipper	ok	nothing to ship" ]
   [ "${lines[4]}" = "dispatch	ok	0 rules loaded, 0 disabled, 0 invalid; 0 working, 0 queued" ]
-  [ "${#lines[@]}" -eq 5 ]
+  [ "${lines[5]}" = "podman	ok	connected since 2026-10-23T18:00:00Z: container.* and pod.* into the host scope" ]
+  [ "${#lines[@]}" -eq 6 ]
   grep -q '^http://127.0.0.1:47223/jsz?streams=true&config=true$' "$STUB/curl.log"
 }
 
@@ -151,7 +153,8 @@ JSON
   [ "${lines[5]}" = "harness claude	ok	$T/bin/claude, 2.1.296 (Claude Code)" ]
   [ "${lines[6]}" = "harness pi	fail	pi is not on PATH (a rule uses it)" ]
   [ "${lines[7]}" = "harness antigravity	ok	$T/bin/agy, version not asked: agy --version hangs" ]
-  [ "${#lines[@]}" -eq 8 ]
+  [ "${lines[8]}" = "podman	stopped	anfsd is not running" ]
+  [ "${#lines[@]}" -eq 9 ]
 }
 
 @test "status: NATS down and anfsd stopped: each says so, exit 1; nothing installed says how" {
@@ -206,14 +209,48 @@ JSON
   fake_anfsd "$T/dev-anfsd" dev
   printf 'ANFSD_BIN=%s\n' "$T/dev-anfsd" > "$HOME/.config/anfsd/anfsd.local.env"
   echo '{}' > "$AS/cursors.json"
+  sleep 30 & local p=$!
+  echo "$p" > "$AS/anfsd.pid"
+  echo '{"state":"connected","since":"2026-10-23T18:00:00Z"}' > "$AS/podman.json"
   ANFS_SERVICE_OS=linux bus status
   [ "$status" -eq 1 ]
-  [ "${lines[2]}" = "anfsd	ok	222, dev (from source: $T/dev-anfsd)" ]
-  [ "${lines[5]}" = "linger	off	loginctl enable-linger $USER: without it the bus stops when you log out" ]
+  [ "${lines[2]}" = "anfsd	ok	pid $p, dev (from source: $T/dev-anfsd)" ]
+  [ "${lines[6]}" = "linger	off	loginctl enable-linger $USER: without it the bus stops when you log out" ]
   echo yes > "$STUB/linger"
   ANFS_SERVICE_OS=linux bus status
+  kill "$p"
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "${lines[5]}" = "linger	ok	the bus runs without a login" ]
+  [ "${lines[6]}" = "linger	ok	the bus runs without a login" ]
+}
+
+@test "status: podman: connected, away (the error, the next try; exit 1), off (exit 0), no state, anfsd down" {
+  installed
+  nats_up
+  running io.anfs.nats 111
+  sleep 30 & local p=$!
+  running io.anfs.anfsd "$p"
+  echo "$p" > "$AS/anfsd.pid"
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 1 ]
+  [ "${lines[5]}" = "podman	fail	anfsd has written no podman.json (an anfsd before v0.3.0: anfs bus restart anfsd)" ]
+  printf '%s\n' '{"state":"away","since":"2026-10-23T18:00:00Z","error":"Error: Cannot connect to Podman. Please verify your connection","next":"2026-10-23T18:01:00Z"}' > "$AS/podman.json"
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 1 ]
+  [ "${lines[5]}" = "podman	away	Error: Cannot connect to Podman. Please verify your connection; next try 2026-10-23T18:01:00Z (on macOS: podman machine start)" ]
+  echo '{"state":"off","since":"2026-10-23T18:00:00Z"}' > "$AS/podman.json"
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  [ "${lines[5]}" = "podman	off	ANFSD_PODMAN=off (anfsd.local.env)" ]
+  echo '{"state":"connected","since":"2026-10-23T18:00:00Z"}' > "$AS/podman.json"
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 0 ]
+  [ "${lines[5]}" = "podman	ok	connected since 2026-10-23T18:00:00Z: container.* and pod.* into the host scope" ]
+  # anfsd gone: its file says nothing about now
+  kill "$p"
+  wait "$p" 2>/dev/null || true
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 1 ]
+  [ "${lines[5]}" = "podman	stopped	anfsd is not running" ]
 }
 
 @test "start, stop, restart on macOS: launchctl, NATS first up and last down" {

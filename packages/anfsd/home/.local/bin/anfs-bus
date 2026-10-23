@@ -10,8 +10,9 @@
 #                                  pid, its version: release or from source), shipper (what is
 #                                  not shipped yet, per scope), dispatch (the rules loaded, the
 #                                  runs working and queued), a harness row per harness a rule
-#                                  uses (found, its version); on Linux linger. Exit 1 when one is
-#                                  not ok
+#                                  uses (found, its version), podman (anfsd following podman
+#                                  events: connected, or away with the error and the next try;
+#                                  off); on Linux linger. Exit 1 when one is not ok (off is not)
 #   start|stop|restart [nats|anfsd]  load, unload, or write again and load (both when none named;
 #                                  restart nats renders server.conf from nats.env first)
 #   reload                         SIGHUP to anfsd: it reads the dispatch rules again
@@ -47,8 +48,8 @@ CLI_TOOL="anfs bus"
 anfs_bus_paths
 
 cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd, the
-shipper's lag, dispatch (rules, runs) and the harnesses the rules use (and
-linger on Linux); exit 1 when one is not ok"
+shipper's lag, dispatch (rules, runs), the harnesses the rules use, podman
+(its events followed) and linger on Linux; exit 1 when one is not ok"
 cli_cmd start "Start NATS and anfsd, or the one named" --arg "[service]"
 cli_cmd stop "Stop anfsd and NATS, or the one named (they start again at the next login)" --arg "[service]"
 cli_cmd restart "Write the service again and restart it (nats: server.conf from nats.env
@@ -85,9 +86,10 @@ _bus_need() {
 _bus_http() { curl -fsS -m 2 "http://127.0.0.1:$ANFS_NATS_HTTP_PORT/$1" 2>/dev/null; }
 
 _BUS_ROWS=() _BUS_BAD=false
+# _bus_row <service> <status> <detail> [soft]: a status other than ok fails the exit, unless soft
 _bus_row() {
   _BUS_ROWS+=("$1$ANFS_US$2$ANFS_US$3")
-  [[ "$2" == ok ]] || _BUS_BAD=true
+  [[ "$2" == ok || -n "${4:-}" ]] || _BUS_BAD=true
 }
 
 # A size for people: 1.2 KiB, 3.4 MiB
@@ -221,6 +223,29 @@ _bus_status_dispatch() {
   done < <(yq -p json -r '[.[] | select(.status != "invalid") | .harness] | unique | .[]' <<< "$json")
 }
 
+# podman: what anfsd last wrote in podman.json (state connected, away, off, starting; since, error,
+# next). Only while anfsd runs: else the file is stale
+_bus_status_podman() {
+  local f="$ANFSD_STATE_HOME/podman.json" pid="" state since err next
+  [[ ! -f "$ANFSD_STATE_HOME/anfsd.pid" ]] || pid=$(< "$ANFSD_STATE_HOME/anfsd.pid")
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    _bus_row podman stopped "anfsd is not running"
+    return
+  fi
+  if [[ ! -f "$f" ]]; then
+    _bus_row podman fail "anfsd has written no podman.json (an anfsd before v0.3.0: anfs bus restart anfsd)"
+    return
+  fi
+  IFS=$'\t' read -r state since err next < <(yq -p json -r '[.state // "", .since // "", .error // "", .next // ""] | @tsv' "$f" 2>/dev/null) || state=""
+  case "$state" in
+    connected) _bus_row podman ok "connected since $since: container.* and pod.* into the host scope" ;;
+    starting)  _bus_row podman ok "starting (since $since)" ;;
+    off)       _bus_row podman off "ANFSD_PODMAN=off (anfsd.local.env)" soft ;;
+    away)      _bus_row podman away "$err; next try $next (on macOS: podman machine start)" ;;
+    *)         _bus_row podman fail "podman.json unreadable: $(anfs_display "$f")" ;;
+  esac
+}
+
 _bus_status_linger() {
   [[ "$(anfs_service_os)" == linux ]] || return 0
   local v
@@ -237,6 +262,7 @@ cmd_status() {
   _bus_status_anfsd
   _bus_status_shipper
   _bus_status_dispatch
+  _bus_status_podman
   _bus_status_linger
   printf '%s\n' "${_BUS_ROWS[@]}" | anfs_table "SERVICE STATUS DETAIL" "service status detail"
   ! $_BUS_BAD

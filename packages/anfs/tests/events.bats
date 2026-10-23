@@ -291,6 +291,7 @@ some_events() {
 @test "completion: --type offers the toolkit's types and their globs; a spec comes from wsm" {
   run clean anfs __complete events ls --type ""
   [[ "$output" == *report.filed* && "$output" == *report.closed* && "$output" == *"report.*"* ]]
+  [[ "$output" == *container.started* && "$output" == *"container.*"* && "$output" == *"pod.*"* && "$output" == *podman.connected* ]]
   run clean anfs __complete events ls ""
   [[ "$output" == *acme/tech* && "$output" == *"acme/"* ]]
 }

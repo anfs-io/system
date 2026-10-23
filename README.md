@@ -212,6 +212,10 @@ that agent CLI (claude, opencode, pi, antigravity) in an `anfs work` job, superv
 watching; its life is `run.*` events. `anfs agents ls|show|logs|stop|rules|match`. A file report's
 `BACKLOG.md` is a view anfsd writes from the reports' records.
 
+And it follows `podman events`: containers and pods starting, dying, removed and their health are
+`container.*` and `pod.*` events in the host scope (`anfs events ls --type 'container.*' -f`); a
+stopped podman machine is retried with a backoff, never polled (`ANFSD_PODMAN=off` turns it off).
+
 ## Removing It All
 
 ```bash

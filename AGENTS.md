@@ -1576,7 +1576,17 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   source whose HEAD moved (subject the alias; `from`, `to` the commits; a clone's `from` empty).
   (02b) anfsd: `run.submitted`, `run.working`, `run.completed`, `run.failed`, `run.canceled`,
   `run.rejected` into the rule's space, subject the run id, actor `anfsd` ("Dispatch"), written by
-  its Go writer of the same profile into the same files.
+  its Go writer of the same profile into the same files. (02c) anfsd, following `podman events`:
+  into the host scope, actor `podman`, subject the container's (or pod's) name:
+  `container.created|started|stopped|died|removed|paused|unpaused`, `container.health` (only
+  when a container's health changes), `pod.created|started|stopped|removed`; data `id` (12),
+  `image`, `pod` (the pod's id, 12), `exit` (died), `health`, `pcm` (the `io.pcm.name` label pcm
+  sets). exec, attach, init, sync, cleanup and the rest are not events. The same container,
+  status and second are one event; at most 20 a second (the rest counted in anfsd's log).
+  `podman.connected` when podman is reached (a subscriber lists once to reconcile; nothing polls
+  `podman ps`) and `podman.disconnected` (data `error`) when it goes: on macOS when the podman
+  machine stops. `pcm down` of a service is `container.died` then `container.removed` (podman
+  reports no `stop` for it); `pcm up` is `container.created`, `container.started`.
 
 **`events ls`**, one helper (`anfs_events_cli`, `anfs_events_ls`), two commands, as `repo push`:
 
@@ -1608,14 +1618,14 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
 The event log on NATS JetStream, for programs (anfsd's consumers, the ui in its container from
 03): every line of every month file is published, as it is, exactly once per event id. NATS is the
 broker; anfsd (anfs-io/runtime, Go) ships, dispatches and supervises ("Dispatch"), and renders the
-report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemon/` (02a, 02b).
+report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemon/` (02a, 02b, 02c).
 
 | | |
 | --- | --- |
 | Subjects | `anfs.<scope>.<noun>.<verb>`: the scope a space id or `host`, then the short type (`anfs.tkj76y3nfx.report.filed`, `anfs.host.source.updated`) |
 | Stream | `ANFS`, subjects `anfs.>`, file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env). A bounded window: the files keep everything |
 | NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; 03's) |
-| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch") |
+| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch"), `podman.json` (podman's state) |
 | DATA | `~/.local/share/nats/<version>/{nats-server,nats}`, `~/.local/share/anfsd/<version>/anfsd`, linked from `~/.local/bin`; the downloads in `~/.cache/{nats,anfsd}/<version>/` |
 | Services | `lib/anfs/service.sh`: launchd `io.anfs.nats`, `io.anfs.anfsd` (`KeepAlive`, `ThrottleInterval` 10); systemd user `anfs-nats.service`, `anfsd.service` (`Requires=`/`After=` NATS, `KillMode=process`; `Restart=on-failure`, `RestartSec=5`). Written by the packages' `post_install` (absolute paths, the install's PATH and HOME), removed by `post_remove`. On Debian, running without a login needs `loginctl enable-linger` (by hand; `anfs bus status` says so) |
 
@@ -1632,11 +1642,17 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
   awaiting acks, 100 events/s per scope (burst 1000). A line that is not an event is logged once
   and stepped past. NATS down: backoff 1, 2, 5, 10, 30 s, one log line per change, emitting
   unaffected.
+- **Podman** (anfsd, 02c): one child, `podman events --format json --filter type=container
+  --filter type=pod`, from now; the events above ("Events"). Podman away (not installed; on macOS
+  the machine stopped): the child ends and is started again after 5, 10, 30, then every 60 s, one
+  log line per change, never a loop; up 2 s (or a line read) is connected, up a minute resets the
+  backoff. `ANFSD_PODMAN=off` (anfsd.local.env) never runs it. Tests use a fake podman printing
+  recorded lines (anfs-io/runtime's `internal/testfake`), never the real one.
 - **`anfs bus`** (core/anfsd's `anfs-bus`, the package seam):
 
 | Command | Does |
 | --- | --- |
-| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled and invalid, from `anfsd rules --json`; the runs working and queued, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
+| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled and invalid, from `anfsd rules --json`; the runs working and queued, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `podman` (from `~/.local/state/anfsd/podman.json`, while anfsd runs: `ok` connected, `away` with podman's error and the next try, `off` for `ANFSD_PODMAN=off`, which does not fail the exit), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
 | `anfs bus start\|stop\|restart [nats\|anfsd]` | load, unload (it starts again at the next login), or write again and load; both when none is named, NATS first up and last down. `restart nats` renders `server.conf` from nats.env first; `restart anfsd` writes `ANFSD_BIN` or the release into the unit |
 | `anfs bus reload` | SIGHUP to anfsd: it reads the dispatch rules again (a `source.updated` does too) |
 | `anfs bus logs [nats\|anfsd] [-f]` | the log files (macOS) or `journalctl --user` (Linux) |
