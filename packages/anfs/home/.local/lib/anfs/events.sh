@@ -34,8 +34,8 @@
 
 ANFS_EVENTS_HOME="$ANFS_STATE_HOME/events"
 ANFS_EVENT_MAX=4096
-# The types toolkit code emits (completion; a glob of each noun is offered too)
-ANFS_EVENT_TYPES="report.filed report.closed source.updated"
+# The types toolkit code emits, anfsd's run.* included (completion; a glob of each noun is offered too)
+ANFS_EVENT_TYPES="report.filed report.closed source.updated run.submitted run.working run.completed run.failed run.canceled run.rejected"
 
 # --- space ids ------------------------------------------------------------------------------
 

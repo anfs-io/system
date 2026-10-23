@@ -662,6 +662,10 @@ help` documents the commands.
   in <source>`), before the first line that is not a comment. `wsm ls` says `no id`, `invalid id`
   or `duplicate id (also <space>)` in NOTE, after the counts, and leaves STATUS alone. `wsm events
   ls [SPEC...]` is the event log of the space around `.` or of the spaces SPEC names.
+- **`space.yml`'s `access:`, `agents:` and `dispatch:`** are anfsd's ("Dispatch" below): what the
+  space's dispatched agents may reach beyond their job, the roles it runs, and which event starts
+  which. wsm links the file (and a rule's `prompt_file:`, as any file) and neither reads nor checks
+  them: `anfs agents rules` does, through anfsd.
 - **The tree mirrors the source, both ways.**
   - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
     below where you are (in the tree, or below a checkout's `spaces/`). It is installed when the
@@ -829,7 +833,7 @@ person declared.
 | Kind | Holds | Where | Examples |
 | --- | --- | --- | --- |
 | CONFIG | what the person declares: by hand, or by an explicit `set`/`add` command; **never** as a side effect of another command or an install. Also what a package links there (a declaration in a repo) and the local definition directories | `$XDG_CONFIG_HOME/<tool>` (`<TOOL>_CONFIG_HOME`) | `<tool>.env` (linked), `<tool>.local.env` (`config set`), `user.list` (`anfs src add`), `isos.yml` (`iso add`), pcm's `containers/` and pmm's `machines/` (the `local` source, like Quadlet's `~/.config/containers/systemd`) |
-| STATE | what a tool records about what it did | `$XDG_STATE_HOME/<tool>` | trackers, stack records, backups, a machine's run (`run/<name>/`, its pid with it), pmm's `ssh_config`, pcm's `containers/<name>/state.env` (a fetched tunnel token) |
+| STATE | what a tool records about what it did | `$XDG_STATE_HOME/<tool>` | trackers, stack records, backups, a machine's run (`run/<name>/`, its pid with it), pmm's `ssh_config`, pcm's `containers/<name>/state.env` (a fetched tunnel token), the event log and the reports' records (`anfs/events/`, `anfs/reports/`), anfsd's runs (`anfsd/runs/<run id>/`) |
 | DATA | content a tool manages | `$XDG_DATA_HOME/<tool>` | sources, volumes, disks, builds, keys, ruby's `default-gems` (a list packages add to) |
 | CACHE | what can be rebuilt | `$XDG_CACHE_HOME/<tool>` | compose overrides, ISOs, update stamps |
 | RUNTIME | sockets and temp files that die with the session | Linux: `$XDG_RUNTIME_DIR`; macOS: `/tmp` (socket paths are short) or `$TMPDIR`; always overridable for tests | pmm's sockets (`PMM_SOCK_DIR`, default `$XDG_RUNTIME_DIR/pmm` on Linux, `/tmp/pmm-<uid>` on macOS), anfs's RPC sockets (systemd's `%t`), ppm's message file (`$TMPDIR`) |
@@ -1225,7 +1229,8 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, `anfs report check`, `events ls`, `anfs bus status`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
+   callbacks`, `anfs report check`, `events ls`, `anfs bus status`, `anfs agents ls`, `anfs agents
+   rules`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1255,7 +1260,9 @@ The keys, which are the interface:
 | `wsm id <prefix>/`, `wsm id --new` | `space`, `status` (`--new` only: `new`, `kept`, `invalid id`, `not written`), `id` |
 | `wsm events ls`, `anfs events ls` | `--json` is not this table's array: the event lines as stored, one per line; the rows' keys are `event`, `subject`, `space`, `by` |
 | `anfs report check` | `check` (`report-to`, `file`, `gh`, `gh-auth`, `origin core`, `origin stack`, `skill`), `status` (`ok`, `fail`), `detail` |
-| `anfs bus status` | `service` (`nats`, `jetstream`, `anfsd`, `shipper`, `linger`), `status` (`ok`, `fail`, `stopped`, `not installed`, `lag`, `off`), `detail` |
+| `anfs bus status` | `service` (`nats`, `jetstream`, `anfsd`, `shipper`, `dispatch`, `harness <name>`, `linger`), `status` (`ok`, `fail`, `stopped`, `not installed`, `lag`, `off`), `detail` |
+| `anfs agents ls` | `run` (the run id's last 8), `status` (the state, and a failure's or rejection's reason: `failed (timeout)`), `rule`, `role`, `space` (the path), `harness`, `job` (null: `job: none`), `age` (since submitted), `id` (the whole run id), `state`, `reason` (the last three `--json` only) |
+| `anfs agents rules` | `rule`, `status` (`ok`, `invalid`, `disabled`, `unenforced`, `partial`), `space`, `on` (`report.filed package=core/* to=file`), `as`, `harness`, `reason` (why it is invalid), `job` (its name template), `space_id` (the last three `--json` only) |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 
@@ -1320,7 +1327,8 @@ cli_dispatch "$@"
   `--version` (the package's `package.yml` version unless the tool sets `CLI_VERSION`), `-h`/
   `--help`, `<command> --help` and `help <command>`.
 - A `cmd_` function nothing declared still runs, with its arguments untouched: plumbing such as
-  `psm path`. *Only* `cmd_` functions run, so a tool's internals are never reachable from its
+  `psm path`; in a group, only a sub-command named `__<name>` does (`anfs report __sink` is
+  `cmd_report___sink`). *Only* `cmd_` functions run, so a tool's internals are never reachable from its
   command line, and a command can never shadow a system binary in package hooks (`install`, `file`).
 - A tool whose tests source its libraries directly keeps its declarations in a library file
   (`lib/pmm/commands.sh`, `lib/pcm/commands.sh`), so the tests have them too.
@@ -1488,21 +1496,37 @@ to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
 | `anfs report [new] --title T [--package PKG] [--expected] [--actual] [--steps] [--body-file F\|-] [-n] [-y]` | the report: `Package:`, the body file's text, the three sections, then `report diag`'s block; filed, its id printed. A group with a default: options and no sub-command are `new` |
 | `anfs report diag` | the diagnostics: anfs's version (and `ANFS_WORK`), platform, bash, git, podman, each source's short commit and `anfs_repo_status`, each ppm tracker's version, and the log's last 10 failures (an `error:` line, or a failed run's `start:` and non-zero `end:`) |
 | `anfs report check` | `CHECK STATUS DETAIL`, `ok`/`fail` per row; exit 1 when one fails. The value of `ANFS_REPORT_TO` and its FROM; a file target writable or creatable; or `gh`, `gh auth status` (its only network call), core's and stack's origins on GitHub; and the skill installed for every detected agent (`lib/anfs/skill.sh`, read-only) |
-| `anfs report status <id>` | `open`, `fixed` (closed; the commit not in this host's checkout), `available` (the commit an ancestor of HEAD in the source's live checkout, or with `ANFS_WORK` the job's worktree); exit 0 available, 1 otherwise, 2 an unknown id |
+| `anfs report status <id>` | `open`, `fixed` (closed; the commit not in this host's checkout), `available` (the commit an ancestor of HEAD in the source's live checkout, or with `ANFS_WORK` the job's worktree); exit 0 available, 1 otherwise, 2 an unknown id. A file report's state is its record's |
+| `anfs report show <id>` | the report: a file report's record; a GitHub issue through `gh issue view` (`--comments`; `--json` its fields). `--json` for a record: `id`, `status`, `record`, `file`, `report` |
 | `anfs report close <id> --commit SHA [--source S]` | the fix recorded: a file's `Status:` line rewritten; GitHub: a `Fixed in <source> <sha>` comment, then `gh issue close` |
 | `anfs report wait <id> [--timeout 3600]` | until `available` (0) or the timeout (1); 2 an unknown id. On events, not a timer: the state once, then the report's scope and the host scope followed (events.sh's `anfs_events_follow`), the state read again only on this report's `report.closed` or a `source.updated` (one `git merge-base` per event, none per tick). A GitHub issue closed by hand emits nothing: seen at the next `source.updated`. An agent runs it in the background |
 
 - **`ANFS_REPORT_TO`** (anfs.env, commented: `github`): `github`, or a path (a leading `~/`
   expanded; it must be absolute). Set per machine in `anfs.local.env`.
-- **A file**: appended, never rewritten: `## r-<YYYYMMDD>-<n> <title>`, `Status: open`, the body;
-  `<n>` is one past that day's highest in the file. `close` rewrites that section's `Status:` line
-  only (`fixed in <source> <sha> (<date>)`), atomically.
+- **A file report's record** (agents/02b) is `$ANFS_STATE_HOME/reports/<space id>/<id>.md`, the
+  space the one around the file (`host` when none has an id): `## r-<YYYYMMDD>-<n> <title>`,
+  `Status: open`, the body. Made exclusively (`set -C`) as the next free `<n>` of the day in that
+  space, the records and the file's `## r-` headings both counted, so two sink files or two writers
+  in one space never share an id (ten `new` at once: ten ids). `close` rewrites the record's
+  `Status:` line only (`fixed in <source> <sha> (<date>)`); `status`, `show` and `wait` read the
+  record.
+- **The file is a view of the records**: anfsd's consumer `anfsd-sink-report` (`anfs.*.report.>`)
+  runs `anfs report __sink` (plumbing) with each event on stdin, one at a time (a failure delivered
+  again, 5 tries in all, then logged): on `report.filed` it appends the record unless a `## <id> `
+  heading is there; on `report.closed` it rewrites that section's `Status:` line from the record
+  (appending the record when the file lacks it), atomically, under a `mkdir` lock beside the file
+  (`.<name>.lock`, its holder's pid inside; a dead holder's is taken over). Only records of the
+  file's own space are rendered. When anfsd is not running (no live pid in `anfsd.pid`) or events
+  are off, `new` and `close` render themselves: the render is idempotent, so a daemon that comes up
+  later changes nothing. **Never edit a report's section in the file**: it is rewritten from the
+  record. Sections written before the records have none: they stay text, `status` and `close` say
+  so (2), and they are closed by editing their `Status:` line by hand.
 - **github**: the owner is the `--package`'s source (core when none); its clone's `origin` must be
   a GitHub URL (`git@github.com:`, `ssh://git@github.com/`, `https://github.com/`), else 1, saying
   to set a file. Duplicates are searched (`gh issue list --search "<title> in:title"`) and shown,
   then `anfs_confirm` (77 without a terminal or `-y`), then `gh issue create`. The id is
   `owner/repo#N`; `status` reads `gh issue view`'s state and the last `Fixed in` comment.
-- `-n` calls no `gh` at all. `--json`: `new` is one object (`id`, `to`, `repo`, `file`, `url`,
+- `-n` calls no `gh` and makes no record. `--json`: `new` is one object (`id`, `to`, `repo`, `file`, `url`,
   `title`, `filed`, `duplicates` as `[{number, state, title, url}]`, `report`); `diag`
   `{"diagnostics": ...}`; `status`, `wait` and `close` `anfs_result` objects.
 - ppm's trackers are read as files (as `onboard.sh` does): a report is wanted most when ppm is
@@ -1550,6 +1574,9 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   GitHub. `-n` emits nothing. (02a) `anfs src update`, and every source update through
   `gitsrc_update` in a tool that sourced events.sh: `source.updated` into the host scope for each
   source whose HEAD moved (subject the alias; `from`, `to` the commits; a clone's `from` empty).
+  (02b) anfsd: `run.submitted`, `run.working`, `run.completed`, `run.failed`, `run.canceled`,
+  `run.rejected` into the rule's space, subject the run id, actor `anfsd` ("Dispatch"), written by
+  its Go writer of the same profile into the same files.
 
 **`events ls`**, one helper (`anfs_events_cli`, `anfs_events_ls`), two commands, as `repo push`:
 
@@ -1578,17 +1605,17 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
 
 ## The bus (core/nats, core/anfsd)
 
-The event log on NATS JetStream, for programs (anfsd's consumers from agents/02b, the ui in its
-container from 03): every line of every month file is published, as it is, exactly once per
-event id. NATS is the broker; anfsd (anfs-io/runtime, Go) only ships. The plan is anfs-io/docs
-`units/agents/02-daemon/` (02a).
+The event log on NATS JetStream, for programs (anfsd's consumers, the ui in its container from
+03): every line of every month file is published, as it is, exactly once per event id. NATS is the
+broker; anfsd (anfs-io/runtime, Go) ships, dispatches and supervises ("Dispatch"), and renders the
+report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemon/` (02a, 02b).
 
 | | |
 | --- | --- |
 | Subjects | `anfs.<scope>.<noun>.<verb>`: the scope a space id or `host`, then the short type (`anfs.tkj76y3nfx.report.filed`, `anfs.host.source.updated`) |
 | Stream | `ANFS`, subjects `anfs.>`, file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env). A bounded window: the files keep everything |
 | NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; 03's) |
-| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS) |
+| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch") |
 | DATA | `~/.local/share/nats/<version>/{nats-server,nats}`, `~/.local/share/anfsd/<version>/anfsd`, linked from `~/.local/bin`; the downloads in `~/.cache/{nats,anfsd}/<version>/` |
 | Services | `lib/anfs/service.sh`: launchd `io.anfs.nats`, `io.anfs.anfsd` (`KeepAlive`, `ThrottleInterval` 10); systemd user `anfs-nats.service`, `anfsd.service` (`Requires=`/`After=` NATS, `KillMode=process`; `Restart=on-failure`, `RestartSec=5`). Written by the packages' `post_install` (absolute paths, the install's PATH and HOME), removed by `post_remove`. On Debian, running without a login needs `loginctl enable-linger` (by hand; `anfs bus status` says so) |
 
@@ -1609,9 +1636,9 @@ event id. NATS is the broker; anfsd (anfs-io/runtime, Go) only ships. The plan i
 
 | Command | Does |
 | --- | --- |
-| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
+| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled and invalid, from `anfsd rules --json`; the runs working and queued, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
 | `anfs bus start\|stop\|restart [nats\|anfsd]` | load, unload (it starts again at the next login), or write again and load; both when none is named, NATS first up and last down. `restart nats` renders `server.conf` from nats.env first; `restart anfsd` writes `ANFSD_BIN` or the release into the unit |
-| `anfs bus reload` | SIGHUP to anfsd (its rules, from 02b) |
+| `anfs bus reload` | SIGHUP to anfsd: it reads the dispatch rules again (a `source.updated` does too) |
 | `anfs bus logs [nats\|anfsd] [-f]` | the log files (macOS) or `journalctl --user` (Linux) |
 | `anfs bus nats -- <args>` | the nats CLI with `NATS_URL` and the admin user in its environment, never on its command line: `anfs bus nats -- stream info ANFS`, `-- sub 'anfs.>'` |
 
@@ -1619,6 +1646,100 @@ event id. NATS is the broker; anfsd (anfs-io/runtime, Go) only ships. The plan i
 - Tests: core's bats stub `curl`, `launchctl`, `systemctl` (`ANFS_SERVICE_OS`, `ANFS_PIN_PLATFORM`
   pick the platforms) and never start a service or reach the network; anfs-io/runtime's Go tests
   run an embedded nats-server, and its `go/test/e2e.bats` the pinned one in a temp HOME.
+
+## Dispatch (anfsd, `anfs agents`)
+
+A space's `space.yml` says which event starts which agent; anfsd (anfs-io/runtime) starts it, in a
+job of its own, and watches it. The plan is anfs-io/docs `units/agents/02-daemon/02b-dispatch.md`.
+
+```yaml
+access:                          # beyond the job, what this space's dispatched agents may reach
+  - {path: ~/.local/share/anfs/sources, mode: read}   # ~ and $VAR expanded; relative: from the space
+agents:                          # the roles; a role's address is <space path>/<role>
+  maintainer: {harness: claude, model: opus, concurrency: 1, queue: 10, budget_usd: 10}
+dispatch:
+  - name: fix-core-report        # [a-z0-9-], unique in the space
+    enabled: false               # optional (default true): valid, shown, never run
+    on: {type: report.filed, subject: "r-*", data: {to: file, package: "core/*"}, space: anfs-dev}
+    as: maintainer
+    harness: claude              # optional: the role's
+    job: {name: "fix-{{subject}}", repos: [core]}   # anfs work new; or none (the default)
+    prompt_file: prompts/report-filed.md            # or prompt: (exactly one)
+    args: [--effort, high]       # optional: more of the harness's options
+    timeout: 2h                  # default 1h, at most 12h
+    rate: 20/h                   # starts per rule (N/s, N/m, N/h, N/d)
+    stale: 24h                   # an older event is not acted on
+    retries: 0                   # 0 to 2, after a failed exit only (30 s, then 2 min apart)
+```
+
+- **One parser, anfsd's**: `anfsd rules [--json] [space.yml...]`, read by `anfs agents rules`. The
+  rules come from every installed space with an id (`wsm ls --json`), at anfsd's start, on `anfs
+  bus reload` (SIGHUP) and on a `source.updated`. A rule that fails is `invalid` (the reason in
+  `--json`) and not loaded; the space's others load. Refused: an unknown key, an unknown template
+  name, `on.type` matching `run.*` (a run would start runs), a harness not on anfsd's PATH, `job:`
+  without `anfs work` (anfs-dev/dev), `access:` at `/` or `$HOME` itself, and in `args:` anything
+  that skips permissions or overrides what anfsd hands the harness (`--dangerously-skip-permissions`,
+  `--auto`, `--permission-mode`, `--settings`, `--add-dir`, `--sandbox`, `--tools`, ...). Statuses:
+  `ok`, `invalid`, `disabled`, `unenforced` (pi: no permission system), `partial` (opencode,
+  antigravity: no read/write split).
+- **Templates** in `job.name` and the prompt: `{{id}}`, `{{type}}`, `{{subject}}`, `{{time}}`,
+  `{{space}}`, `{{actor}}`, `{{data.<key>}}`, `{{run}}`, `{{job}}` (the last two not in
+  `job.name`); in `job.name` a value is lowered and anything outside `[a-z0-9-]` becomes `-`.
+- **A run**: the durable consumer `anfsd-dispatch` (filters: each rule's `anfs.<space id>.<the
+  type's literal tokens>`, and `anfs.host.source.updated`) gets the event; one run per rule and
+  event id (a redelivery finds the record). The guards, each a `run.rejected` with its reason:
+  `stale`, `rate`, `queue` (no free slot and `queue:` runs waiting), `loop` (the event's actor is
+  a run of this rule). Then the record `~/.local/state/anfsd/runs/<run id>/run.json` (UUIDv7), the
+  event's line `event.json` and the prompt are written, `run.submitted`, and the message acked.
+  It starts when its role has a free slot and the host has one (`ANFSD_MAX_RUNS`, anfsd.env,
+  default 2): `anfs work new <job> <repos>` (a job this run made on an earlier try is reused; any
+  other existing job is `run.failed reason=job`), then the harness in its own session (setsid),
+  cwd the job (`job: none`: the space's directory, read-only, a TMPDIR in the run's directory),
+  stdin `/dev/null`, output `out.log`, with `anfs work env <job>`'s variables, `ANFS_ACTOR=<harness>:<the
+  run id's last 8>`, `ANFS_AS=<space path>/<role>`, `ANFS_RUN`, `ANFS_EVENT` (event.json), and no
+  `ANFS_WORK`: `run.working` (job, branch). The prompt is the rule's, then anfsd's footer (who it
+  is, the rule, the event, the job, what it may not do, "end with a summary").
+- **Ends**: `run.completed` (exit 0; `commits` per repo ahead of main, `summary`: the final
+  answer's last 1500 bytes), `run.failed` (`reason`: `exit`, `timeout`, `job`, `spawn`,
+  `orphaned`; `exit`), `run.canceled` (`by`). The job stays for the person to review, merge and
+  remove. A run is a task: never restarted (`retries:` aside). Timeout: SIGTERM to the group,
+  SIGKILL 30 s later. anfsd stopped or restarted leaves runs running (their own sessions;
+  `KillMode=process`): at start it adopts every `working` run whose pid is alive with the start
+  time it recorded (checked every 10 s while there are any), and ends the rest from the exit status
+  their wrapper left, else `orphaned`.
+- **The harnesses** (anfs-io/runtime `internal/harness`; access per plan 02's decision 5):
+
+| Harness | Command | Access |
+| --- | --- | --- |
+| claude | `claude -p --output-format stream-json --verbose --permission-mode dontAsk --settings <run>/claude.json --add-dir <path>... [--model M] [--max-budget-usd N] --name <rule>:<run> -- <prompt>` | `claude.json`: `permissions.allow` (`Read` of every path, `Edit`/`Write` of the write ones, `Bash`), `permissions.deny` (`Bash(<cmd>)` and `Bash(<cmd>:*)` for each denial), `sandbox` (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`, `filesystem.allowWrite`) |
+| opencode | `opencode run --format json --dir <cwd> [--model M] <prompt>` | `OPENCODE_CONFIG_CONTENT`: `permission.external_directory` (each path allow, `*` deny), `permission.bash` (the denials deny) |
+| pi | `pi -p --mode json [--model M] [--tools read,grep,find,ls,bash] -- <prompt>` | none (the read tools only when the rule writes nothing) |
+| antigravity | `agy -p <prompt> --sandbox --add-dir <path>... --print-timeout <s>` | its sandbox; no read/write split |
+
+- **What a dispatched agent may not do before 04's approvals** (denied to each harness that can
+  deny, and said in every footer): `git push`; `ppm install|remove`; `anfs install|remove|implode|src
+  update`; `wsm install|remove`; `anfs report close`; `gh`; `sudo`; `launchctl`; `systemctl`; `anfs
+  bus`; `anfs agents`; writing outside the job, its TMPDIR and `access:`'s write paths. Merge,
+  install, push and close are the person's.
+
+**`anfs agents`** (core/anfsd's `anfs-agents`, the package seam), from the run records, so anfsd
+need not be up; a run is its id or the id's last 8 characters:
+
+| Command | Does |
+| --- | --- |
+| `anfs agents ls [SPEC] [--all]` | `RUN STATUS RULE ROLE SPACE HARNESS JOB AGE`: the runs not ended and the last day's (`--all`: all) |
+| `anfs agents show <run>` | the record, the trigger event, the command line (the prompt cut), the job; `--json` the record and the event |
+| `anfs agents logs <run> [-f]` | `out.log` through `anfsd render <harness>` (claude's stream as text); `--json` as written |
+| `anfs agents stop <run>\|--all [-y]` | the `cancel` marker (who), then SIGTERM to the run's group (the recorded process only: its start time is checked), SIGKILL 30 s later; anfsd says `run.canceled`. A run not started yet is canceled before it starts. Asks first |
+| `anfs agents rules [SPEC]` | `RULE STATUS SPACE ON AS HARNESS`, through `anfsd rules --json` |
+| `anfs agents match [--event FILE\|-] [--type T --subject S --data K=V... --space SPACE] [space.yml...]` | the dry check: what each rule would do with that event (no match and why; submit: the job, cwd, environment, the harness's command line; reject and why; `disabled`: what it would do), through `anfsd match`. Starts and writes nothing |
+
+- Under the toolkit API (`agents` is a group), `ls`, `show`, `rules`, `match` and `logs` without
+  `-f` are reads; `stop` a write.
+- Tests: anfs-io/runtime's Go tests run fake harnesses and a fake `anfs` (`internal/testfake`)
+  against an embedded nats-server; core's bats (`packages/anfsd/tests/agents.bats`, `bus.bats`)
+  read fixture run directories and a stub `anfsd`, with a PATH of stubs and the system's only: no
+  test ever finds or starts a harness.
 
 ## Key Files
 
@@ -2039,9 +2160,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   bus.sh       # the bus's definitions, shared by core/nats's and core/anfsd's hooks and anfs bus: the
                # service specs, NATS's users and server.conf (anfs_bus_nats_*), anfsd's binary
                # (anfs_bus_anfsd_bin: ANFSD_BIN or the release). See "The bus"
-  report.sh    # anfs report (anfs_report_cli: new, diag, check, status, close, wait): the issue with its
-               # diagnostics, filed where ANFS_REPORT_TO says, and followed to its fix. See "Reporting a
-               # bug: anfs report"
+  report.sh    # anfs report (anfs_report_cli: new, diag, check, status, show, close, wait, and the
+               # __sink plumbing): the issue with its diagnostics, filed where ANFS_REPORT_TO says (a
+               # file report's record in STATE, the file a view of the records), and followed to its
+               # fix. See "Reporting a bug: anfs report"
   iso.sh       # install ISOs: the store ($ANFS_ISO_HOME, ~/.cache/anfs/isos), anfs_iso_fetch (resume,
                # mirrors, sha256 or the publisher's checksum file), and the catalogue layered over the
                # sources (isos/isos.yml, ~/.config/anfs/isos.yml first): anfs_iso_ids, anfs_iso_fetch_id.
@@ -2185,8 +2307,10 @@ bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, i
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)
 bats packages/nats/tests     # core/nats's hooks: pins (curl serves fixtures), STATE, server.conf, the service (stubs)
-bats packages/anfsd/tests    # core/anfsd's hooks (the release or ANFSD_BIN) and anfs bus (curl, launchctl,
-                             # systemctl stubbed: status rows, start/stop/restart, logs, nats --)
+bats packages/anfsd/tests    # core/anfsd's hooks (the release or ANFSD_BIN), anfs bus (curl, launchctl,
+                             # systemctl stubbed: status rows, start/stop/restart, logs, nats --) and
+                             # anfs agents (agents.bats: fixture runs, a stub anfsd, a process group the
+                             # test starts for stop; PATH holds no harness)
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
                              # repositories), the state (ls), path/remove/new/add/repo/implode, events,
                              # links: (links.bats), skills: and wsm skill, the ppm callback (skills.bats,

@@ -84,12 +84,12 @@ to_file() { printf 'ANFS_REPORT_TO=~/notes/bugs.md\n' > "$CFG/anfs/anfs.local.en
 @test "anfs report alone is the group's help; options with no sub-command go to new" {
   t report
   [ "$status" -eq 0 ]
-  [[ "$output" == *"report <new|diag|check|status|close|wait>"* ]]
+  [[ "$output" == *"report <new|diag|check|status|show|close|wait>"* ]]
   [[ "$output" == *"Options with no command go to report new."* ]]
   to_file
   t report --title "x breaks" --actual "it broke" -n
   [ "$status" -eq 0 ]
-  [[ "$output" == *"would be r-$DAY-1, appended to ~/notes/bugs.md"* ]]
+  [[ "$output" == *"would be r-$DAY-1, recorded in ~/.local/state/anfs/reports/host and shown in ~/notes/bugs.md"* ]]
 }
 
 @test "new: a title and something to say are required (64)" {
@@ -163,9 +163,9 @@ EOF
   printf '# Bugs\n\nkeep me' > "$HOME/notes/bugs.md"   # no trailing newline
   t report new --package pcm --title "pcm up hangs" --expected "it starts" --actual "it hangs" --steps "pcm up x"
   [ "$status" -eq 0 ]
-  [ "$output" = "r-$DAY-1: appended to ~/notes/bugs.md" ]
+  [ "$output" = "r-$DAY-1: filed in ~/notes/bugs.md" ]
   t report --title "second" --actual "again"
-  [ "$output" = "r-$DAY-2: appended to ~/notes/bugs.md" ]
+  [ "$output" = "r-$DAY-2: filed in ~/notes/bugs.md" ]
   f="$HOME/notes/bugs.md"
   [ "$(head -3 "$f")" = "$(printf '# Bugs\n\nkeep me')" ]
   grep -qx "## r-$DAY-1 pcm up hangs" "$f"
@@ -206,10 +206,10 @@ EOF
   t report new --title "d" --actual "a" -n
   [ "$status" -eq 0 ]
   [[ "$output" == "### What happened"* ]]
-  [[ "$output" == *"would be r-$DAY-1, appended to ~/notes/bugs.md" ]]
+  [[ "$output" == *"would be r-$DAY-1, recorded in ~/.local/state/anfs/reports/host and shown in ~/notes/bugs.md" ]]
   [ ! -e "$HOME/notes/bugs.md" ]
   t report new --title "d" --actual "a" --dry-run
-  [[ "$output" == *"would be r-$DAY-1, appended to ~/notes/bugs.md" ]]
+  [[ "$output" == *"would be r-$DAY-1, recorded in ~/.local/state/anfs/reports/host and shown in ~/notes/bugs.md" ]]
   t ANFS_REPORT_TO=github report new --title "d" --actual "a" -n
   [ "$status" -eq 0 ]
   [[ "$output" == *"would go to: github acme/core (an issue"* ]]
@@ -311,7 +311,7 @@ file_report() {
   file_report
   t report status "r-$DAY-9"
   [ "$status" -eq 2 ]
-  [[ "$stderr" == *"no report r-$DAY-9 in ~/notes/bugs.md"* ]]
+  [[ "$stderr" == *"no report r-$DAY-9 in ~/.local/state/anfs/reports/host"* ]]
   t report status "nonsense"
   [ "$status" -eq 2 ]
   t report close "r-$DAY-9" --commit abcdef1
@@ -351,6 +351,132 @@ file_report() {
   rm "$T/gh-view"
   t report status "acme/core#43"
   [ "$status" -eq 2 ]
+}
+
+# --- the record, and the file as its view ---------------------------------------------------
+
+# The event line report new or close wrote last (ANFS_EVENTS=on), from the space's log
+last_event() { tail -n 1 "$HOME"/.local/state/anfs/events/"$1"/*.jsonl; }
+
+@test "the record: in STATE per space; the file shows it; status and show read the record" {
+  notes_space
+  to_file
+  t report new --title "rec" --actual "it broke"
+  [ "$status" -eq 0 ]
+  rec="$HOME/.local/state/anfs/reports/notesspc22/r-$DAY-1.md"
+  [ "$(head -3 "$rec")" = "$(printf '## r-%s-1 rec\n\nStatus: open' "$DAY")" ]
+  # the file's section is the record, byte for byte
+  [ "$(cat "$HOME/notes/bugs.md")" = "$(cat "$rec")" ]
+  t report show "r-$DAY-1"
+  [ "$status" -eq 0 ]
+  [ "$output" = "$(cat "$rec")" ]
+  t --json report show "r-$DAY-1"
+  [[ "$output" == "{\"id\":\"r-$DAY-1\",\"status\":\"open\",\"record\":\"$rec\",\"file\":\"$HOME/notes/bugs.md\",\"report\":\"## r-$DAY-1 rec"* ]]
+  # the file is a view: its section gone, status still reads the record
+  : > "$HOME/notes/bugs.md"
+  t report status "r-$DAY-1"
+  [ "$status" -eq 1 ]
+  [[ "$output" == "r-$DAY-1: open"* ]]
+  t report show "r-$DAY-9"
+  [ "$status" -eq 2 ]
+  t report show nonsense
+  [ "$status" -eq 2 ]
+  # GitHub: the issue
+  printf 'issue text\n' > "$T/gh-view"
+  t report show "acme/core#42"
+  [ "$status" -eq 0 ]
+  grep -qx 'issue view 42 --repo acme/core --comments' "$T/gh.log"
+}
+
+@test "ids are unique per space: two sink files in one space, and a heading already in the file" {
+  notes_space
+  t ANFS_REPORT_TO=~/notes/bugs.md report new --title one --actual a
+  [ "$output" = "r-$DAY-1: filed in ~/notes/bugs.md" ]
+  t ANFS_REPORT_TO=~/notes/other.md report new --title two --actual a
+  [ "$output" = "r-$DAY-2: filed in ~/notes/other.md" ]
+  # a section written before the records: its id is not taken again
+  mkdir -p "$HOME/old"
+  printf '## r-%s-4 an old one\n\nStatus: open\n' "$DAY" > "$HOME/old/BACKLOG.md"
+  t ANFS_REPORT_TO=~/old/BACKLOG.md report new --title three --actual a
+  [ "$output" = "r-$DAY-5: filed in ~/old/BACKLOG.md" ]
+  [ -f "$HOME/.local/state/anfs/reports/host/r-$DAY-5.md" ]
+  # which stays text only: status says so, close says to edit it by hand
+  t ANFS_REPORT_TO=~/old/BACKLOG.md report status "r-$DAY-4"
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"a report filed before the records is text only"* ]]
+  t ANFS_REPORT_TO=~/old/BACKLOG.md report close "r-$DAY-4" --commit abcdef1
+  [ "$status" -eq 2 ]
+  [[ "$stderr" == *"edit its Status line by hand"* ]]
+}
+
+@test "ten new at once: ten ids, ten records, ten sections" {
+  to_file
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    env -i HOME="$HOME" PATH="$T/bin:$HOME/.local/bin:$SYSPATH" STUB_DIR="$T" TMPDIR="$T" ANFS_LOG=off ANFS_EVENTS=off \
+      anfs report new --title "p$i" --actual a >"$T/out.$i" 2>&1 &
+  done
+  wait
+  [ "$(cat "$T"/out.* | sed -n 's/: filed in.*//p' | sort -u | wc -l | tr -d ' ')" -eq 10 ]
+  [ "$(ls "$HOME/.local/state/anfs/reports/host" | wc -l | tr -d ' ')" -eq 10 ]
+  [ "$(grep -c '^## r-' "$HOME/notes/bugs.md")" -eq 10 ]
+  [ "$(grep '^## r-' "$HOME/notes/bugs.md" | cut -d' ' -f2 | sort -u | wc -l | tr -d ' ')" -eq 10 ]
+}
+
+@test "__sink: renders a report.filed once however often it runs; report.closed rewrites the line" {
+  notes_space
+  to_file
+  # anfsd is up (a live pid) and events are on: new leaves the file to the sink
+  mkdir -p "$HOME/.local/state/anfsd"
+  sleep 300 </dev/null >/dev/null 2>&1 & local pid=$!
+  echo "$pid" > "$HOME/.local/state/anfsd/anfsd.pid"
+  t ANFS_EVENTS=on report new --title "sunk" --actual a
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/notes/bugs.md" ]
+  ev=$(last_event notesspc22)
+  [[ "$ev" == *'"type":"io.anfs.report.filed"'* ]]
+  for i in 1 2 3; do
+    run bash -c 'printf "%s\n" "$1" | env -i HOME="$HOME" PATH="$2" ANFS_LOG=off ANFS_EVENTS=off anfs report __sink' _ "$ev" "$HOME/.local/bin:$SYSPATH"
+    [ "$status" -eq 0 ]
+  done
+  [ "$(grep -c "^## r-$DAY-1 sunk" "$HOME/notes/bugs.md")" -eq 1 ]
+  sha=$(git -C "$SRC/core" rev-parse HEAD)
+  t ANFS_EVENTS=on report close "r-$DAY-1" --commit "$sha"
+  grep -qx 'Status: open' "$HOME/notes/bugs.md"
+  ev=$(last_event notesspc22)
+  for i in 1 2; do
+    run bash -c 'printf "%s\n" "$1" | env -i HOME="$HOME" PATH="$2" ANFS_LOG=off anfs report __sink' _ "$ev" "$HOME/.local/bin:$SYSPATH"
+    [ "$status" -eq 0 ]
+  done
+  [ "$(grep -c '^Status: ' "$HOME/notes/bugs.md")" -eq 1 ]
+  grep -qx "Status: fixed in core $sha ($(date +%Y-%m-%d))" "$HOME/notes/bugs.md"
+  # anfsd gone: new renders itself again
+  kill "$pid"; wait "$pid" 2>/dev/null || true
+  t ANFS_EVENTS=on report new --title "self" --actual a
+  grep -qx "## r-$DAY-2 self" "$HOME/notes/bugs.md"
+  # what is not the sink's: another type, another space's record, GitHub ids, not an event
+  for ev in '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000001","source":"/anfs/host","type":"io.anfs.source.updated","subject":"core","actor":"x","anfsv":1,"data":{}}' \
+            '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000002","source":"/anfs/spaces/zzzzz23456","type":"io.anfs.report.filed","subject":"r-20261023-1","actor":"x","anfsv":1,"data":{"to":"file"}}' \
+            '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000003","source":"/anfs/host","type":"io.anfs.report.filed","subject":"acme/core#1","actor":"x","anfsv":1,"data":{"to":"github"}}'; do
+    run bash -c 'printf "%s\n" "$1" | env -i HOME="$HOME" PATH="$2" ANFS_LOG=off anfs report __sink' _ "$ev" "$HOME/.local/bin:$SYSPATH"
+    [ "$status" -eq 0 ]
+  done
+  run bash -c 'echo nonsense | env -i HOME="$HOME" PATH="$1" ANFS_LOG=off anfs report __sink' _ "$HOME/.local/bin:$SYSPATH"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c '^## r-' "$HOME/notes/bugs.md")" -eq 2 ]
+}
+
+@test "__sink: waits for the lock beside the file, and takes over one a dead process left" {
+  to_file
+  t report new --title "l" --actual a
+  : > "$HOME/notes/bugs.md"
+  mkdir "$HOME/notes/.bugs.md.lock"
+  echo 999999 > "$HOME/notes/.bugs.md.lock/pid"
+  ev='{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000001","source":"/anfs/host","type":"io.anfs.report.filed","subject":"r-'"$DAY"'-1","actor":"x","anfsv":1,"data":{"to":"file"}}'
+  run bash -c 'printf "%s\n" "$1" | env -i HOME="$HOME" PATH="$2" ANFS_LOG=off anfs report __sink' _ "$ev" "$HOME/.local/bin:$SYSPATH"
+  [ "$status" -eq 0 ]
+  grep -qx "## r-$DAY-1 l" "$HOME/notes/bugs.md"
+  [ ! -e "$HOME/notes/.bugs.md.lock" ]
 }
 
 # An event from another process (ANFS_EVENTS on): anfs_emit <args...>

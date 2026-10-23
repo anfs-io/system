@@ -8,11 +8,13 @@
 #   status                         SERVICE STATUS DETAIL: nats (its health on the monitoring
 #                                  port), jetstream (the stream ANFS), anfsd (the service, its
 #                                  pid, its version: release or from source), shipper (what is
-#                                  not shipped yet, per scope); on Linux linger. Exit 1 when one
-#                                  is not ok
+#                                  not shipped yet, per scope), dispatch (the rules loaded, the
+#                                  runs working and queued), a harness row per harness a rule
+#                                  uses (found, its version); on Linux linger. Exit 1 when one is
+#                                  not ok
 #   start|stop|restart [nats|anfsd]  load, unload, or write again and load (both when none named;
 #                                  restart nats renders server.conf from nats.env first)
-#   reload                         SIGHUP to anfsd (its rules, from 02b on)
+#   reload                         SIGHUP to anfsd: it reads the dispatch rules again
 #   logs [nats|anfsd] [-f]         the log file (macOS) or the journal (Linux)
 #   nats -- <args>                 the nats CLI with NATS_URL and the admin user in its
 #                                  environment (never on its command line)
@@ -44,13 +46,14 @@ unset _lib
 CLI_TOOL="anfs bus"
 anfs_bus_paths
 
-cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd and
-the shipper's lag (and linger on Linux); exit 1 when one is not ok"
+cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd, the
+shipper's lag, dispatch (rules, runs) and the harnesses the rules use (and
+linger on Linux); exit 1 when one is not ok"
 cli_cmd start "Start NATS and anfsd, or the one named" --arg "[service]"
 cli_cmd stop "Stop anfsd and NATS, or the one named (they start again at the next login)" --arg "[service]"
 cli_cmd restart "Write the service again and restart it (nats: server.conf from nats.env
 first; anfsd: ANFSD_BIN or the release), both when none is named" --arg "[service]"
-cli_cmd reload "Ask anfsd to read its settings and rules again (SIGHUP)"
+cli_cmd reload "Ask anfsd to read the dispatch rules again (SIGHUP)"
 cli_cmd logs "The services' log: the files (macOS) or the journal (Linux)" \
   --opt "-f --follow: Keep printing" --arg "[service]"
 cli_cmd nats "The nats CLI as the admin user: anfs bus nats -- stream info ANFS" \
@@ -185,6 +188,39 @@ _bus_status_shipper() {
   $lagged || _bus_row shipper ok "nothing to ship"
 }
 
+# dispatch: the rules anfsd would load (anfsd rules --json, its one parser) and the runs, from
+# their records; then one row per harness the rules use: found on PATH, and its version
+_bus_status_dispatch() {
+  local json loaded disabled invalid working=0 queued=0 st f h bin v
+  if ! anfs_bus_anfsd_bin; then _bus_row dispatch fail "no anfsd to read the rules"; return; fi
+  if ! json=$("$REPLY" rules --json 2>/dev/null); then _bus_row dispatch fail "anfsd rules failed (anfs agents rules)"; return; fi
+  read -r loaded disabled invalid < <(yq -p json -r '[([.[] | select(.status == "ok" or .status == "unenforced" or .status == "partial")] | length),
+    ([.[] | select(.status == "disabled")] | length), ([.[] | select(.status == "invalid")] | length)] | join(" ")' <<< "$json")
+  for f in "$ANFSD_STATE_HOME"/runs/*/run.json; do
+    [[ -f "$f" ]] || continue
+    st=$(yq -p json -r '.state' "$f" 2>/dev/null) || continue
+    case "$st" in working) working=$(( working + 1 )) ;; submitted) queued=$(( queued + 1 )) ;; esac
+  done
+  st=ok
+  (( invalid == 0 )) || st=fail
+  _bus_row dispatch "$st" "$loaded rules loaded, $disabled disabled, $invalid invalid$( (( invalid == 0 )) || echo ' (anfs agents rules)'); $working working, $queued queued"
+  while IFS= read -r h; do
+    [[ -n "$h" ]] || continue
+    bin="$h"
+    [[ "$h" != antigravity ]] || bin=agy
+    if ! bin=$(command -v "$bin"); then
+      _bus_row "harness $h" fail "${h/antigravity/agy} is not on PATH (a rule uses it)"
+      continue
+    fi
+    if [[ "$h" == antigravity ]]; then
+      v="version not asked: agy --version hangs"
+    else
+      v=$("$bin" --version </dev/null 2>/dev/null | head -n 1) || v=""
+    fi
+    _bus_row "harness $h" ok "$(anfs_display "$bin")${v:+, $v}"
+  done < <(yq -p json -r '[.[] | select(.status != "invalid") | .harness] | unique | .[]' <<< "$json")
+}
+
 _bus_status_linger() {
   [[ "$(anfs_service_os)" == linux ]] || return 0
   local v
@@ -200,6 +236,7 @@ cmd_status() {
   _bus_status_jetstream
   _bus_status_anfsd
   _bus_status_shipper
+  _bus_status_dispatch
   _bus_status_linger
   printf '%s\n' "${_BUS_ROWS[@]}" | anfs_table "SERVICE STATUS DETAIL" "service status detail"
   ! $_BUS_BAD

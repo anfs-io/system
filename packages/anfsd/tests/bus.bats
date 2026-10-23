@@ -51,7 +51,11 @@ STUB
   printf '#!/bin/sh\necho "journalctl $*"\n' > "$T/bin/journalctl"
   printf '#!/bin/sh\ncat "$STUB/linger" 2>/dev/null || echo no\n' > "$T/bin/loginctl"
   chmod +x "$T/bin/"*
-  export PATH="$T/bin:$PATH"
+  # the stubs, yq and bash, and the system's: never a harness of the person's (claude, pi, agy...)
+  mkdir -p "$T/sys"
+  ln -s "$(command -v yq)" "$T/sys/yq"
+  ln -s "$(command -v bash)" "$T/sys/bash"
+  export PATH="$T/bin:$T/sys:/usr/bin:/bin:/usr/sbin:/sbin"
   NS="$HOME/.local/state/nats"
   AS="$HOME/.local/state/anfsd"
   EV="$HOME/.local/state/anfs/events"
@@ -65,7 +69,7 @@ installed() {
   mkdir -p "$NS/users" "$AS" "$HOME/.local/share/anfsd/v0.1.0" "$HOME/Library/LaunchAgents" "$HOME/.config/systemd/user"
   for u in anfsd admin reader; do printf '%s\n' "pw-$u" > "$NS/users/$u"; done
   echo 47222 > "$NS/port"
-  printf '#!/bin/sh\necho v0.1.0\n' > "$HOME/.local/share/anfsd/v0.1.0/anfsd"
+  fake_anfsd "$HOME/.local/share/anfsd/v0.1.0/anfsd" v0.1.0
   chmod +x "$HOME/.local/share/anfsd/v0.1.0/anfsd"
   ln -s "$HOME/.local/share/anfsd/v0.1.0/anfsd" "$HOME/.local/bin/anfsd"
   if [[ "$os" == macos ]]; then
@@ -73,6 +77,12 @@ installed() {
   else
     touch "$HOME/.config/systemd/user/anfs-nats.service" "$HOME/.config/systemd/user/anfsd.service"
   fi
+}
+
+# A fake anfsd: its version, and `rules --json` from $STUB/rules.json ([] when none)
+fake_anfsd() {
+  printf '#!/bin/sh\ncase "$1" in rules) cat "$STUB/rules.json" 2>/dev/null || echo "[]" ;; *) echo %s ;; esac\n' "$2" > "$1"
+  chmod +x "$1"
 }
 
 # NATS answering, with the stream ANFS (and other streams given as name:subjects)
@@ -112,8 +122,36 @@ spool() {
   [ "${lines[1]}" = "jetstream	ok	stream ANFS: 42 messages, 5.0 KiB, first 2026-10-01T10:00:00Z, last 2026-10-23T17:00:00Z" ]
   [ "${lines[2]}" = "anfsd	ok	pid $p, v0.1.0 (release)" ]
   [ "${lines[3]}" = "shipper	ok	nothing to ship" ]
-  [ "${#lines[@]}" -eq 4 ]
+  [ "${lines[4]}" = "dispatch	ok	0 rules loaded, 0 disabled, 0 invalid; 0 working, 0 queued" ]
+  [ "${#lines[@]}" -eq 5 ]
   grep -q '^http://127.0.0.1:47223/jsz?streams=true&config=true$' "$STUB/curl.log"
+}
+
+@test "status: dispatch (the rules, the runs) and a row per harness the rules use" {
+  installed
+  nats_up
+  cat > "$STUB/rules.json" <<'JSON'
+[{"rule":"a","status":"ok","space":"anfs-dev","harness":"claude"},
+ {"rule":"b","status":"disabled","space":"anfs-dev","harness":"pi"},
+ {"rule":"c","status":"partial","space":"anfs-dev","harness":"antigravity"},
+ {"rule":"d","status":"invalid","space":"anfs-dev","harness":"opencode","reason":"x"}]
+JSON
+  local n=0
+  for s in working submitted submitted completed; do
+    n=$(( n + 1 ))
+    mkdir -p "$AS/runs/r-$n"
+    printf '{"state":"%s"}\n' "$s" > "$AS/runs/r-$n/run.json"
+  done
+  printf '#!/bin/sh\necho "2.1.296 (Claude Code)"\n' > "$T/bin/claude"
+  printf '#!/bin/sh\nsleep 600\n' > "$T/bin/agy"
+  chmod +x "$T/bin/claude" "$T/bin/agy"
+  ANFS_SERVICE_OS=macos bus status
+  [ "$status" -eq 1 ]
+  [ "${lines[4]}" = "dispatch	fail	2 rules loaded, 1 disabled, 1 invalid (anfs agents rules); 1 working, 2 queued" ]
+  [ "${lines[5]}" = "harness claude	ok	$T/bin/claude, 2.1.296 (Claude Code)" ]
+  [ "${lines[6]}" = "harness pi	fail	pi is not on PATH (a rule uses it)" ]
+  [ "${lines[7]}" = "harness antigravity	ok	$T/bin/agy, version not asked: agy --version hangs" ]
+  [ "${#lines[@]}" -eq 8 ]
 }
 
 @test "status: NATS down and anfsd stopped: each says so, exit 1; nothing installed says how" {
@@ -165,17 +203,17 @@ spool() {
   mkdir -p "$STUB/systemd"
   printf 'ActiveState=active\nMainPID=222\n' > "$STUB/systemd/anfsd.service"
   printf 'ActiveState=active\nMainPID=111\n' > "$STUB/systemd/anfs-nats.service"
-  printf '#!/bin/sh\necho dev\n' > "$T/dev-anfsd" && chmod +x "$T/dev-anfsd"
+  fake_anfsd "$T/dev-anfsd" dev
   printf 'ANFSD_BIN=%s\n' "$T/dev-anfsd" > "$HOME/.config/anfsd/anfsd.local.env"
   echo '{}' > "$AS/cursors.json"
   ANFS_SERVICE_OS=linux bus status
   [ "$status" -eq 1 ]
   [ "${lines[2]}" = "anfsd	ok	222, dev (from source: $T/dev-anfsd)" ]
-  [ "${lines[4]}" = "linger	off	loginctl enable-linger $USER: without it the bus stops when you log out" ]
+  [ "${lines[5]}" = "linger	off	loginctl enable-linger $USER: without it the bus stops when you log out" ]
   echo yes > "$STUB/linger"
   ANFS_SERVICE_OS=linux bus status
   [ "$status" -eq 0 ] || { echo "$output"; false; }
-  [ "${lines[4]}" = "linger	ok	the bus runs without a login" ]
+  [ "${lines[5]}" = "linger	ok	the bus runs without a login" ]
 }
 
 @test "start, stop, restart on macOS: launchctl, NATS first up and last down" {
@@ -208,7 +246,7 @@ launchctl bootout gui/$(id -u)/io.anfs.nats" ]
   grep -qx 'listen: 127.0.0.1:47555' "$NS/server.conf"
   [ "$(cat "$NS/port")" = 47555 ]
   grep -q '<string>-c</string>' "$HOME/Library/LaunchAgents/io.anfs.nats.plist"
-  printf '#!/bin/sh\necho dev\n' > "$T/dev-anfsd" && chmod +x "$T/dev-anfsd"
+  fake_anfsd "$T/dev-anfsd" dev
   printf 'ANFSD_BIN=%s\n' "$T/dev-anfsd" > "$HOME/.config/anfsd/anfsd.local.env"
   ANFS_SERVICE_OS=macos bus restart anfsd
   [ "$status" -eq 0 ]

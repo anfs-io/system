@@ -206,6 +206,12 @@ to subscribe to: NATS on `127.0.0.1:47222` and anfsd, which ships the files, eac
 yours. `anfs bus status` says how each part is; `anfs bus start|stop|restart|logs`; `anfs bus nats
 -- stream info ANFS` runs the nats CLI as the admin user.
 
+anfsd also runs **dispatch rules**: a space's `space.yml` names its roles (`agents:`), what they
+may reach beyond their job (`access:`) and which event starts which (`dispatch:`), and anfsd starts
+that agent CLI (claude, opencode, pi, antigravity) in an `anfs work` job, supervised, with nobody
+watching; its life is `run.*` events. `anfs agents ls|show|logs|stop|rules|match`. A file report's
+`BACKLOG.md` is a view anfsd writes from the reports' records.
+
 ## Removing It All
 
 ```bash

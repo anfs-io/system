@@ -39,7 +39,13 @@ origins, this skill's install). Exit 1 means a row failed; its DETAIL says what 
    printed (the repo, any possible duplicates) and rerun with `-y` only when they say so. If a
    duplicate is the same bug, say so and do not file.
 4. **Keep the id it prints** (`r-20261022-1`, or `owner/repo#42`) and name it in later messages,
-   plans and commits about this bug.
+   plans and commits about this bug. `anfs report show <id>` prints the report (a file report's
+   record; a GitHub issue), so whoever fixes it reads it there, not in the file.
+
+A file report's record is its own file in the toolkit's state, one per report; the file
+`ANFS_REPORT_TO` names (a `BACKLOG.md`) shows them and is written by the toolkit: never edit a
+report's section there yourself. A report filed into a space with dispatch rules may start an
+agent on it (`anfs agents ls`).
 
 ## Waiting for the fix
 
@@ -62,5 +68,6 @@ brings it), or `available`; exit 0 only for `available`, 2 for an unknown id.
 ## Closing
 
 Whoever merges the fix runs `anfs report close <id> --commit <sha> [--source core|stack]`. It
-records the commit on the report (a file's `Status:` line; a GitHub comment, then the issue
-closed), which is what `status` and `wait` read.
+records the commit on the report (the record's `Status:` line, then the file's; a GitHub comment,
+then the issue closed), which is what `status` and `wait` read. A dispatched agent never closes:
+it ends with a summary, and the person (or the session acting for them) merges and closes.

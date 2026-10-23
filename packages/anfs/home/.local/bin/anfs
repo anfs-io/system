@@ -22,7 +22,7 @@
 #   onboard [--check] [step...]        from a fresh install to yours: what your sources offer,
 #                                      your own repo, and the steps installed packages bring
 #                                      (lib/anfs/onboard.sh; the contract is lib/ppm/onboard.sh)
-#   report [new|diag|check|status|close|wait]
+#   report [new|diag|check|status|show|close|wait]
 #                                      a bug in an anfs tool as an issue, with its diagnostics,
 #                                      filed where ANFS_REPORT_TO says (lib/anfs/report.sh)
 #   events ls [spec...] [--all] [-f [--once]] [--type G] [--subject S] [--since D] [--by A] [--after ID]
@@ -687,13 +687,14 @@ _tilde() { anfs_display "$1"; }
 # run[0] is anfs or one of ANFS_TOOLS, from $ANFS_BIN_DIR, never PATH; the rest is an argv,
 # never a shell. Refused: anfs rpc, any implode. Read (allowed under --grant read): a tool's
 # list|ls, show, status, path, validate, --version, version (in a group too: pmm image list;
-# through anfs: anfs package list), and logs without -f (anfs bus logs). A read gets --json and
+# through anfs: anfs package list), rules and match (anfs agents: they start nothing), and logs
+# without -f (anfs bus logs). A read gets --json and
 # ANFS_LOG=off; every run has stdin
 # /dev/null, ANFS_RPC=1 (no terminal: confirm and sudo exit 77) and ANFS_RPC_TIMEOUT seconds
 # (60; a stream has none).
 
 RPC_GROUPS=" agents bus file image iso link machine network repo skill snapshot src "
-RPC_READ=" list ls show status path validate --version version "
+RPC_READ=" list ls show status path validate --version version rules match "
 
 # A JSON string, into REPLY
 _rpc_str() {

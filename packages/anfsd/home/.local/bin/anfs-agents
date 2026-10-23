@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+# anfs agents — the runs anfsd's dispatch started, and the rules that start them (core/anfsd)
+#
+# Run as `anfs agents ...`: anfs runs anfs-<name> from ~/.local/bin for a command it does not
+# declare itself (the package seam). Everything is read from anfsd's run records
+# (~/.local/state/anfsd/runs/<run id>/: run.json, event.json, prompt.md, out.log), so it works with
+# anfsd down; the rules come from `anfsd rules --json` (one parser: anfsd's).
+#
+#   ls [SPEC] [--all]          RUN STATUS RULE ROLE SPACE HARNESS JOB AGE: the runs not ended, and
+#                              those that ended in the last day (--all: every one)
+#   show <run>                 the record, the trigger event, the command line (the prompt cut),
+#                              the job
+#   logs <run> [-f]            out.log as text (claude's stream rendered; --json as it is)
+#   stop <run>|--all [-y]      the cancel marker, then SIGTERM to the run's process group,
+#                              SIGKILL 30 s later; anfsd says run.canceled. Asks first
+#   rules [SPEC]               RULE STATUS SPACE ON AS HARNESS (ok, invalid, disabled,
+#                              unenforced, partial; the reason in --json)
+#   match [event options]      what the rules would do with an event, starting nothing (a dry
+#                              check): anfsd match, e.g. --type report.filed --space anfs-dev
+#                              --subject r-1 --data to=file --data package=core/pcm
+#
+# A run is named by its id or the id's last 8 characters (ANFS_ACTOR's part).
+set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
+
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "anfs agents: ~/.local/lib/anfs is missing or out of date; install core/anfs again" >&2
+  exit 69
+fi
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/paths.sh"
+if [[ ! -f "$ANFS_LIB_DIR/bus.sh" ]]; then
+  echo "anfs agents: $ANFS_LIB_DIR has no bus.sh; install core/anfs again" >&2
+  exit 69
+fi
+for _lib in log cli table service bus; do
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB_DIR/$_lib.sh"
+done
+unset _lib
+
+CLI_TOOL="anfs agents"
+anfs_bus_paths
+RUNS="$ANFSD_STATE_HOME/runs"
+# How long stop waits after SIGTERM before SIGKILL (a test hook; anfsd's is the same 30 s)
+: "${ANFS_AGENTS_GRACE:=30}"
+
+cli_cmd list "The runs: RUN STATUS RULE ROLE SPACE HARNESS JOB AGE. Without --all, the
+runs not ended and those that ended in the last day" --alias ls \
+  --opt "-a --all: Every run" --arg "[spec]"
+cli_cmd show "A run: its record, the event that started it, its command line, its job" --arg "run"
+cli_cmd logs "A run's output as text (claude's stream rendered; --json: as written)" \
+  --opt "-f --follow: Keep printing" --arg "run"
+cli_cmd stop "Stop a run: the cancel marker, SIGTERM to its process group, SIGKILL 30 s
+later; anfsd says run.canceled. A run that has not started is canceled before it starts" \
+  --opt "-a --all: Every run not ended" --opt "-y --yes: Do not ask" --arg "[run]"
+cli_cmd rules "The dispatch rules of the installed spaces: RULE STATUS SPACE ON AS HARNESS
+(ok, invalid, disabled, unenforced, partial; the reason in --json)" --arg "[spec]"
+cli_cmd match "What each rule would do with an event, starting and writing nothing: an event
+line (--event FILE, - for stdin) or one built from --type, --subject, --data K=V
+(again for more) and --space; the space.yml files to read instead of the installed
+spaces' may follow" \
+  --passthrough --arg "[args...]"
+cli_standard
+
+complete_run() {
+  local d
+  for d in "$RUNS"/*/; do
+    [[ -d "$d" ]] || continue
+    d="${d%/}" d="${d##*/}"
+    printf '%s\n' "${d: -8}"
+  done
+}
+complete_spec() { :; }
+
+# The anfsd binary (anfs bus's: ANFSD_BIN or the release), into REPLY; 69 when there is none
+_ag_anfsd() {
+  anfs_bus_anfsd_bin && return 0
+  anfs_fail 69 "no anfsd${ANFSD_BIN:+ at ANFSD_BIN=$ANFSD_BIN} (ppm install core/anfsd)"
+}
+
+# A run's directory from its id or its last 8 characters, into REPLY; 1 (said) when none or several
+_ag_run() {
+  local q="$1" d
+  local -a found=()
+  [[ "$q" =~ ^[0-9a-f-]{8,36}$ ]] || anfs_fail 64 "'$q' is not a run id (its last 8 characters do)"
+  for d in "$RUNS"/*"$q"; do [[ -f "$d/run.json" ]] && found+=("$d"); done
+  case "${#found[@]}" in
+    1) REPLY="${found[0]}" ;;
+    0) anfs_die "no run $q (anfs agents ls --all)" ;;
+    *) anfs_fail 2 "$q names ${#found[@]} runs: give more of the id" ;;
+  esac
+}
+
+# Every record as tab-separated fields, oldest first (ids sort by time): id state reason rule role
+# space harness job submitted ended; an empty one is - (read splits on tabs and would merge two)
+_ag_records() {
+  local -a files=("$RUNS"/*/run.json)
+  [[ -f "${files[0]}" ]] || return 0
+  yq -p json -o tsv '[.id, .state, (.reason // "" | sub("^$"; "-")), .rule, .role, .space, .harness,
+    (.job // "" | sub("^$"; "-")), .submitted, (.ended // "" | sub("^$"; "-"))]' "${files[@]}" | LC_ALL=C sort
+}
+
+_ag_v() { [[ "$1" == - ]] && REPLY="" || REPLY="$1"; }
+
+# An ISO time (UTC) to epoch seconds, into REPLY
+_ag_epoch() {
+  local t="${1%%.*}"
+  t="${t%Z}"
+  if [[ "$(uname)" == Darwin ]]; then REPLY=$(TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%S' "$t" +%s 2>/dev/null) || REPLY=0
+  else REPLY=$(date -u -d "$t" +%s 2>/dev/null) || REPLY=0
+  fi
+}
+
+_ag_age() {
+  local s="$1"
+  if (( s < 60 )); then REPLY="${s}s"
+  elif (( s < 3600 )); then REPLY="$(( s / 60 ))m"
+  elif (( s < 86400 )); then REPLY="$(( s / 3600 ))h"
+  else REPLY="$(( s / 86400 ))d"
+  fi
+}
+
+_ag_ended() { case "$1" in completed|failed|canceled|rejected) return 0 ;; esac; return 1; }
+
+# A space spec: an exact path, or a prefix ending in /
+_ag_spec_ok() {
+  local spec="$1" space="$2"
+  [[ -z "$spec" || "$space" == "$spec" ]] && return 0
+  [[ "$spec" == */ && ( "$space/" == "$spec" || "$space" == "$spec"* ) ]]
+}
+
+cmd_list() {
+  local spec="${1:-}" all="${CLI_OPT[all]:-false}" id state reason rule role space h job sub ended now st
+  now=$EPOCHSECONDS
+  {
+    while IFS=$'\t' read -r id state reason rule role space h job sub ended; do
+      [[ -n "$id" ]] || continue
+      _ag_v "$reason"; reason="$REPLY"
+      _ag_v "$job"; job="$REPLY"
+      _ag_v "$ended"; ended="$REPLY"
+      _ag_spec_ok "$spec" "$space" || continue
+      if ! $all && _ag_ended "$state"; then
+        _ag_epoch "${ended:-$sub}"
+        (( now - REPLY < 86400 )) || continue
+      fi
+      _ag_epoch "$sub"; _ag_age $(( now - REPLY ))
+      st="$state${reason:+ ($reason)}"
+      anfs_row "${id: -8}" "$st" "$rule" "$role" "$space" "$h" "$job" "$REPLY" "$id" "$state" "$reason"
+    done < <(_ag_records)
+  } | anfs_table "RUN STATUS RULE ROLE SPACE HARNESS JOB AGE" "run status rule role space harness job age id state reason"
+}
+
+cmd_show() {
+  local d rec id state reason detail rule space sid addr h model etype subj actor ev job repos cwd sub st en ex pid pgid att ret
+  _ag_run "$1"; d="$REPLY"
+  if anfs_json_on; then
+    printf '{"run":%s,"event":%s}\n' "$(< "$d/run.json")" "$(cat "$d/event.json" 2>/dev/null || echo null)"
+    return 0
+  fi
+  rec="$d/run.json"
+  IFS=$'\t' read -r id state reason detail rule space sid addr h model etype subj actor ev job repos cwd sub st en ex pid pgid att ret < <(
+    yq -p json -o tsv '[.id, .state, .reason, .detail, .rule, .space, .space_id, .address, .harness, .model,
+      .event_type, .subject, .actor, .event, .job, ((.repos // []) | join(" ")), .cwd, .submitted, .started, .ended,
+      .exit, .pid, .pgid, .attempt, .retries] | map(. // "" | tostring | sub("^$"; "-"))' "$rec")
+  printf 'run:       %s\n' "$id"
+  printf 'status:    %s%s%s\n' "$state" "$([[ "$reason" == - ]] || printf ' (%s)' "$reason")" "$([[ "$detail" == - ]] || printf ': %s' "$detail")"
+  printf 'rule:      %s in %s (%s)\n' "$rule" "$space" "$sid"
+  printf 'as:        %s (%s%s)\n' "$addr" "$h" "$([[ "$model" == - ]] || printf ', %s' "$model")"
+  printf 'event:     %s %s by %s (%s)\n' "$etype" "$subj" "$actor" "$ev"
+  if [[ "$job" == - ]]; then printf "job:       none (the space's directory, read-only)\n"
+  else printf 'job:       %s [%s]\n' "$job" "$repos"
+  fi
+  printf 'cwd:       %s\n' "$cwd"
+  printf 'submitted: %s\nstarted:   %s\nended:     %s%s\n' "$sub" "$st" "$en" "$([[ "$ex" == - ]] || printf ' (exit %s)' "$ex")"
+  printf 'pid:       %s, group %s\nattempt:   %s of %s\n' "$pid" "$pgid" "$att" "$(( ret + 1 ))"
+  if [[ -n "$(yq -p json -r '.summary // ""' "$rec")" ]]; then
+    printf '\nsummary:\n%s\n' "$(yq -p json -r '.summary' "$rec")"
+  fi
+  printf '\ncommand:\n'
+  yq -p json -r '(.argv // [])[] | sub("\n"; " ")' "$rec" |
+    awk '{ if (length($0) > 120) print "  " substr($0, 1, 117) "..."; else print "  " $0 }'
+  printf '\nevent:\n  %s\n' "$(cat "$d/event.json" 2>/dev/null || echo -)"
+  printf '\nfiles: %s\n' "$(anfs_display "$d")"
+}
+
+cmd_logs() {
+  local d h follow="${CLI_OPT[follow]:-false}"
+  _ag_run "$1"; d="$REPLY"
+  [[ -f "$d/out.log" ]] || { anfs_info "no output yet ($(yq -p json -r '.state' "$d/run.json"))"; return 0; }
+  h=$(yq -p json -r '.harness' "$d/run.json")
+  if anfs_json_on || ! anfs_bus_anfsd_bin; then
+    if $follow; then exec tail -n +1 -F "$d/out.log"; fi
+    exec cat -- "$d/out.log"
+  fi
+  if $follow; then tail -n +1 -F "$d/out.log" | "$REPLY" render "$h"; return 0; fi
+  "$REPLY" render "$h" < "$d/out.log"
+}
+
+# A run's group is still there (some process in it)
+_ag_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
+
+# Stop one run (its directory): the marker, SIGTERM to the group, SIGKILL after the grace
+_ag_stop_one() {
+  local d="$1" by state pid pgid pss now i
+  by="${ANFS_ACTOR:-shell:${USER:-$(id -un)}}"
+  IFS=$'\t' read -r state pid pgid pss < <(yq -p json -o tsv -r '[.state, (.pid // 0), (.pgid // 0), (.ps_start // "")]' "$d/run.json")
+  if _ag_ended "$state"; then
+    _ag_say "${d##*/}" "already $state"
+    return 0
+  fi
+  printf '%s\n' "$by" > "$d/cancel"
+  if [[ "$state" != working ]] || (( pgid <= 0 )); then
+    _ag_say "${d##*/}" "canceled before it starts"
+    return 0
+  fi
+  # the recorded process, not one that took its pid since
+  now=$(ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//') || now=""
+  if [[ -n "$pss" && -n "$now" && "$now" != "$pss" ]]; then
+    _ag_say "${d##*/}" "its process is gone (pid $pid is another one now)"
+    return 0
+  fi
+  _ag_group_alive "$pgid" || { _ag_say "${d##*/}" "its process is gone"; return 0; }
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  for (( i = 0; i < ANFS_AGENTS_GRACE * 5; i++ )); do
+    _ag_group_alive "$pgid" || { _ag_say "${d##*/}" stopped; return 0; }
+    sleep 0.2
+  done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+  _ag_say "${d##*/}" "killed (SIGKILL after ${ANFS_AGENTS_GRACE}s)"
+}
+
+_ag_say() {
+  if anfs_json_on; then anfs_result run "$1" status "$2"; else anfs_info "${1: -8}: $2"; fi
+}
+
+cmd_stop() {
+  local q="${1:-}" all="${CLI_OPT[all]:-false}" id state rest d
+  local -a dirs=()
+  if $all; then
+    [[ -z "$q" ]] || cli_usage_err "a run or --all, not both"
+    while IFS=$'\t' read -r id state rest; do
+      [[ -n "$id" ]] && ! _ag_ended "$state" && dirs+=("$RUNS/$id")
+    done < <(_ag_records)
+    (( ${#dirs[@]} )) || { anfs_info "no run to stop"; return 0; }
+    anfs_confirm "stop ends ${#dirs[@]} runs (their jobs stay)" "Stop ${#dirs[@]} runs?"
+  else
+    [[ -n "$q" ]] || cli_usage_err "which run (anfs agents ls), or --all"
+    _ag_run "$q"; dirs=("$REPLY")
+    anfs_confirm "stop ends run ${q: -8} (its job stays)" "Stop it?"
+  fi
+  for d in "${dirs[@]}"; do _ag_stop_one "$d"; done
+}
+
+cmd_rules() {
+  local spec="${1:-}" json rule st space on as h reason job sid
+  _ag_anfsd
+  json=$("$REPLY" rules --json) || anfs_die "anfsd rules failed"
+  while IFS=$'\t' read -r rule st space on as h reason job sid; do
+    [[ -n "$rule" ]] || continue
+    _ag_spec_ok "$spec" "$space" || continue
+    _ag_v "$on"; on="$REPLY"; _ag_v "$as"; as="$REPLY"; _ag_v "$h"; h="$REPLY"; _ag_v "$reason"; reason="$REPLY"; _ag_v "$job"; job="$REPLY"; _ag_v "$sid"; sid="$REPLY"
+    anfs_row "$rule" "$st" "$space" "$on" "$as" "$h" "$reason" "$job" "$sid"
+  done < <(yq -p json -o tsv '.[] | [.rule, .status, .space, (.on | sub("^$"; "-")), (.as | sub("^$"; "-")), (.harness | sub("^$"; "-")),
+      (.reason | sub("^$"; "-")), (.job | sub("^$"; "-")), (.space_id | sub("^$"; "-"))]' <<< "$json") |
+    anfs_table "RULE STATUS SPACE ON AS HARNESS" "rule status space on as harness reason job space_id"
+}
+
+cmd_match() {
+  local -a args=()
+  _ag_anfsd
+  [[ "${1:-}" != -- ]] || shift
+  ! anfs_json_on || args+=(--json)
+  exec "$REPLY" match ${args[@]+"${args[@]}"} "$@"
+}
+
+cli_dispatch "$@"

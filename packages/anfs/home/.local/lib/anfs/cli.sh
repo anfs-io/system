@@ -63,7 +63,8 @@
 #   __complete <words...>    what tab completion asks; see cmd_completion
 #
 # A cmd_ function nothing declared still runs: that is how a tool keeps plumbing (`psm path`,
-# `pcm __compose`) out of its help. Only cmd_ functions run, so a tool's internals are never
+# `pcm __compose`) out of its help; in a group, a sub-command named __<name> (`anfs report
+# __sink`: cmd_report___sink). Only cmd_ functions run, so a tool's internals are never
 # reachable from its command line by accident.
 #
 # Summaries may span lines; help indents the rest under the first. A tool may define
@@ -466,7 +467,8 @@ _cli_find() {
     fi
     [[ -n "$w2" && "$w2" != -* ]] || return 2
     w2="${CLI_ALIAS_TO[$w1 $w2]:-$w1 $w2}"
-    [[ -n "${CLI_KIND[$w2]:-}" ]] || return 2
+    # a group's plumbing: a cmd_ function nothing declared (anfs report __sink)
+    [[ -n "${CLI_KIND[$w2]:-}" ]] || { [[ "${w2#* }" == __* ]] && cli_has "$w2"; } || return 2
     _CLI_NAME="$w2" _CLI_SHIFT=2
     return 0
   fi

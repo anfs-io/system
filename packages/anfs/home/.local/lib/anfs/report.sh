@@ -6,17 +6,28 @@
 #   anfs report diag                                    the diagnostics block only
 #   anfs report check                                   can this machine file one: CHECK STATUS DETAIL
 #   anfs report status <id>                             open, fixed or available (exit 0, 1, 1; 2 unknown)
+#   anfs report show <id>                               the report (the record; GitHub: the issue)
 #   anfs report close <id> --commit SHA [--source S]    the fix: recorded on the report, closed
 #   anfs report wait <id> [--timeout S]                 until available (0) or the timeout (1), on events
+#   anfs report __sink                                  plumbing: render one report.* event (stdin)
 #
 # WHERE IT GOES is ANFS_REPORT_TO (anfs.env; a machine's in anfs.local.env), never the caller's
 # choice: `github` (the default) or a file (a leading ~/ is $HOME; it must then be absolute).
 #   github  the owner source's origin names the repo (core unless --package names another source);
 #           duplicates are searched (gh issue list) and shown, then gh issue create after a yes
 #           (-y). The id is <owner>/<repo>#<number>. A non-GitHub origin is an error that says to
-#           set ANFS_REPORT_TO to a file.
-#   a file  appended, never rewritten: `## r-<YYYYMMDD>-<n> <title>`, `Status: open`, the body.
-#           <n> counts that day's reports in the file. `close` rewrites that one Status line only.
+#           set ANFS_REPORT_TO to a file. The issue is the record.
+#   a file  THE RECORD is $ANFS_STATE_HOME/reports/<space id>/<id>.md (the space around the file,
+#           `host` when none): `## <id> <title>`, `Status: open`, the body, made exclusively
+#           (set -C) as the next free r-<YYYYMMDD>-<n> of that space (its records and the file's
+#           headings both counted), so two sinks or two writers in one space never share an id.
+#           THE FILE is a view of the records: anfsd's consumer anfsd-sink-report runs
+#           `anfs report __sink` with each report.* event, which appends a record whose
+#           `## <id> ` heading is not there yet (report.filed) or rewrites that section's Status
+#           line from the record (report.closed), under a mkdir lock beside the file. When anfsd is
+#           not running (no live pid in anfsd.pid) or events are off, `new` and `close` render
+#           themselves; the render is idempotent, so a daemon that comes up later changes nothing.
+#           Sections written before the records (no record) are text only: closed by hand.
 #
 # EVENTS (lib/anfs/events.sh): `new` emits report.filed (data: package, title, to, and repo for
 # GitHub) and `close` report.closed (data: commit, source), into the file's space, or the host
@@ -26,8 +37,9 @@
 # git merge-base per event, none per tick. The bare form of waiting for the close:
 #   wsm events ls -f --once --type report.closed --subject <id>
 #
-# THE FIX. `close` records the commit: a file's Status line becomes `Status: fixed in <source>
-# <sha> (<date>)`; on GitHub a comment `Fixed in <source> <sha>` and gh issue close. `status` is
+# THE FIX. `close` records the commit: the record's Status line becomes `Status: fixed in
+# <source> <sha> (<date>)` (then the file's, by the render); on GitHub a comment
+# `Fixed in <source> <sha>` and gh issue close. `status` reads the record, and is
 #   open       not closed
 #   fixed      closed, and the commit is not (yet) in this host's checkout of the source
 #   available  the commit is an ancestor of HEAD in the source's live checkout
@@ -37,8 +49,9 @@
 # as onboard.sh does; running ppm would fail when ppm is what is broken.
 #
 # Functions only, the bash floor. Needs paths.sh, log.sh, cli.sh, table.sh, sources.sh and
-# config.sh (check's FROM), which anfs sources; platform.sh (diag) and skill.sh (check's skill row)
-# are sourced here when a command needs them, so a tab press does not pay for them.
+# config.sh (check's FROM), which anfs sources; platform.sh (diag), skill.sh (check's skill row)
+# and events.sh (the space around the file, wait) are sourced here when a command needs them, so a
+# tab press does not pay for them.
 
 ANFS_REPORT_SKILL=anfs-bug-report
 
@@ -67,6 +80,7 @@ file it, and print its id. No sub-command: these options go here" \
 when one fails"
   cli_cmd "report status" "open, fixed (not yet in this host's checkout) or available; exit 0
 when available, 1 otherwise, 2 for an unknown id" --arg "id"
+  cli_cmd "report show" "Print a report: its record (a file's), or the GitHub issue" --arg "id"
   cli_cmd "report close" "Record the commit that fixes a report and close it" \
     --opt "--commit SHA: The fix" \
     --opt "--source SOURCE: The source the commit is in (default: the report's repo's, or core)" \
@@ -258,17 +272,57 @@ _anfs_report_body() {
   anfs_report_diag
 }
 
-# The next file id for today into REPLY: r-<YYYYMMDD>-<n>, n one past the highest of the day
-_anfs_report_next_id() {
-  local day n=0 line
-  printf -v day '%(%Y%m%d)T' -1
-  if [[ -f "$1" ]]; then
+# The highest <n> of today's r-<day>-<n> headings in a file, into REPLY (0: none)
+_anfs_report_file_max() {
+  local day="$1" line n=0
+  if [[ -f "$2" ]]; then
     while IFS= read -r line; do
       [[ "$line" =~ ^##\ r-$day-([0-9]+)( |$) ]] || continue
       (( 10#${BASH_REMATCH[1]} <= n )) || n=$(( 10#${BASH_REMATCH[1]} ))
-    done < "$1"
+    done < "$2"
   fi
-  REPLY="r-$day-$(( n + 1 ))"
+  REPLY="$n"
+}
+
+# The records of the reports filed into <dir>'s space: REPLY the directory
+# ($ANFS_STATE_HOME/reports/<space id>, or reports/host when no space with an id is around it),
+# _R_SCOPE the space id or host
+_anfs_report_records() {
+  _anfs_report_need anfs_events_space_at events.sh
+  _R_SCOPE=host
+  if anfs_events_space_at "$1" && [[ -n "$ANFS_EV_SID" ]]; then _R_SCOPE="$ANFS_EV_SID"; fi
+  REPLY="$ANFS_STATE_HOME/reports/$_R_SCOPE"
+}
+
+# The next id for today in <record dir> (and above the headings of <file>), into REPLY; not made
+_anfs_report_next_id() {
+  local rdir="$1" file="$2" day f n max=0
+  printf -v day '%(%Y%m%d)T' -1
+  for f in "$rdir"/r-"$day"-*.md; do
+    [[ -e "$f" ]] || continue
+    n="${f##*-}" n="${n%.md}"
+    [[ "$n" =~ ^[0-9]+$ ]] && (( 10#$n > max )) && max=$(( 10#$n ))
+  done
+  _anfs_report_file_max "$day" "$file"
+  (( REPLY <= max )) || max="$REPLY"
+  REPLY="r-$day-$(( max + 1 ))"
+}
+
+# Make the record: the next free id, created exclusively (set -C), so two writers at once never
+# share one; <title> and <body> as the section. The id into REPLY, the file into _R_RECORD
+_anfs_report_new_record() {
+  local rdir="$1" file="$2" title="$3" body="$4" id i
+  mkdir -p -- "$rdir" || return 1
+  for (( i = 0; i < 1000; i++ )); do
+    _anfs_report_next_id "$rdir" "$file"; id="$REPLY"
+    if ( set -C; printf '## %s %s\n\nStatus: open\n\n%s\n' "$id" "$title" "$body" > "$rdir/$id.md" ) 2>/dev/null; then
+      REPLY="$id" _R_RECORD="$rdir/$id.md"
+      return 0
+    fi
+    # taken by another writer since: the next one (the files are the counter)
+    [[ -e "$rdir/$id.md" ]] || return 1
+  done
+  return 1
 }
 
 # A JSON string, or null for an empty one
@@ -300,7 +354,7 @@ _anfs_report_json() {
 
 cmd_report_new() {
   local title="${CLI_OPT[title]:-}" bodyfile="${CLI_OPT[body-file]:-}" dry="${CLI_OPT[dry-run]:-false}"
-  local text="" report id repo dups="" tmp url
+  local text="" report id repo dups="" tmp url rdir
   [[ -n "$title" ]] || cli_usage_err "--title is required"
   [[ "$title" != *$'\n'* ]] || cli_usage_err "--title is one line"
   [[ -n "${CLI_OPT[expected]:-}${CLI_OPT[actual]:-}${CLI_OPT[steps]:-}$bodyfile" ]] ||
@@ -317,24 +371,21 @@ cmd_report_new() {
   report=$(_anfs_report_body "$text")
 
   if [[ "$_R_TO" == file ]]; then
-    _anfs_report_next_id "$_R_FILE"; id="$REPLY"
+    _anfs_report_records "${_R_FILE%/*}"; rdir="$REPLY"
     if $dry; then
+      _anfs_report_next_id "$rdir" "$_R_FILE"; id="$REPLY"
       if anfs_json_on; then _anfs_report_json "$id" "" "$_R_FILE" "" false "" "$report" "$title"; return 0; fi
       printf '%s\n\n' "$report"
-      anfs_info "would be $id, appended to $(anfs_display "$_R_FILE")"
+      anfs_info "would be $id, recorded in $(anfs_display "$rdir") and shown in $(anfs_display "$_R_FILE")"
       return 0
     fi
     mkdir -p "${_R_FILE%/*}" || anfs_die "cannot make $(anfs_display "${_R_FILE%/*}")"
-    {
-      if [[ -s "$_R_FILE" ]]; then
-        [[ -z "$(tail -c 1 "$_R_FILE")" ]] || echo
-        echo
-      fi
-      printf '## %s %s\n\nStatus: open\n\n%s\n' "$id" "$title" "$report"
-    } >> "$_R_FILE" || anfs_die "could not append to $(anfs_display "$_R_FILE")"
+    _anfs_report_new_record "$rdir" "$_R_FILE" "$title" "$report" || anfs_die "could not write the record in $(anfs_display "$rdir")"
+    id="$REPLY"
     _anfs_report_emit --at "${_R_FILE%/*}" report.filed "$id" ${_R_PKG:+"package=$_R_PKG"} "title=$title" to=file
+    _anfs_report_render_unless_anfsd filed "$id" "$_R_RECORD" "$_R_FILE"
     if anfs_json_on; then _anfs_report_json "$id" "" "$_R_FILE" "" true "" "$report" "$title"
-    else anfs_info "$id: appended to $(anfs_display "$_R_FILE")"
+    else anfs_info "$id: filed in $(anfs_display "$_R_FILE")"
     fi
     return 0
   fi
@@ -381,6 +432,103 @@ cmd_report_new() {
 _anfs_report_emit() {
   declare -F anfs_emit >/dev/null || return 0
   anfs_emit "$@"
+}
+
+# --- the file as a view of the records ---------------------------------------------------------
+
+# True when anfsd is running here (a live pid in anfsd.pid) and events are on: its sink renders
+_anfs_report_anfsd_up() {
+  local f="${ANFSD_STATE_HOME:-$XDG_STATE_HOME/anfsd}/anfsd.pid" pid
+  [[ "${ANFS_EVENTS:-}" != off && -f "$f" ]] || return 1
+  pid=$(< "$f") || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null
+}
+
+# The render, by new and close themselves when anfsd will not (it is down, or events are off)
+_anfs_report_render_unless_anfsd() {
+  _anfs_report_anfsd_up && return 0
+  _anfs_report_render "$@" || anfs_warn "$(anfs_display "$4") not updated: $_R_WHY (the record is $(anfs_display "$3"))"
+}
+
+# A mkdir lock beside <file> (.<name>.lock), its holder's pid inside; one held by a dead pid is
+# taken over. Waits up to 10 s (sleeping), then 1 with _R_WHY
+_anfs_report_lock() {
+  local f="$1" lock i pid
+  lock="${f%/*}/.${f##*/}.lock"
+  for (( i = 0; i < 100; i++ )); do
+    if mkdir -- "$lock" 2>/dev/null; then
+      printf '%s\n' "$$" > "$lock/pid"
+      _R_LOCK="$lock"
+      return 0
+    fi
+    pid=$(cat "$lock/pid" 2>/dev/null) || pid=""
+    if [[ "$pid" =~ ^[0-9]+$ ]] && ! kill -0 "$pid" 2>/dev/null; then
+      rm -rf -- "$lock"
+      continue
+    fi
+    sleep 0.1
+  done
+  _R_WHY="$(anfs_display "$lock") is held${pid:+ by pid $pid}"
+  return 1
+}
+_anfs_report_unlock() { [[ -z "${_R_LOCK:-}" ]] || rm -rf -- "$_R_LOCK"; _R_LOCK=""; }
+
+# Render one record into the file: filed appends it unless a `## <id> ` heading is there; closed
+# rewrites that section's Status line from the record (appending the record when the file lacks
+# it). Idempotent. 1 with _R_WHY
+_anfs_report_render() {
+  local kind="$1" id="$2" rec="$3" file="$4" status tmp rc=0
+  _R_WHY=""
+  [[ -f "$rec" ]] || { _R_WHY="no record $(anfs_display "$rec")"; return 1; }
+  mkdir -p -- "${file%/*}" 2>/dev/null || { _R_WHY="cannot make $(anfs_display "${file%/*}")"; return 1; }
+  _anfs_report_lock "$file" || return 1
+  if ! _anfs_report_file_status "$file" "$id"; then
+    {
+      if [[ -s "$file" ]]; then
+        [[ -z "$(tail -c 1 "$file")" ]] || echo
+        echo
+      fi
+      cat -- "$rec"
+    } >> "$file" || { _R_WHY="could not append to $(anfs_display "$file")"; rc=1; }
+  elif [[ "$kind" == closed ]]; then
+    status=$(awk '/^Status: / { print; exit }' "$rec")
+    if [[ -n "$status" && "Status: $REPLY" != "$status" ]]; then
+      # that section's Status line only; everything else byte for byte (a temp file beside it, mv)
+      if tmp=$(mktemp "${file%/*}/.${file##*/}.XXXXXX") && cp -p -- "$file" "$tmp" &&
+         awk -v id="$id" -v st="$status" '
+           !done && ($0 == "## " id || index($0, "## " id " ") == 1) { in_s = 1; print; next }
+           in_s && /^## / { in_s = 0 }
+           in_s && /^Status: / { print st; in_s = 0; done = 1; next }
+           { print }
+         ' "$file" > "$tmp" && mv -f -- "$tmp" "$file"; then :
+      else
+        rm -f -- "${tmp:-}"
+        _R_WHY="could not write $(anfs_display "$file")"
+        rc=1
+      fi
+    fi
+  fi
+  _anfs_report_unlock
+  return "$rc"
+}
+
+# anfs report __sink (plumbing, anfsd's consumer anfsd-sink-report): one event line on stdin.
+# report.filed and report.closed of a record are rendered into ANFS_REPORT_TO's file when the
+# record is in that file's space; anything else is nothing to do (exit 0). 1 when the render
+# fails (anfsd delivers it again)
+cmd_report___sink() {
+  local line rec
+  IFS= read -r line || [[ -n "$line" ]] || return 0
+  _anfs_report_need _anfs_ev_parse events.sh
+  _anfs_ev_parse "$line" || anfs_die "not an event: ${line:0:80}"
+  case "$EV_TYPE" in report.filed|report.closed) ;; *) return 0 ;; esac
+  [[ "$EV_SUBJECT" =~ ^r-[0-9]{8}-[0-9]+$ ]] || return 0
+  _anfs_report_dest_try && [[ "$_R_TO" == file ]] || return 0
+  _anfs_report_records "${_R_FILE%/*}"
+  [[ "$_R_SCOPE" == "${EV_SID:-host}" ]] || return 0
+  rec="$REPLY/$EV_SUBJECT.md"
+  [[ -f "$rec" ]] || return 0
+  _anfs_report_render "${EV_TYPE#report.}" "$EV_SUBJECT" "$rec" "$_R_FILE" || anfs_die "$_R_WHY"
 }
 
 # --- status, close, wait --------------------------------------------------------------------
@@ -448,8 +596,9 @@ _anfs_report_state() {
       _R_DETAIL="$id is a file's report, and ANFS_REPORT_TO is github"
       return 2
     fi
-    if ! _anfs_report_file_status "$_R_FILE" "$id"; then
-      _R_DETAIL="no report $id in $(anfs_display "$_R_FILE")"
+    _anfs_report_records "${_R_FILE%/*}"
+    if ! _anfs_report_file_status "$REPLY/$id.md" "$id"; then
+      _R_DETAIL="no report $id in $(anfs_display "$REPLY") (a report filed before the records is text only)"
       return 2
     fi
     if [[ "$REPLY" =~ ^fixed\ in\ ([^ ]+)\ ([0-9a-fA-F]+) ]]; then
@@ -507,6 +656,28 @@ cmd_report_status() {
   return "$rc"
 }
 
+cmd_report_show() {
+  local id="$1" rec
+  _anfs_report_parse_id "$id" || anfs_fail 2 "'$id' is no report id (r-<date>-<n>, or owner/repo#<n>)"
+  if [[ "$_R_KIND" == github ]]; then
+    anfs_require gh "brew install gh"
+    if anfs_json_on; then
+      exec gh issue view "$_R_NUM" --repo "$_R_REPO" --json number,state,title,body,url,comments
+    fi
+    exec gh issue view "$_R_NUM" --repo "$_R_REPO" --comments
+  fi
+  _anfs_report_dest
+  [[ "$_R_TO" == file ]] || anfs_fail 2 "$id is a file's report, and ANFS_REPORT_TO is github"
+  _anfs_report_records "${_R_FILE%/*}"; rec="$REPLY/$id.md"
+  [[ -f "$rec" ]] || anfs_fail 2 "no report $id in $(anfs_display "$REPLY") (a report filed before the records is text only: $(anfs_display "$_R_FILE"))"
+  if anfs_json_on; then
+    _anfs_report_file_status "$rec" "$id"
+    anfs_result id "$id" status "$REPLY" record "$rec" file "$_R_FILE" report "$(< "$rec")"
+    return 0
+  fi
+  cat -- "$rec"
+}
+
 # The scopes a report's events go to, and source.updated's (the host scope), into ANFS_EVENTS_DIRS
 _anfs_report_scopes() {
   local sid=""
@@ -561,7 +732,7 @@ cmd_report_wait() {
 }
 
 cmd_report_close() {
-  local id="$1" commit="${CLI_OPT[commit]:-}" src="${CLI_OPT[source]:-}" day line tmp s
+  local id="$1" commit="${CLI_OPT[commit]:-}" src="${CLI_OPT[source]:-}" day line tmp s rec
   [[ -n "$commit" ]] || cli_usage_err "--commit is required"
   [[ "$commit" =~ ^[0-9a-fA-F]{7,40}$ ]] || cli_usage_err "--commit is a commit's sha (7 to 40 hex digits)"
   _anfs_report_parse_id "$id" || anfs_fail 2 "'$id' is no report id (r-<date>-<n>, or owner/repo#<n>)"
@@ -572,21 +743,21 @@ cmd_report_close() {
     src="${src:-core}"
     _anfs_report_dest
     [[ "$_R_TO" == file ]] || anfs_fail 2 "$id is a file's report, and ANFS_REPORT_TO is github"
-    _anfs_report_file_status "$_R_FILE" "$id" || anfs_fail 2 "no report $id in $(anfs_display "$_R_FILE")"
-    # that section's Status line only; everything else byte for byte (a temp file beside it, mv)
-    tmp=$(mktemp "${_R_FILE%/*}/.${_R_FILE##*/}.XXXXXX") || anfs_die "cannot write beside $(anfs_display "$_R_FILE")"
-    cp -p -- "$_R_FILE" "$tmp"
-    if ! awk -v id="$id" -v st="Status: fixed in $src $commit ($day)" '
-        !done && ($0 == "## " id || index($0, "## " id " ") == 1) { in_s = 1; print; next }
-        in_s && /^## / { in_s = 0 }
-        in_s && /^Status: / { print st; in_s = 0; done = 1; next }
+    _anfs_report_records "${_R_FILE%/*}"; rec="$REPLY/$id.md"
+    _anfs_report_file_status "$rec" "$id" ||
+      anfs_fail 2 "no report $id in $(anfs_display "$REPLY") (a report filed before the records is text only: edit its Status line by hand)"
+    # the record's Status line only (a temp file beside it, mv)
+    tmp=$(mktemp "${rec%/*}/.${rec##*/}.XXXXXX") || anfs_die "cannot write beside $(anfs_display "$rec")"
+    if ! awk -v st="Status: fixed in $src $commit ($day)" '
+        !done && /^Status: / { print st; done = 1; next }
         { print }
-      ' "$_R_FILE" > "$tmp" || ! mv -f -- "$tmp" "$_R_FILE"; then
+      ' "$rec" > "$tmp" || ! mv -f -- "$tmp" "$rec"; then
       rm -f -- "$tmp"
-      anfs_die "could not write $(anfs_display "$_R_FILE")"
+      anfs_die "could not write $(anfs_display "$rec")"
     fi
     _anfs_report_emit --at "${_R_FILE%/*}" report.closed "$id" "commit=$commit" "source=$src"
-    if anfs_json_on; then anfs_result id "$id" status fixed source "$src" commit "$commit" file "$_R_FILE"
+    _anfs_report_render_unless_anfsd closed "$id" "$rec" "$_R_FILE"
+    if anfs_json_on; then anfs_result id "$id" status fixed source "$src" commit "$commit" file "$_R_FILE" record "$rec"
     else anfs_info "$id: fixed in $src $commit ($(anfs_display "$_R_FILE"))"
     fi
     return 0
