@@ -62,7 +62,8 @@ container's name, data `id` (12), `image`, `pod` (the pod's id, 12), `exit` (die
 event; at most 20 a second, the rest counted in the log once a minute. When podman is away (not
 installed; on macOS the podman machine stopped) the child ends and is started again after 5, 10,
 30, then every 60 s, one log line per change; `podman.connected` when it is back (list once to
-reconcile), `podman.disconnected` when it goes. podman is found on the service's PATH (the one
+reconcile), `podman.disconnected` when it goes. `anfs bus status` shows it `away` without failing
+the exit: on macOS a stopped machine is normal. podman is found on the service's PATH (the one
 the install had).
 
 ## Pins after a release

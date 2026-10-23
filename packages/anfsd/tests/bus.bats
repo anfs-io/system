@@ -223,7 +223,7 @@ JSON
   [ "${lines[6]}" = "linger	ok	the bus runs without a login" ]
 }
 
-@test "status: podman: connected, away (the error, the next try; exit 1), off (exit 0), no state, anfsd down" {
+@test "status: podman: connected, away (the error, the next try; exit 0), off (exit 0), no state, anfsd down" {
   installed
   nats_up
   running io.anfs.nats 111
@@ -235,7 +235,7 @@ JSON
   [ "${lines[5]}" = "podman	fail	anfsd has written no podman.json (an anfsd before v0.3.0: anfs bus restart anfsd)" ]
   printf '%s\n' '{"state":"away","since":"2026-10-23T18:00:00Z","error":"Error: Cannot connect to Podman. Please verify your connection","next":"2026-10-23T18:01:00Z"}' > "$AS/podman.json"
   ANFS_SERVICE_OS=macos bus status
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
   [ "${lines[5]}" = "podman	away	Error: Cannot connect to Podman. Please verify your connection; next try 2026-10-23T18:01:00Z (on macOS: podman machine start)" ]
   echo '{"state":"off","since":"2026-10-23T18:00:00Z"}' > "$AS/podman.json"
   ANFS_SERVICE_OS=macos bus status

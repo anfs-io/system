@@ -12,7 +12,8 @@
 #                                  runs working and queued), a harness row per harness a rule
 #                                  uses (found, its version), podman (anfsd following podman
 #                                  events: connected, or away with the error and the next try;
-#                                  off); on Linux linger. Exit 1 when one is not ok (off is not)
+#                                  off); on Linux linger. Exit 1 when one is not ok (off and
+#                                  podman's away are not)
 #   start|stop|restart [nats|anfsd]  load, unload, or write again and load (both when none named;
 #                                  restart nats renders server.conf from nats.env first)
 #   reload                         SIGHUP to anfsd: it reads the dispatch rules again
@@ -49,7 +50,8 @@ anfs_bus_paths
 
 cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd, the
 shipper's lag, dispatch (rules, runs), the harnesses the rules use, podman
-(its events followed) and linger on Linux; exit 1 when one is not ok"
+(its events followed) and linger on Linux; exit 1 when one is not ok
+(podman off or away is not a failure)"
 cli_cmd start "Start NATS and anfsd, or the one named" --arg "[service]"
 cli_cmd stop "Stop anfsd and NATS, or the one named (they start again at the next login)" --arg "[service]"
 cli_cmd restart "Write the service again and restart it (nats: server.conf from nats.env
@@ -241,7 +243,8 @@ _bus_status_podman() {
     connected) _bus_row podman ok "connected since $since: container.* and pod.* into the host scope" ;;
     starting)  _bus_row podman ok "starting (since $since)" ;;
     off)       _bus_row podman off "ANFSD_PODMAN=off (anfsd.local.env)" soft ;;
-    away)      _bus_row podman away "$err; next try $next (on macOS: podman machine start)" ;;
+    # away is soft: on macOS a stopped podman machine is normal, not a fault of the bus
+    away)      _bus_row podman away "$err; next try $next (on macOS: podman machine start)" soft ;;
     *)         _bus_row podman fail "podman.json unreadable: $(anfs_display "$f")" ;;
   esac
 }
