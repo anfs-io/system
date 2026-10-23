@@ -18,6 +18,11 @@
 #   a file  appended, never rewritten: `## r-<YYYYMMDD>-<n> <title>`, `Status: open`, the body.
 #           <n> counts that day's reports in the file. `close` rewrites that one Status line only.
 #
+# EVENTS (lib/anfs/events.sh): `new` emits report.filed (data: package, title, to, and repo for
+# GitHub) and `close` report.closed (data: commit, source), into the file's space, or the host
+# scope for GitHub; -n emits nothing. An agent waits on the event with
+#   wsm events ls -f --once --type report.closed --subject <id>
+#
 # THE FIX. `close` records the commit: a file's Status line becomes `Status: fixed in <source>
 # <sha> (<date>)`; on GitHub a comment `Fixed in <source> <sha>` and gh issue close. `status` is
 #   open       not closed
@@ -63,7 +68,8 @@ when available, 1 otherwise, 2 for an unknown id" --arg "id"
     --opt "--commit SHA: The fix" \
     --opt "--source SOURCE: The source the commit is in (default: the report's repo's, or core)" \
     --arg "id"
-  cli_cmd "report wait" "Poll status until the fix is available here (exit 0), or the timeout (1)" \
+  cli_cmd "report wait" "Poll status until the fix is available here (exit 0), or the timeout (1).
+The event way: wsm events ls -f --once --type report.closed --subject <id>" \
     --opt "--timeout SECS: Give up after this long (default 3600)" \
     --opt "--interval SECS: Between checks (default 60)" \
     --arg "id"
@@ -321,6 +327,7 @@ cmd_report_new() {
       fi
       printf '## %s %s\n\nStatus: open\n\n%s\n' "$id" "$title" "$report"
     } >> "$_R_FILE" || anfs_die "could not append to $(anfs_display "$_R_FILE")"
+    _anfs_report_emit --at "${_R_FILE%/*}" report.filed "$id" ${_R_PKG:+"package=$_R_PKG"} "title=$title" to=file
     if anfs_json_on; then _anfs_report_json "$id" "" "$_R_FILE" "" true "" "$report" "$title"
     else anfs_info "$id: appended to $(anfs_display "$_R_FILE")"
     fi
@@ -356,9 +363,19 @@ cmd_report_new() {
   url=$(printf '%s\n' "$url" | grep -E '^https?://' | tail -n 1) || true
   [[ "$url" =~ /issues/([0-9]+)$ ]] || anfs_die "gh issue create gave no issue URL: $url"
   id="$repo#${BASH_REMATCH[1]}"
+  _anfs_report_emit --host report.filed "$id" ${_R_PKG:+"package=$_R_PKG"} "title=$title" to=github "repo=$repo"
   if anfs_json_on; then _anfs_report_json "$id" "$repo" "" "$url" true "$dups" "$report" "$title"
   else anfs_info "$id: $url"
   fi
+}
+
+# --- events (lib/anfs/events.sh) ---------------------------------------------------------------
+
+# report.filed and report.closed, into the scope the report is filed in: a file's space (the
+# nearest space.yml above it), or the host scope for GitHub. Never fails the command.
+_anfs_report_emit() {
+  declare -F anfs_emit >/dev/null || return 0
+  anfs_emit "$@"
 }
 
 # --- status, close, wait --------------------------------------------------------------------
@@ -533,6 +550,7 @@ cmd_report_close() {
       rm -f -- "$tmp"
       anfs_die "could not write $(anfs_display "$_R_FILE")"
     fi
+    _anfs_report_emit --at "${_R_FILE%/*}" report.closed "$id" "commit=$commit" "source=$src"
     if anfs_json_on; then anfs_result id "$id" status fixed source "$src" commit "$commit" file "$_R_FILE"
     else anfs_info "$id: fixed in $src $commit ($(anfs_display "$_R_FILE"))"
     fi
@@ -548,6 +566,7 @@ cmd_report_close() {
   gh issue comment "$_R_NUM" --repo "$_R_REPO" --body "Fixed in $src $commit (anfs report close, $day)" >/dev/null ||
     anfs_die "gh issue comment on $id failed"
   gh issue close "$_R_NUM" --repo "$_R_REPO" >/dev/null || anfs_die "gh issue close on $id failed"
+  _anfs_report_emit --host report.closed "$id" "commit=$commit" "source=$src"
   if anfs_json_on; then anfs_result id "$id" status fixed source "$src" commit "$commit"
   else anfs_info "$id: fixed in $src $commit, closed"
   fi

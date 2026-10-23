@@ -48,6 +48,12 @@ your harness tells you when it exits: 0 means the fix is in this host's checkout
 (`anfs report status <id>` says `available`), 1 a timeout. Meanwhile carry on with other work, or
 hand the blocked part to someone else; when it exits 0, resume what the bug blocked.
 
+The event way, for the closing itself rather than its arrival here: `wsm events ls -f --once
+--type report.closed --subject <id>` (in the space the report is filed in; `anfs events ls` for a
+GitHub report, which goes to the host scope), also as a background command: it prints the
+`report.closed` event and exits 0 when whoever merges the fix runs `close`, at once if that
+already happened.
+
 `anfs report status <id>`: `open`, `fixed` (closed, not yet in this checkout: `anfs src update`
 brings it), or `available`; exit 0 only for `available`, 2 for an unknown id.
 

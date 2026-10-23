@@ -18,6 +18,7 @@ wsm_setup() {
   WSM_SPACES_HOME="$HOME/spaces"
   export HOME XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME WSM_SPACES_HOME
   export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
+  export ANFS_EVENTS=off   # no event log either (lib/anfs/events.sh); a test about events turns it on
   WSM_STATE="$XDG_STATE_HOME/wsm"
   # anfs's libraries, where wsm looks for them
   mkdir -p "$HOME/.local/lib"
@@ -61,12 +62,18 @@ mksource() {
 }
 
 # Write a space definition, <source>/spaces/<path>/space.yml (any depth; an empty path is the
-# source's root space), from stdin
+# source's root space), from stdin. It gets a fresh id: line first (a {} body becomes the id
+# alone), as wsm new writes one, unless the body has one or NOID=1.
 # Usage: space_def <source> [path]  < body
 space_def() {
-  local d="$BATS_TEST_TMPDIR/srcs/$1/spaces${2:+/$2}"
+  local d="$BATS_TEST_TMPDIR/srcs/$1/spaces${2:+/$2}" body id
   mkdir -p "$d"
-  cat > "$d/space.yml"
+  body=$(cat)
+  if [[ "${NOID:-}" != 1 ]] && ! grep -q '^id:' <<< "$body"; then
+    id=$(LC_ALL=C tr -dc 'a-z2-7' < /dev/urandom | head -c 10 || true)
+    if [[ "$body" == "{}" ]]; then body="id: $id"; else body="id: $id"$'\n'"$body"; fi
+  fi
+  printf '%s\n' "$body" > "$d/space.yml"
 }
 
 # Any other file below a source's spaces/: <source> <path> [content]

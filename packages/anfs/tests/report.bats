@@ -68,12 +68,13 @@ STUB
   DAY=$(date +%Y%m%d)
 }
 
-# anfs in a clean environment: HOME, PATH, the stubs' dir, and NAME=value given first
+# anfs in a clean environment: HOME, PATH, the stubs' dir, and NAME=value given first. No events
+# (ANFS_EVENTS=off) unless a test gives ANFS_EVENTS=on
 t() {
   local -a vars=()
   while [[ "${1:-}" == *=* ]]; do vars+=("$1"); shift; done
   run --separate-stderr env -i HOME="$HOME" PATH="$T/bin:$HOME/.local/bin:$SYSPATH" STUB_DIR="$T" \
-    TMPDIR="$T" ANFS_LOG=off ${vars[@]+"${vars[@]}"} anfs "$@"
+    TMPDIR="$T" ANFS_LOG=off ANFS_EVENTS=off ${vars[@]+"${vars[@]}"} anfs "$@"
 }
 
 to_file() { printf 'ANFS_REPORT_TO=~/notes/bugs.md\n' > "$CFG/anfs/anfs.local.env"; }
@@ -463,3 +464,38 @@ skill_installed() {
   [[ "$output" == *'{"check":"skill","status":"fail",'* ]]
 }
 
+
+# --- events (lib/anfs/events.sh) -----------------------------------------------------------
+
+# The one event a scope's log has (its last line), as JSON
+last_event() { tail -n 1 "$HOME/.local/state/anfs/events/$1/"*.jsonl; }
+
+@test "events: a file report emits report.filed into the file's space, close report.closed; -n emits nothing" {
+  to_file
+  mkdir -p "$HOME/notes"
+  printf 'id: notesspc22\n' > "$HOME/notes/space.yml"
+  t ANFS_EVENTS=on report --title "-n first" --actual x -n
+  [ "$status" -eq 0 ]
+  [ ! -d "$HOME/.local/state/anfs/events" ]
+  t ANFS_EVENTS=on report --package core/pcm --title 'it "broke"' --actual x
+  [ "$status" -eq 0 ] && [ -z "$stderr" ]
+  run yq -p json -o json -I0 '[.type, .subject, .source, .data.package, .data.title, .data.to]' <<< "$(last_event notesspc22)"
+  [ "$output" = "[\"io.anfs.report.filed\",\"r-$DAY-1\",\"/anfs/spaces/notesspc22\",\"core/pcm\",\"it \\\"broke\\\"\",\"file\"]" ]
+  t ANFS_EVENTS=on report close "r-$DAY-1" --commit abcdef1
+  [ "$status" -eq 0 ]
+  run yq -p json -o json -I0 '[.type, .subject, .data.commit, .data.source]' <<< "$(last_event notesspc22)"
+  [ "$output" = "[\"io.anfs.report.closed\",\"r-$DAY-1\",\"abcdef1\",\"core\"]" ]
+  [ "$(cat "$HOME/.local/state/anfs/events/notesspc22/"*.jsonl | wc -l | tr -d ' ')" = 2 ]
+}
+
+@test "events: GitHub reports go to the host scope, with the repo; ANFS_EVENTS=off writes nothing" {
+  t report new --title "off" --actual x -y
+  [ ! -d "$HOME/.local/state/anfs/events" ]
+  t ANFS_EVENTS=on report new --title "pcm up hangs" --actual "it hangs" -y
+  [ "$status" -eq 0 ]
+  run yq -p json -o json -I0 '[.type, .subject, .source, .data.to, .data.repo, has("data") and (.data | has("package"))]' <<< "$(last_event host)"
+  [ "$output" = '["io.anfs.report.filed","acme/core#42","/anfs/host","github","acme/core",false]' ]
+  t ANFS_EVENTS=on report close "acme/stack#5" --commit abcdef1
+  run yq -p json -r '.type + " " + .subject + " " + .data.source' <<< "$(last_event host)"
+  [ "$output" = "io.anfs.report.closed acme/stack#5 stack" ]
+}

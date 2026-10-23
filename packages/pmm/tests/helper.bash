@@ -16,7 +16,7 @@ setup_file() {
 _setup_home() {
   T="$BATS_TEST_TMPDIR"
   export HOME="$T/home"
-  export ANFS_LOG=off   # no log file from tests (lib/anfs/log.sh)
+  export ANFS_LOG=off ANFS_EVENTS=off   # no log file, no event log from tests (lib/anfs/log.sh, events.sh)
   export XDG_CONFIG_HOME="$HOME/.config" XDG_DATA_HOME="$HOME/.local/share"
   export XDG_STATE_HOME="$HOME/.local/state" XDG_CACHE_HOME="$HOME/.cache"
   unset ANFS_CONFIG_HOME ANFS_DATA_HOME ANFS_CACHE_HOME ANFS_STATE_HOME ANFS_JSON ANFS_ISO_HOME PMM_DISPLAY DISPLAY WAYLAND_DISPLAY

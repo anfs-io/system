@@ -75,6 +75,16 @@ inode() { ls -id "$1" | awk '{print $1}'; }
   [ -z "$(wsm ls --json | yq -p json -r '.[] | select(.space | test("^a/tech")) | .space')" ]
 }
 
+@test "a space's id travels with it: the same ids after the move" {
+  local web api
+  web=$(wsm id a/tech/web) api=$(wsm id a/tech/web/api)
+  [[ "$web" =~ ^[a-z2-7]{10}$ ]]
+  run wsm move a/tech/web b
+  [ "$status" -eq 0 ]
+  [ "$(wsm id b/tech/web)" = "$web" ]
+  [ "$(wsm id b/tech/web/api)" = "$api" ]
+}
+
 @test "a clone's linked worktree elsewhere still works after the move" {
   wsm install -y a/tech/web/ >/dev/null
   git -C "$ROOT/a/tech/web/repos/app" worktree add -q "$T/wt" -b side

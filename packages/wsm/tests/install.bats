@@ -115,7 +115,7 @@ setup() {
   run wsm install main/tech
   [ "$status" -eq 0 ]
   [[ "$output" == *"space acme/main/tech"* ]]
-  [ "$(cat "$HOME/spaces/acme/main/tech/space.yml")" = "repositories: []" ]
+  [[ "$(cat "$HOME/spaces/acme/main/tech/space.yml")" == *$'\nrepositories: []' ]]
   # a bare prefix: the first source with a space under it
   run wsm install -y main/
   [ "$status" -eq 0 ]

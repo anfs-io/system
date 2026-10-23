@@ -30,7 +30,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.11.1
+WSM_VERSION=0.12.0
 
 # Paths, sources and the command line come from anfs
 if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
@@ -44,9 +44,10 @@ source "$HOME/.local/lib/anfs/bash.sh"
 source "$HOME/.local/lib/anfs/paths.sh"
 # shellcheck source=/dev/null
 source "$ANFS_LIB_DIR/log.sh"
-# The platform, the linker, the manifests (links:, files:), copies and agent skills. lib/anfs is
+# The platform, the linker, the manifests (links:, files:), copies, agent skills and the event log
+# (space ids, events ls). lib/anfs is
 # one link into core/anfs, so a library a pull brings is there at once
-for _wsm_lib in platform link manifest files skill; do
+for _wsm_lib in platform link manifest files skill events; do
   # shellcheck source=/dev/null
   source "$ANFS_LIB_DIR/$_wsm_lib.sh"
 done
@@ -137,6 +138,12 @@ directories, for every detected agent (wsm install does this too)" \
 cli_cmd "skill remove" "Remove a space's declared skills from it (a SPEC), or one of them
 (<space id>/<name>); skills it does not declare stay" \
   --alias rm --opt "-y --yes: Do not ask before removing" --arg "spec..."
+cli_cmd id "Print a space's id (id: in its space.yml, never changed; the event log is
+filed by it). No SPEC: the space around .; a prefix: SPACE ID rows" \
+  --opt "--new: Write an id into each space SPEC names that has none (never changes one)" \
+  --arg "[spec]"
+anfs_events_cli "the space around . (no SPEC), or the spaces SPEC names: an id
+is that space, x/ the subtree"
 anfs_move_cli space spec
 anfs_config_declare
 cli_standard
@@ -1911,6 +1918,142 @@ cmd_path() {
   printf '%s\n' "$Q_DIR"
 }
 
+# --- Space ids (lib/anfs/events.sh) --------------------------------------------------------------
+#
+# A space's id is `id:` in its space.yml: written once (wsm new, wsm id --new), never changed, moved
+# with the file. _ids_load reads every space's: SID[id] (valid ones), SID_RC[id] (0 valid, 1 none,
+# 2 malformed), SID_BAD[id] (a malformed value), SID_OWNERS[sid] (the spaces holding it, one per line)
+
+declare -A SID=() SID_RC=() SID_BAD=() SID_OWNERS=()
+IDS_LOADED=false
+_ids_load() {
+  $IDS_LOADED && return 0
+  IDS_LOADED=true
+  _spaces_load
+  local id rc
+  for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
+    rc=0
+    anfs_space_id_read "${SPACE_DIR[$id]}/space.yml" || rc=$?
+    SID_RC[$id]=$rc
+    case $rc in
+      0) SID[$id]="$REPLY" SID_OWNERS[$REPLY]+="$id"$'\n' ;;
+      2) SID_BAD[$id]="$REPLY" ;;
+    esac
+  done
+}
+
+# What wsm ls says about a space's id, into REPLY ("" when it is fine)
+_id_note() {
+  local id="$1" o other=""
+  case "${SID_RC[$id]:-1}" in
+    1) REPLY="no id"; return ;;
+    2) REPLY="invalid id"; return ;;
+  esac
+  while IFS= read -r o; do
+    [[ -z "$o" || "$o" == "$id" ]] || other+="${other:+, }$o"
+  done <<< "${SID_OWNERS[${SID[$id]}]}"
+  REPLY=""
+  [[ -z "$other" ]] || REPLY="duplicate id (also $other)"
+}
+
+# A new id no space in the sources has, into REPLY
+_id_unique() {
+  _ids_load
+  while :; do
+    anfs_space_id_new
+    [[ -n "${SID_OWNERS[$REPLY]:-}" ]] || return 0
+  done
+}
+
+# `wsm id [SPEC] [--new]`
+cmd_id() {
+  local spec="${1:-}" new=${CLI_OPT[new]:-false} id rows="" status src
+  local -A touched=()
+  if [[ -z "$spec" ]]; then
+    ! $new || cli_usage_err "--new needs a SPEC: wsm id --new <space>"
+    anfs_events_space_at "$PWD" || fail "$EX_NOTFOUND" "not inside a space: wsm id <spec>"
+    case "$ANFS_EV_SIDRC" in
+      0) printf '%s\n' "$ANFS_EV_SID"; return 0 ;;
+      2) fail 1 "${ANFS_EV_SPATH:-this space} has an invalid id: '$REPLY' (10 of a-z0-9)" ;;
+      *) fail 1 "${ANFS_EV_SPATH:-this space} has no id (wsm id --new ${ANFS_EV_SPATH:-<space>})" ;;
+    esac
+  fi
+  _spec_ok "$spec"
+  _ids_load
+  _specs_expand "$spec"
+  if ! $new; then
+    if [[ "$spec" != */ ]]; then
+      id="${EXPANDED[0]}"
+      case "${SID_RC[$id]}" in
+        0) printf '%s\n' "${SID[$id]}"; return 0 ;;
+        2) fail 1 "$id has an invalid id: '${SID_BAD[$id]}' (10 of a-z0-9)" ;;
+        *) fail 1 "$id has no id (wsm id --new $id)" ;;
+      esac
+    fi
+    for id in "${EXPANDED[@]}"; do rows+=$(anfs_row "$id" "${SID[$id]:-}")$'\n'; done
+    printf '%s' "$rows" | anfs_table "SPACE ID" "space id"
+    return 0
+  fi
+  local failed=false
+  for id in "${EXPANDED[@]}"; do
+    case "${SID_RC[$id]}" in
+      0) status=kept ;;
+      2) status="invalid id"; failed=true ;;
+      *)
+        _id_unique
+        if anfs_space_id_write "${SPACE_DIR[$id]}/space.yml" "$REPLY"; then
+          SID[$id]="$REPLY" SID_RC[$id]=0 SID_OWNERS[$REPLY]="$id"$'\n' status=new
+          touched[${SPACE_SRC[$id]}]=1
+        else
+          status="not written"; failed=true
+          warn "$id: could not write $(_display "${SPACE_DIR[$id]}/space.yml")"
+        fi ;;
+    esac
+    rows+=$(anfs_row "$id" "$status" "${SID[$id]:-${SID_BAD[$id]:-}}")$'\n'
+  done
+  printf '%s' "$rows" | anfs_table "SPACE STATUS ID" "space status id"
+  for src in "${!touched[@]}"; do
+    anfs_json_on || echo "commit it in $(_display "$(gitsrc_dir "$src")")"
+  done
+  ! $failed
+}
+
+# --- Events (lib/anfs/events.sh) ------------------------------------------------------------------
+
+# The space ids SPEC... names, one per line, as _specs_expand resolves them; a space with no id is a
+# warning. 1 when none has one.
+_event_sids() {
+  local spec id any=false
+  for spec in "$@"; do _spec_ok "$spec"; done
+  _ids_load
+  _specs_expand "$@"
+  for id in "${EXPANDED[@]}"; do
+    if [[ -n "${SID[$id]:-}" ]]; then printf '%s\n' "${SID[$id]}"; any=true
+    else warn "$id has no id, so no events (wsm id --new $id)"
+    fi
+  done
+  $any || fail 1 "no space with an id in: $*"
+}
+
+# Plumbing for anfs events ls SPEC...: the ids
+cmd___event_spaces() { _event_sids "$@"; }
+
+# `wsm events ls [SPEC...]`: the space around . when none
+cmd_events_list() {
+  local sid
+  ANFS_EVENTS_DIRS=() ANFS_EVENTS_EVERY=false
+  if [[ $# -eq 0 ]]; then
+    anfs_events_space_at "$PWD" || fail "$EX_NOTFOUND" "not inside a space: wsm events ls <spec>"
+    [[ -n "$ANFS_EV_SID" ]] || fail 1 "${ANFS_EV_SPATH:-this space} has no id, so no events (wsm id --new ${ANFS_EV_SPATH:-<space>})"
+    ANFS_EVENTS_DIRS=("$ANFS_EVENTS_HOME/$ANFS_EV_SID")
+  else
+    local out
+    out=$(_event_sids "$@") || exit $?
+    while IFS= read -r sid; do ANFS_EVENTS_DIRS+=("$ANFS_EVENTS_HOME/$sid"); done <<< "$out"
+  fi
+  anfs_events_ls
+}
+
 # `wsm ls [SPEC]`: every space the sources define (under SPEC), its state when installed, then the
 # spaces the tree still has that the sources no longer define. `wsm ls <id> --json` adds the files.
 cmd_list() {
@@ -1932,38 +2075,42 @@ cmd_list() {
   for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do [[ -z "${INSTALLED[$id]:-}" ]] || inst+=("$id"); done
   _meta_load ${inst[@]+"${inst[@]}"}
 
+  _ids_load
+  local idnote
   for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match "$id" || continue
     [[ -z "$spec" ]] || $SP_PREFIX || detail="$id"
+    # the space's id: missing, malformed or another space's too is a problem, in NOTE (not STATUS)
+    _id_note "$id"; idnote="$REPLY"
     # a refused manifest (links:, files:): invalid, its first error the note
     _mf_plan "$id"
     if [[ -n "${MF_ERR[$id]:-}" ]]; then
       note="${MF_ERR[$id]%%$'\n'*}"
       if [[ -n "${INSTALLED[$id]:-}" ]]; then _home_of "$id"; else REPLY=""; fi
-      _row "$id" invalid "$REPLY" "$note" "" "" "" ""
+      _row "$id" invalid "$REPLY" "$note${idnote:+, $idnote}" "" "" "" "" "${SID[$id]:-}"
       continue
     fi
     if [[ -z "${INSTALLED[$id]:-}" ]]; then
-      _row "$id" "" "" "" "" "" "" ""
+      _row "$id" "" "" "$idnote" "" "" "" "" "${SID[$id]:-}"
       continue
     fi
     _space_counts "$id"
     note="$REPLY"
     _home_of "$id"
     if [[ -z "$note" ]]; then status=ok; else status=partial; fi
-    _row "$id" "$status" "$REPLY" "$note" "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT"
+    _row "$id" "$status" "$REPLY" "$note${note:+${idnote:+, }}$idnote" "$C_MISSING" "$C_WRONG" "$C_WAY" "$C_LEFT" "${SID[$id]:-}"
   done
   for id in ${VANISHED_IDS[@]+"${VANISHED_IDS[@]}"}; do
     [[ -z "$spec" ]] || _spec_match_path "${VANISHED_SRC[$id]}" "${VANISHED_PATH[$id]}" || continue
     _home_of "$id"
-    _row "$id" "not in the source" "$REPLY" "" "" "" "" ""
+    _row "$id" "not in the source" "$REPLY" "" "" "" "" "" ""
   done
   rows="$ROWS"
   [[ -n "$rows" || -z "$spec" ]] || fail "$EX_NOTFOUND" "nothing defined under $spec"
 
   # The lists other tools read: with --json (lib/anfs/table.sh), never by column. The counts are
   # --json only; NOTE is their summary.
-  local out keys="space status dir note missing wrong in_the_way leftover"
+  local out keys="space status dir note missing wrong in_the_way leftover id"
   if ! $json || [[ -z "$detail" ]]; then
     printf '%s' "$rows" | anfs_table "SPACE STATUS DIR NOTE" "$keys"
     return 0
@@ -2210,8 +2357,10 @@ cmd_new() {
   id="$src${path:+/$path}"
   [[ ! -e "$dir/space.yml" ]] || fail "$EX_EXISTS" "already a space: $id ($(_display "$dir"))"
   mkdir -p -- "$dir"
+  _id_unique
   cat > "$dir/space.yml" <<EOF
 # $id: \`wsm install $id\` links this directory's files into \$WSM_SPACES_HOME/$id
+id: $REPLY                 # this space's id: never change it (wsm id; the event log is filed by it)
 #depends: [other]          # spaces installed first: an id (<source>/<path>), or a path in this source
 repositories: []
 #  - url: git@github.com:you/thing

@@ -656,6 +656,12 @@ help` documents the commands.
   changed or removed after), the skill directories and lock the skills CLI writes for declared
   skills, and `space.yml`. The user's files, their links and other tools' (ovm's links into
   vaults) are never listed, changed or removed.
+- **A space's id** (`id:` in `space.yml`, "Events" below): `wsm new` writes one, `wsm id [SPEC]`
+  prints it (no SPEC: the space around `.`; a prefix: `SPACE ID` rows), `wsm id --new SPEC`
+  writes one into each space that has none and never changes one (`SPACE STATUS ID`; `commit it
+  in <source>`), before the first line that is not a comment. `wsm ls` says `no id`, `invalid id`
+  or `duplicate id (also <space>)` in NOTE, after the counts, and leaves STATUS alone. `wsm events
+  ls [SPEC...]` is the event log of the space around `.` or of the spaces SPEC names.
 - **The tree mirrors the source, both ways.**
   - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
     below where you are (in the tree, or below a checkout's `spaces/`). It is installed when the
@@ -1214,7 +1220,7 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, `anfs report check`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
+   callbacks`, `anfs report check`, `events ls`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1231,7 +1237,7 @@ The keys, which are the interface:
 | `pmm network list` | `network` (`source/name`; the plain name: made with `network create`, or the definition is gone), `status` (`active`, `inactive`, `missing`, `defined`, `shadowed`), `kind`, `subnet` (a bridged network: its bridge), `machines` (comma-separated) |
 | `psm list` | `skill` (`<config>/<skill>`: the source's alias, or the config's name; `<config>/*` for a whole repo), `status` (`ok`, `partial`, `missing`, `*`), `config`, `repo` |
 | `psm repo list` | `repository` (the repo: a path or URL), `status` (`missing`: a local path that is gone), `config` |
-| `wsm list` | `space` (the id: `lgat`, `lgat/tech/web`), `status` (`ok`, `partial`, `not in the source`; null: not installed), `dir` (null: not installed), `note` (`2 missing, 1 leftover`), `missing`, `wrong`, `in_the_way`, `leftover` (counts, `--json` only); `wsm list <id> --json` adds `files` (`[{file, status}]`) and `links` (`[{dest, src, status}]`: `ok`, `missing`, `missing src`, `wrong`, `in the way`, `invalid`) |
+| `wsm list` | `space` (the id: `lgat`, `lgat/tech/web`), `status` (`ok`, `partial`, `not in the source`; null: not installed), `dir` (null: not installed), `note` (`2 missing, 1 leftover`; then `no id`, `invalid id`, `duplicate id (also <space>)`), `missing`, `wrong`, `in_the_way`, `leftover` (counts, `--json` only), `id` (the space's `id:`; null: none); `wsm list <id> --json` adds `files` (`[{file, status}]`) and `links` (`[{dest, src, status}]`: `ok`, `missing`, `missing src`, `wrong`, `in the way`, `invalid`) |
 | `wsm skill list` | `skill` (`<space id>/<name>`; `<space id>/*` for a whole remote repo), `status` (`ok`, `partial`, `missing`, `waiting`: no agent yet, `*`; null: the space is not installed), `repo` (as the CLI is given it: a path resolved), `space`, `name` (the last three `--json` only) |
 | `wsm repo list` | `repository` (`<space id>/<path>`), `status` (a clone's state, below; `missing`, `not a repo`, `not installed`, `no path`, `invalid`), `url`, `ahead`, `space`, `path`, `dir` (the clone's path; null while its space is not installed) (the last four `--json` only) |
 | `anfs list` | `stack` (`source/name`), `status` (`installed`; `partial`: a record whose resources are not all there; null: not installed), `version` (the source's stack.yml) |
@@ -1241,6 +1247,8 @@ The keys, which are the interface:
 | `anfs iso list`, `pmm iso list`, `ventoy iso list` | `iso` (the entry's id, one namespace across catalogues; null: a file no entry names, with `--all`), `status` (`present`, `missing`, `unverified`: there, with no recorded sum; `unlisted`; `invalid`: the entry's file name is missing or has a `/`), `name`, `architecture`, `file`, `size` (bytes in JSON), `catalog` (the `isos.yml` that defines the entry) |
 | `anfs callbacks` | `tool`, `listener`, `status`, `handler` |
 | `<tool> config list` | `name`, `value` (the effective value; null: empty), `from` (`env`, `local`, `shipped`, `default`), `file` (the file it is from; the shipped one for `default`; null for `env`); with `anfs config list --all` a leading `tool` |
+| `wsm id <prefix>/`, `wsm id --new` | `space`, `status` (`--new` only: `new`, `kept`, `invalid id`, `not written`), `id` |
+| `wsm events ls`, `anfs events ls` | `--json` is not this table's array: the event lines as stored, one per line; the rows' keys are `event`, `subject`, `space`, `by` |
 | `anfs report check` | `check` (`report-to`, `file`, `gh`, `gh-auth`, `origin core`, `origin stack`, `skill`), `status` (`ok`, `fail`), `detail` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
@@ -1459,7 +1467,8 @@ are one-line aliases of these. Don't `echo "tool: ..." >&2` in new code.
   (id `<pid>-<epoch>`; the end line is an EXIT trap chained with the tool's own, so a tool that
   sets `trap ... EXIT` inside a command loses it), whether or not `-d` is on. `anfs log
   [-f] [tool]` prints or follows it. Past 1 MB it becomes `anfs.log.1`.
-- `ANFS_LOG=off` writes no file. Test helpers set it; a test that sources a tool's libraries
+- `ANFS_LOG=off` writes no file, and `ANFS_EVENTS=off` no event (lib/anfs/events.sh). Test
+  helpers set both; a test that sources a tool's libraries
   directly must source `log.sh` first (pmm's and ppm's do), since the tool's `warn`/`die` call it.
 
 ## Reporting a bug: anfs report
@@ -1492,6 +1501,68 @@ to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
   `{"diagnostics": ...}`; `status`, `wait` and `close` `anfs_result` objects.
 - ppm's trackers are read as files (as `onboard.sh` does): a report is wanted most when ppm is
   what is broken.
+
+## Events (lib/anfs/events.sh)
+
+The toolkit's event log: what happened, in which space, by whom. One CloudEvent (1.0, structured
+JSON) per line, appended, never rewritten, so `cat`, `grep` and `jq` read it, and from agents/02 a
+shipper sends each line as it is to NATS JetStream (the files are its spool). The profile (the
+attributes, the rules; language-neutral, for other implementations) is in anfs-io/docs,
+`units/agents/01-events/plan.md`.
+
+```
+{"specversion":"1.0","id":"<UUIDv7>","source":"/anfs/spaces/<space id>","type":"io.anfs.report.filed",
+ "subject":"r-20261023-1","time":"2026-10-23T17:03:17.480Z","datacontenttype":"application/json",
+ "actor":"claude:2e9431a0","actorspace":"<space id>","actorrole":"maintainer","spacepath":"anfs-dev",
+ "anfsv":1,"data":{"package":"core/pcm","title":"...","to":"file"}}
+```
+
+- **Where**: STATE, `$XDG_STATE_HOME/anfs/events/<space id>/<YYYY-MM>.jsonl` (the UTC month);
+  `events/host/` for the host scope (`source` `/anfs/host`).
+- **A space's id** is `id:` in its `space.yml`: 10 of `a-z0-9` (generated from `a-z2-7`), written
+  once (`wsm new`, `wsm id --new`), never changed, moved with the file (`wsm move`). The log is
+  filed by it; `spacepath` is only what wsm called the space when the event was written.
+- **`anfs_emit [--at DIR|--host] <type> <subject> [key=value...]`**, the one way to write an event:
+  `<type>` is short (`report.filed`; written as `io.anfs.report.filed`), data values are strings.
+  The space: `--host`; `--at DIR` (the nearest `space.yml` at or above it); else `ANFS_SPACE` (a
+  space path); else the nearest `space.yml` at or above the current directory; else the host
+  scope. A space with no id: a warning, and the host scope with its `spacepath`.
+- **Who**: `actor` is `ANFS_ACTOR`; else detected: Claude Code (`CLAUDECODE=1`) is `claude:<the
+  first 8 of CLAUDE_CODE_SESSION_ID>`, a harness that sets `AI_AGENT` its part before the first
+  `_`; else `shell:$USER`. Other harnesses set `ANFS_ACTOR` (dispatch will). `ANFS_AS=<space
+  path>/<role>` gives `actorspace` (that space's id) and `actorrole`.
+- **Atomic, no locks**: a line is at most 4096 bytes (more is refused with a warning) and goes out
+  in one `write(2)` with `O_APPEND` (`cat >>`): bash's own `printf` writes through stdio, 1 KB at a
+  time on macOS, and parallel writers would interleave.
+- **Never fails the caller**: an error is a warning (`event <type> not recorded: ...`).
+  `ANFS_EVENTS=off` (anfs.env) writes nothing; **the test helpers set it**, and a test about events
+  turns it on for one command.
+- The envelope is built in one function (`_anfs_ev_envelope`) and read through one accessor
+  (`_anfs_ev_parse`): a change to the profile is one place.
+- **Who emits** (01): `anfs report` (`report.filed`: package, title, `to` (`file` or `github`),
+  `repo`; `report.closed`: commit, source), into the report file's space, or the host scope for
+  GitHub. `-n` emits nothing.
+
+**`events ls`**, one helper (`anfs_events_cli`, `anfs_events_ls`), two commands, as `repo push`:
+
+| Command | Reads |
+| --- | --- |
+| `wsm events ls [SPEC...]` | the space around `.` when no SPEC; a SPEC as wsm resolves it (an id is that space, `x/` the subtree). A space with no id is a warning |
+| `anfs events ls [SPEC...] [--all]` | every scope, the host's included, when no SPEC (or `--all`); SPECs through `wsm __event_spaces` (plumbing) |
+
+- `--type GLOB` (short or full: `report.*`, `io.anfs.report.*`), `--subject S` (exact), `--since
+  30s|10m|2h|7d|YYYY-MM-DD[THH:MM[:SS]]` (UTC), `--by GLOB` (the actor), `--after ID` (ids sort by
+  time), `--json` (the lines as stored, one per line: not an array).
+- `EVENT SUBJECT SPACE BY` rows, oldest first: EVENT is `<UTC time>Z <short type>`, SPACE the path
+  (or id; `host`), BY the actor and ` as <role>`.
+- **`-f`** keeps printing (tab-separated, or JSON lines), the backlog first; **`--once`** (with `-f`)
+  prints the first match and exits 0, an existing one included: **how an agent waits**, e.g. on a
+  fix: `wsm events ls -f --once --type report.closed --subject <report id>` (beside `anfs report
+  wait`, which polls git). It keeps one descriptor per scope on its newest file and reads what
+  each gained, once a second; a new month's file, a new scope and a file that did not exist yet are
+  read from their start. The tick is `read -t 1` on a private FIFO: no process per tick, and a tick
+  that returns early falls back to `sleep 1`, so it cannot spin (the 2026-10-23 loop).
+- The toolkit API's `watch` is unchanged: it still derives start/end from `anfs.log`.
 
 ## Key Files
 
@@ -1900,6 +1971,10 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
   callbacks.sh # anfs_callback_register/unregister, anfs_callbacks_run (emit), anfs_callbacks_ls
   catalog.sh   # the definitions of one kind across the sources (pcm's services, pmm's images):
                # catalog_load, catalog_canon, catalog_all_ids
+  events.sh    # the event log: space ids (anfs_space_id_new/_read/_write), anfs_emit (one CloudEvent
+               # per line in STATE, built by _anfs_ev_envelope only), anfs_events_space_at/_named, and
+               # events ls (anfs_events_cli, anfs_events_ls; read through _anfs_ev_parse only). anfs
+               # and wsm source it. See "Events"
   report.sh    # anfs report (anfs_report_cli: new, diag, check, status, close, wait): the issue with its
                # diagnostics, filed where ANFS_REPORT_TO says, and followed to its fix. See "Reporting a
                # bug: anfs report"
@@ -2036,7 +2111,8 @@ bats packages/anfs/tests     # lib/anfs: paths.sh's settings (conf.bats; setting
                              # bash.sh (the floor, the bootstrap set),
                              # log.sh, callbacks.sh, table.sh, cli.sh (registry.bats), anfs callbacks/log,
                              # move.sh (move.bats: fixture repositories, bare remotes over file://),
-                             # report.sh (report.bats: gh, podman and npx stubbed; no network)
+                             # report.sh (report.bats: gh, podman and npx stubbed; no network),
+                             # events.sh (events.bats: emit, ls, follow; ANFS_EVENTS=on per command)
                              # Run bats with </dev/null: pmm's ssh stub reads stdin, and a test
                              # run that inherits an open one waits on it forever
 bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, install -n, links:/files:/platforms:,
@@ -2047,7 +2123,8 @@ bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
                              # repositories), the state (ls), path/remove/new/add/repo/implode, events,
                              # links: (links.bats), skills: and wsm skill, the ppm callback (skills.bats,
-                             # npx stubbed: it logs its cwd), wsm move (move.bats)
+                             # npx stubbed: it logs its cwd), wsm move (move.bats), space ids and
+                             # wsm events ls (ids.bats; space_def writes an id unless NOID=1)
 bats packages/pmm/tests      # pmm: images (sources, templates, validate, qemu argv, build, provisioners, list,
                              # what is on a build), machines (sources, profiles, validate, run/up/exec/snapshots/reset/
                              # remove, the macOS limit, media), networks and interfaces. qemu, ssh, tart

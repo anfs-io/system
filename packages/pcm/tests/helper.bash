@@ -30,7 +30,7 @@ pcm_setup() {
   source "$ANFS_LIB/table.sh"
   # shellcheck source=/dev/null
   source "$ANFS_LIB/log.sh"
-  export ANFS_LOG=off   # no log file from tests
+  export ANFS_LOG=off ANFS_EVENTS=off   # no log file, no event log from tests
   # shellcheck source=/dev/null
   source "$ANFS_LIB/cli.sh"
   # shellcheck source=/dev/null

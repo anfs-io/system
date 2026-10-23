@@ -52,7 +52,9 @@ wsm comes with anfs (`core/wsm`, part of the base install), and `anfs src instal
 | `wsm skill rm [-y] SPEC...` | Asks, then removes a space's declared skills from it, or one (`<space id>/<name>`); skills it does not declare stay |
 | `wsm install [SPEC...] [-n] [-f] [-y]` | Links spaces into `$WSM_SPACES_HOME/<id>`, copies their `files:`, clones their repositories, makes their `links:` out of the tree and installs their `skills:`, dependencies first. With no `SPEC`, the space at `.`, which must hold a `space.yml` |
 | `wsm remove [-y] SPEC...` | Asks, then unlinks installed spaces; cloned repos and your own files stay |
-| `wsm new [SOURCE/]PATH` | Creates a space in a source; installs it when the space around it is installed |
+| `wsm new [SOURCE/]PATH` | Creates a space in a source, with a new id; installs it when the space around it is installed |
+| `wsm id [SPEC] [--new]` | Prints a space's id (`id:` in its `space.yml`; no `SPEC`: the space around `.`; a prefix: `SPACE ID` rows). `--new` writes one into each space `SPEC` names that has none, and never changes one. `wsm ls` notes `no id` and `duplicate id` |
+| `wsm events ls [SPEC...] [-f [--once]] [--type G] [--subject S] [--since D] [--by A] [--after ID]` | The event log of the space around `.`, or of the spaces `SPEC` names: `EVENT SUBJECT SPACE BY`, oldest first; `--json` the CloudEvent lines. `-f --once` waits for a match (lib/anfs/events.sh; AGENTS.md "Events") |
 | `wsm add FILE...` | Moves files (or every file under a directory) into the source, then links them back |
 | `wsm move [-n] [-f] SOURCE/PATH TO-SOURCE` | Moves a space and the spaces under it to another source with its history (commits in both, nothing pushed); when installed, its directory under the root moves too (clones and your files inside untouched) and its links are made again. Ids that name it are not rewritten: the check lists them |
 | `wsm cd [-s] [QUERY]` | Jumps to an installed space; with no `QUERY`, to the deepest one you are in. `-s`, `--source`: to its directory in the source instead |

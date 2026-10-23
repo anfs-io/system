@@ -42,3 +42,9 @@ shows anfs's settings and where each is from, `anfs config list --all` every ins
 
 `tests/` holds the bats suites for `lib/anfs` (see AGENTS.md, Testing); the end-to-end round
 trips are in the anfs-dev source.
+
+**Events** (`lib/anfs/events.sh`): `anfs_emit` appends one CloudEvent per line to
+`~/.local/state/anfs/events/<space id>/<YYYY-MM>.jsonl` (`host/` outside any space); `anfs report`
+emits `report.filed` and `report.closed`. `anfs events ls [SPEC...] [--all]` reads every space and
+the host scope (SPECs resolved by wsm), with `--type`, `--subject`, `--since`, `--by`, `--after`,
+`--json`, and `-f [--once]` to follow or wait. `ANFS_EVENTS=off` turns it off. AGENTS.md "Events".
