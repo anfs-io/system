@@ -1,0 +1,9 @@
+version: 0.1.0
+author: rjayroach
+# NATS with JetStream, the anfs bus: nats-server and the nats CLI, pinned release binaries
+# (pins.yml), not brew's; a launchd agent or a systemd user unit (lib/anfs/service.sh) on
+# 127.0.0.1:47222. anfsd (core/anfsd) publishes the event log to it.
+platforms: [macos, linux]
+# the nats CLI ships as a zip; macOS has unzip
+system:
+  linux: [unzip]

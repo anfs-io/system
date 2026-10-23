@@ -193,9 +193,18 @@ follow it until the fix is here. Agents use the `anfs-bug-report` skill, which r
 ## Events
 
 The tools write what happened to an event log per space (`~/.local/state/anfs/events/`, one
-CloudEvent per line): `anfs report` files `report.filed` and `report.closed`. `wsm events ls` reads
-the space you are in, `anfs events ls` every space; `-f --once` waits for one (`wsm events ls -f
---once --type report.closed --subject <id>`). A space's id is `id:` in its `space.yml` (`wsm id`).
+CloudEvent per line): `anfs report` files `report.filed` and `report.closed`, `anfs src update`
+`source.updated`. `wsm events ls` reads the space you are in, `anfs events ls` every space; `-f
+--once` waits for one (`wsm events ls -f --once --type report.closed --subject <id>`). A space's id
+is `id:` in its `space.yml` (`wsm id`).
+
+## The bus
+
+`ppm install core/nats core/anfsd` puts every event on NATS JetStream as well (the stream `ANFS`,
+subjects `anfs.<space id|host>.<type>`, 90 days or 1 GiB; the files keep everything), for programs
+to subscribe to: NATS on `127.0.0.1:47222` and anfsd, which ships the files, each a service of
+yours. `anfs bus status` says how each part is; `anfs bus start|stop|restart|logs`; `anfs bus nats
+-- stream info ANFS` runs the nats CLI as the admin user.
 
 ## Removing It All
 

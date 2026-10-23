@@ -370,7 +370,10 @@ gitsrc_stale() {
 
 # `src update [--auto] [alias...]`: clone missing and pull existing git sources, all of them or the
 # named aliases. Local paths are never cloned or pulled. Sources with uncommitted changes are
-# skipped and stay stale. False if any was skipped or failed.
+# skipped and stay stale. False if any was skipped or failed. Each source whose HEAD moved (a
+# clone, a pull that brought commits) is a source.updated event in the host scope (subject the
+# alias; from, to: the commits), when the tool has events.sh (anfs does): anfs report wait reads a
+# fix's state again on it.
 # --auto: skipped sources are reported in one line (via debug with GITSRC_QUIET_SKIPPED=true).
 gitsrc_update() {
   local auto=false
@@ -394,6 +397,7 @@ gitsrc_update() {
       echo "Cloning: $repo_url"
       if anfs_repo_clone "$repo_url" "$dir"; then
         gitsrc_mark_updated "$repo_name"
+        _gitsrc_moved "$repo_name" "" "$dir"
       else
         gitsrc_mark_failed "$repo_name"
         failed+=("$repo_name")
@@ -413,8 +417,11 @@ gitsrc_update() {
     fi
 
     echo "Updating: $repo_name"
+    local before
+    before=$(git -C "$dir" rev-parse -q --verify HEAD 2>/dev/null) || before=""
     if anfs_repo_update "$dir"; then
       gitsrc_mark_updated "$repo_name"
+      _gitsrc_moved "$repo_name" "$before" "$dir"
     else
       gitsrc_mark_failed "$repo_name"
       failed+=("$repo_name")
@@ -439,6 +446,16 @@ gitsrc_update() {
   fi
 
   $all_updated
+}
+
+# source.updated for <alias> when its HEAD is not <before> any more (events.sh's anfs_emit, when
+# the tool sourced it; never fails the update)
+_gitsrc_moved() {
+  declare -F anfs_emit >/dev/null || return 0
+  local after
+  after=$(git -C "$3" rev-parse -q --verify HEAD 2>/dev/null) || return 0
+  [[ "$after" != "$2" ]] || return 0
+  anfs_emit --host source.updated "$1" "from=$2" "to=$after"
 }
 
 # A local-path source lives where it is; without GITSRC_LINK_LOCAL it is linked into the repos

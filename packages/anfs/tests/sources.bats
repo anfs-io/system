@@ -3,6 +3,8 @@
 # Remotes are local bare repos reached through file:// URLs, so nothing touches the network.
 # Run: bats packages/anfs/tests/
 
+unset ANFS_WORK ANFS_WORK_SAID  # a person's ANFS_WORK never reaches a test (lib/anfs/work.sh)
+
 setup() {
   # shellcheck source=/dev/null
   source "$BATS_TEST_DIRNAME/../home/.local/lib/anfs/sources.sh"
@@ -154,6 +156,33 @@ remote() {
   git -C "$T/work/a" push -q "$T/remotes/a.git" HEAD:refs/heads/main
   gitsrc_update a
   grep -q more "$T/repos/a/README"
+}
+
+@test "update emits source.updated (host scope) for each source whose HEAD moved, and only those" {
+  local a b ev
+  a=$(remote a) b=$(remote b)
+  printf '%s  a\n%s  b\n' "$a" "$b" > "$GITSRC_USER_LIST"
+  # anfs_emit as anfs has it (events.sh), into a temp STATE
+  ANFS_STATE_HOME="$T/state" HOME="$T/home"
+  source "$BATS_TEST_DIRNAME/../home/.local/lib/anfs/events.sh"
+  ANFS_EVENTS_HOME="$T/state/events" ANFS_ACTOR=shell:t
+  gitsrc_update >/dev/null
+  ev() { cat "$T/state/events/host/"*.jsonl 2>/dev/null | yq -p json -oy -r '[.type, .subject, .data.from, .data.to] | join(" ")'; }
+  # the two clones
+  [ "$(ev | wc -l | tr -d ' ')" = 2 ]
+  [ "$(ev | sed -n 1p)" = "io.anfs.source.updated a  $(git -C "$T/repos/a" rev-parse HEAD)" ]
+  local old
+  old=$(git -C "$T/repos/a" rev-parse HEAD)
+  echo more >> "$T/work/a/README"
+  git -C "$T/work/a" commit -qam more
+  git -C "$T/work/a" push -q "$T/remotes/a.git" HEAD:refs/heads/main
+  gitsrc_update >/dev/null
+  # a moved, b did not
+  [ "$(ev | wc -l | tr -d ' ')" = 3 ]
+  [ "$(ev | tail -1)" = "io.anfs.source.updated a $old $(git -C "$T/repos/a" rev-parse HEAD)" ]
+  ANFS_EVENTS=off
+  gitsrc_update >/dev/null
+  [ "$(ev | wc -l | tr -d ' ')" = 3 ]
 }
 
 @test "update_stale: only repos older than the TTL" {

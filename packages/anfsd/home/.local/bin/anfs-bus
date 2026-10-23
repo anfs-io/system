@@ -1,0 +1,295 @@
+#!/usr/bin/env bash
+# anfs bus — the bus: NATS with JetStream (core/nats) and anfsd (core/anfsd), as services of yours
+#
+# Run as `anfs bus ...`: anfs runs anfs-<name> from ~/.local/bin for a command it does not declare
+# itself (the package seam). What the services are, where their files go and how NATS's config is
+# rendered is lib/anfs/bus.sh's; how a service is written, loaded and asked is lib/anfs/service.sh's.
+#
+#   status                         SERVICE STATUS DETAIL: nats (its health on the monitoring
+#                                  port), jetstream (the stream ANFS), anfsd (the service, its
+#                                  pid, its version: release or from source), shipper (what is
+#                                  not shipped yet, per scope); on Linux linger. Exit 1 when one
+#                                  is not ok
+#   start|stop|restart [nats|anfsd]  load, unload, or write again and load (both when none named;
+#                                  restart nats renders server.conf from nats.env first)
+#   reload                         SIGHUP to anfsd (its rules, from 02b on)
+#   logs [nats|anfsd] [-f]         the log file (macOS) or the journal (Linux)
+#   nats -- <args>                 the nats CLI with NATS_URL and the admin user in its
+#                                  environment (never on its command line)
+#
+# Under the toolkit API, status and logs (without -f) are reads; the rest are writes.
+set -euo pipefail
+# A job's copy of this tool runs instead when ANFS_WORK names one (lib/anfs/work.sh)
+[ -z "${ANFS_WORK:-}" ] || [ ! -f "$HOME/.local/lib/anfs/work.sh" ] || . "$HOME/.local/lib/anfs/work.sh"
+
+if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
+  echo "anfs bus: ~/.local/lib/anfs is missing or out of date; install core/anfs again" >&2
+  exit 69
+fi
+# The bash floor, first: re-execs under bash 5 when this is macOS's 3.2
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/bash.sh"
+# shellcheck source=/dev/null
+source "$HOME/.local/lib/anfs/paths.sh"
+if [[ ! -f "$ANFS_LIB_DIR/bus.sh" ]]; then
+  echo "anfs bus: $ANFS_LIB_DIR has no bus.sh; install core/anfs again" >&2
+  exit 69
+fi
+for _lib in log cli table service bus; do
+  # shellcheck source=/dev/null
+  source "$ANFS_LIB_DIR/$_lib.sh"
+done
+unset _lib
+
+CLI_TOOL="anfs bus"
+anfs_bus_paths
+
+cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd and
+the shipper's lag (and linger on Linux); exit 1 when one is not ok"
+cli_cmd start "Start NATS and anfsd, or the one named" --arg "[service]"
+cli_cmd stop "Stop anfsd and NATS, or the one named (they start again at the next login)" --arg "[service]"
+cli_cmd restart "Write the service again and restart it (nats: server.conf from nats.env
+first; anfsd: ANFSD_BIN or the release), both when none is named" --arg "[service]"
+cli_cmd reload "Ask anfsd to read its settings and rules again (SIGHUP)"
+cli_cmd logs "The services' log: the files (macOS) or the journal (Linux)" \
+  --opt "-f --follow: Keep printing" --arg "[service]"
+cli_cmd nats "The nats CLI as the admin user: anfs bus nats -- stream info ANFS" \
+  --passthrough --arg "args..."
+cli_standard
+
+complete_service() { printf '%s\n' nats anfsd; }
+
+# The services a command acts on, in start order, into SVCS; a bad name is a usage error
+_bus_svcs() {
+  case "${1:-}" in
+    "") SVCS=(nats anfsd) ;;
+    nats|anfsd) SVCS=("$1") ;;
+    *) cli_usage_err "no service '$1' (nats, anfsd)" ;;
+  esac
+}
+
+_bus_spec() { case "$1" in nats) REPLY=ANFS_BUS_SVC_NATS ;; anfsd) REPLY=ANFS_BUS_SVC_ANFSD ;; esac; }
+
+_bus_need() {
+  local pkg="core/$1"
+  _bus_spec "$1"
+  anfs_service_file "$REPLY"
+  [[ -f "$REPLY" ]] || anfs_fail 69 "$1 is not installed ($(anfs_display "$REPLY") is missing): ppm install $pkg"
+}
+
+# --- status -------------------------------------------------------------------------------------
+
+_bus_http() { curl -fsS -m 2 "http://127.0.0.1:$ANFS_NATS_HTTP_PORT/$1" 2>/dev/null; }
+
+_BUS_ROWS=() _BUS_BAD=false
+_bus_row() {
+  _BUS_ROWS+=("$1$ANFS_US$2$ANFS_US$3")
+  [[ "$2" == ok ]] || _BUS_BAD=true
+}
+
+# A size for people: 1.2 KiB, 3.4 MiB
+_bus_size() {
+  local b="$1"
+  if (( b < 1024 )); then REPLY="$b B"
+  elif (( b < 1048576 )); then printf -v REPLY '%d.%d KiB' $(( b / 1024 )) $(( b % 1024 * 10 / 1024 ))
+  elif (( b < 1073741824 )); then printf -v REPLY '%d.%d MiB' $(( b / 1048576 )) $(( b % 1048576 * 10 / 1048576 ))
+  else printf -v REPLY '%d.%d GiB' $(( b / 1073741824 )) $(( b % 1073741824 * 10 / 1073741824 ))
+  fi
+}
+
+_bus_status_nats() {
+  local state varz version
+  anfs_service_state ANFS_BUS_SVC_NATS; state="$REPLY"
+  NATS_UP=false
+  if _bus_http healthz >/dev/null; then
+    NATS_UP=true
+    varz=$(_bus_http varz) || varz="{}"
+    version=$(yq -p json -oy -r '.version // ""' <<< "$varz" 2>/dev/null) || version=""
+    _bus_row nats ok "${version:+v$version, }127.0.0.1:$ANFS_NATS_PORT (monitoring $ANFS_NATS_HTTP_PORT)${state:+; $state}"
+    return
+  fi
+  case "$state" in
+    "not installed") _bus_row nats "not installed" "ppm install core/nats" ;;
+    "not loaded")    _bus_row nats stopped "anfs bus start nats" ;;
+    *)               _bus_row nats fail "$state, but nothing answers on 127.0.0.1:$ANFS_NATS_HTTP_PORT (anfs bus logs nats)" ;;
+  esac
+}
+
+_bus_status_jetstream() {
+  local jsz line name subjects msgs bytes first last found=false foreign=""
+  if ! $NATS_UP; then _bus_row jetstream fail "NATS is not answering"; return; fi
+  jsz=$(_bus_http 'jsz?streams=true&config=true') || { _bus_row jetstream fail "no JetStream answer (/jsz)"; return; }
+  while IFS=$'\t' read -r name subjects msgs bytes first last; do
+    [[ -n "$name" ]] || continue
+    if [[ "$name" == ANFS ]]; then
+      found=true
+      _bus_size "${bytes:-0}"
+      first="${first%Z}" last="${last%Z}"
+      _bus_row jetstream ok "stream ANFS: $msgs messages, $REPLY${first:+, first ${first%%.*}Z}${last:+, last ${last%%.*}Z}"
+    elif [[ " $subjects " == *" anfs."* || " $subjects " == *" > "* ]]; then
+      foreign+="${foreign:+, }$name ($subjects)"
+    fi
+  done < <(yq -p json -oy -r '(.account_details // [])[] | (.stream_detail // [])[] |
+      [.name, ((.config.subjects // []) | join(" ")), (.state.messages // 0), (.state.bytes // 0),
+       (.state.first_ts // "" | sub("0001-01-01T00:00:00Z", "")), (.state.last_ts // "" | sub("0001-01-01T00:00:00Z", ""))] | @tsv' <<< "$jsz" 2>/dev/null)
+  [[ -z "$foreign" ]] || _bus_row jetstream fail "another stream holds anfs.>: $foreign (anfsd cannot make ANFS)"
+  $found || [[ -n "$foreign" ]] || _bus_row jetstream fail "no stream ANFS yet (anfsd makes it when it starts)"
+}
+
+_bus_status_anfsd() {
+  local state pid="" version from detail
+  anfs_service_state ANFS_BUS_SVC_ANFSD; state="$REPLY"
+  if anfs_bus_anfsd_bin; then
+    version=$("$REPLY" version 2>/dev/null) || version="?"
+    if [[ "$ANFS_BUS_ANFSD_FROM" == source ]]; then from="from source: $(anfs_display "$REPLY")"; else from=release; fi
+    detail="$version ($from)"
+  else
+    detail="no anfsd binary${ANFSD_BIN:+ at ANFSD_BIN=$ANFSD_BIN} (ppm install core/anfsd)"
+  fi
+  [[ ! -f "$ANFSD_STATE_HOME/anfsd.pid" ]] || pid=$(< "$ANFSD_STATE_HOME/anfsd.pid")
+  case "$state" in
+    "not installed") _bus_row anfsd "not installed" "ppm install core/anfsd" ;;
+    "not loaded")    _bus_row anfsd stopped "$detail; anfs bus start anfsd" ;;
+    running\ *)
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then _bus_row anfsd ok "pid $pid, $detail"
+      else _bus_row anfsd ok "${state#running }, $detail"
+      fi ;;
+    *) _bus_row anfsd fail "$state, not running: $detail (anfs bus logs anfsd)" ;;
+  esac
+}
+
+# What is past each cursor, per scope: rows "shipper lag <scope>: N lines, size"
+_bus_status_shipper() {
+  local ev="$ANFS_STATE_HOME/events" cur="$ANFSD_STATE_HOME/cursors.json" f key scope size off n lagged=false
+  local -A cursor=() lines=() bytes=()
+  if [[ -f "$cur" ]]; then
+    while IFS=$'\t' read -r key off; do
+      [[ -n "$key" ]] && cursor[$key]="$off"
+    done < <(yq -p json -oy -r 'to_entries[] | [.key, .value] | @tsv' "$cur" 2>/dev/null)
+  fi
+  for f in "$ev"/*/*.jsonl; do
+    [[ -f "$f" ]] || continue
+    key="${f#"$ev"/}" scope="${key%%/*}"
+    size=$(wc -c < "$f") size="${size//[!0-9]/}"
+    off="${cursor[$key]:-0}"
+    (( size > off )) || continue
+    n=$(tail -c +"$(( off + 1 ))" "$f" | wc -l) n="${n//[!0-9]/}"
+    lines[$scope]=$(( ${lines[$scope]:-0} + n ))
+    bytes[$scope]=$(( ${bytes[$scope]:-0} + size - off ))
+  done
+  for scope in $(printf '%s\n' "${!lines[@]}" | LC_ALL=C sort); do
+    lagged=true
+    _bus_size "${bytes[$scope]}"
+    _bus_row shipper lag "$scope: ${lines[$scope]} lines, $REPLY not shipped"
+  done
+  $lagged || _bus_row shipper ok "nothing to ship"
+}
+
+_bus_status_linger() {
+  [[ "$(anfs_service_os)" == linux ]] || return 0
+  local v
+  v=$(loginctl show-user "${USER:-$(id -un)}" -p Linger --value 2>/dev/null) || v=""
+  if [[ "$v" == yes ]]; then _bus_row linger ok "the bus runs without a login"
+  else _bus_row linger off "loginctl enable-linger ${USER:-$(id -un)}: without it the bus stops when you log out"
+  fi
+}
+
+cmd_status() {
+  _BUS_ROWS=() _BUS_BAD=false
+  _bus_status_nats
+  _bus_status_jetstream
+  _bus_status_anfsd
+  _bus_status_shipper
+  _bus_status_linger
+  printf '%s\n' "${_BUS_ROWS[@]}" | anfs_table "SERVICE STATUS DETAIL" "service status detail"
+  ! $_BUS_BAD
+}
+
+# --- start, stop, restart, reload -------------------------------------------------------------
+
+_bus_say() {
+  if anfs_json_on; then anfs_result service "$1" status "$2"; else anfs_info "$1: $2"; fi
+}
+
+cmd_start() {
+  local s
+  _bus_svcs "${1:-}"
+  for s in "${SVCS[@]}"; do _bus_need "$s"; done
+  for s in "${SVCS[@]}"; do
+    _bus_spec "$s"
+    anfs_service_state "$REPLY"
+    if [[ "$REPLY" == running\ * ]]; then _bus_say "$s" "already running"; continue; fi
+    _bus_spec "$s"
+    anfs_service_load "$REPLY"
+    _bus_say "$s" started
+  done
+}
+
+cmd_stop() {
+  local s i
+  _bus_svcs "${1:-}"
+  for (( i = ${#SVCS[@]} - 1; i >= 0; i-- )); do
+    s="${SVCS[i]}"
+    _bus_spec "$s"
+    anfs_service_stop "$REPLY"
+    _bus_say "$s" stopped
+  done
+}
+
+cmd_restart() {
+  local s
+  _bus_svcs "${1:-}"
+  for s in "${SVCS[@]}"; do _bus_need "$s"; done
+  for s in "${SVCS[@]}"; do
+    if [[ "$s" == nats ]]; then
+      anfs_bus_nats_users
+      anfs_bus_nats_conf || anfs_die "server.conf not written: fix the settings in ~/.config/nats/nats.local.env"
+      anfs_bus_nats_unit
+    else
+      anfs_bus_anfsd_unit || anfs_die "no anfsd to run${ANFSD_BIN:+: ANFSD_BIN=$ANFSD_BIN is not an executable file} (ppm install core/anfsd)"
+    fi
+    _bus_spec "$s"
+    anfs_service_load "$REPLY"
+    _bus_say "$s" restarted
+  done
+}
+
+cmd_reload() {
+  _bus_need anfsd
+  anfs_service_signal ANFS_BUS_SVC_ANFSD HUP || anfs_die "anfsd is not running (anfs bus start anfsd)"
+  _bus_say anfsd reloaded
+}
+
+# --- logs, nats -----------------------------------------------------------------------------
+
+cmd_logs() {
+  local s f
+  local -a files=() units=()
+  _bus_svcs "${1:-}"
+  for s in "${SVCS[@]}"; do
+    _bus_spec "$s"
+    local -n _l="$REPLY"
+    files+=("${_l[log]}") units+=(-u "${_l[unit]}")
+    unset -n _l
+  done
+  if [[ "$(anfs_service_os)" == macos ]]; then
+    for f in "${files[@]}"; do [[ -f "$f" ]] || anfs_warn "no log yet: $(anfs_display "$f")"; done
+    if ${CLI_OPT[follow]:-false}; then exec tail -n 50 -F "${files[@]}"; fi
+    local -a have=()
+    for f in "${files[@]}"; do [[ ! -f "$f" ]] || have+=("$f"); done
+    (( ${#have[@]} )) || return 0
+    exec tail -n 50 "${have[@]}"
+  fi
+  if ${CLI_OPT[follow]:-false}; then exec journalctl --user "${units[@]}" -n 50 -f; fi
+  exec journalctl --user "${units[@]}" -n 50 --no-pager
+}
+
+cmd_nats() {
+  local bin="$ANFS_BIN_DIR/nats"
+  [[ "${1:-}" != -- ]] || shift
+  anfs_bus_nats_admin || anfs_fail 69 "NATS is not set up here (no $(anfs_display "$NATS_STATE_HOME")/port or users/admin): ppm install core/nats"
+  [[ -x "$bin" ]] || bin=$(command -v nats 2>/dev/null) || anfs_fail 69 "no nats CLI (ppm install core/nats)"
+  NATS_URL="$NATS_URL_FOR" NATS_USER=admin NATS_PASSWORD="$NATS_ADMIN_PW" exec "$bin" "$@"
+}
+
+cli_dispatch "$@"

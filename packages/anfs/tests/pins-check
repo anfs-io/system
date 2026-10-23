@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# The pins of a package (lib/anfs/pins.sh's pins.yml) against GitHub: each pin's asset for every
+# release platform (darwin and linux, arm64 and amd64) fetched into a temp directory, its sha256
+# compared with the pin's, the program found inside it. A platform with no pin is fetched and its
+# sum printed (a new release's sums). Run by a package's tests/pins, by hand: it reaches the network
+# and is never part of the bats suite.
+#
+#   pins-check <pins.yml> [--print]     --print: each sum as fetched, as pins.yml's lines
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../home/.local/lib/anfs/bash.sh"
+lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../home/.local/lib/anfs"
+pins="$1"
+print=false
+[[ "${2:-}" != --print ]] || print=true
+command -v yq >/dev/null || { echo "pins: yq is required" >&2; exit 69; }
+command -v curl >/dev/null || { echo "pins: curl is required" >&2; exit 69; }
+# shellcheck source=/dev/null
+source "$lib/paths.sh"
+# shellcheck source=/dev/null
+source "$lib/pins.sh"
+
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/anfs-pins.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+bad=0
+for name in $(yq -r 'keys | .[]' "$pins"); do
+  $print && echo "$name:"
+  for plat in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+    ANFS_PIN_PLATFORM=$plat anfs_pin_read "$pins" "$name" || { echo "FAIL $name: $PIN_ERR"; bad=1; continue; }
+    f="$tmp/$PIN_ASSET"
+    if ! curl -fsSL --retry 3 -o "$f" "$PIN_URL"; then
+      echo "FAIL $name $plat: download failed: $PIN_URL"; bad=1; continue
+    fi
+    anfs_sha256 "$f"; got="$REPLY"
+    case "$PIN_ASSET" in
+      *.zip) inside=$(unzip -Z1 "$f" 2>/dev/null) ;;
+      *) inside=$(tar -tzf "$f" 2>/dev/null) ;;
+    esac
+    grep -qx -- "$PIN_BIN" <<< "$inside" || { echo "FAIL $name $plat: $PIN_ASSET holds no $PIN_BIN"; bad=1; }
+    if $print; then printf '    %s: %s\n' "$plat" "$got"
+    elif [[ -z "$PIN_SHA" ]]; then echo "none $name $PIN_VERSION $plat $got (not pinned)"; bad=1
+    elif [[ "$got" == "$PIN_SHA" ]]; then echo "ok   $name $PIN_VERSION $plat $got"
+    else echo "FAIL $name $PIN_VERSION $plat: sha256 $got, pinned $PIN_SHA"; bad=1
+    fi
+  done
+done
+exit $bad

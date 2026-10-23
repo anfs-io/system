@@ -353,33 +353,101 @@ file_report() {
   [ "$status" -eq 2 ]
 }
 
-@test "wait: 0 once available; 1 at the timeout; 2 for an unknown id" {
+# An event from another process (ANFS_EVENTS on): anfs_emit <args...>
+emit() {
+  env -i HOME="$HOME" PATH="$SYSPATH" ANFS_LOG=off ANFS_ACTOR=shell:test \
+    bash -c 'source "$1/paths.sh"; source "$1/log.sh"; source "$1/events.sh"; shift; anfs_emit "$@"' _ "$LIB" "$@"
+}
+
+# The report file in a space with an id, so its events have a scope of their own
+notes_space() { mkdir -p "$HOME/notes"; printf 'id: notesspc22\n' > "$HOME/notes/space.yml"; }
+
+# A fix on a branch of core, not in the checkout's HEAD: its sha in FIX
+fix_branch() {
+  git -C "$SRC/core" checkout -q -b fix
+  git -C "$SRC/core" -c user.name=t -c user.email=t@t commit -q --allow-empty -m fix
+  FIX=$(git -C "$SRC/core" rev-parse HEAD)
+  git -C "$SRC/core" checkout -q main
+}
+
+@test "wait: 0 at once when available; 1 at the timeout; 2 for an unknown id; --interval is gone" {
   file_report
-  t report wait "r-$DAY-1" --timeout 0 --interval 0
+  t report wait "r-$DAY-1" --timeout 0
   [ "$status" -eq 1 ]
   [[ "$output" == "r-$DAY-1: open"* ]]
   [[ "$stderr" == *"timed out after 0s"* ]]
   sha=$(git -C "$SRC/core" rev-parse HEAD)
   t report close "r-$DAY-1" --commit "$sha"
-  t report wait "r-$DAY-1" --timeout 5 --interval 1
+  t report wait "r-$DAY-1" --timeout 5
   [ "$status" -eq 0 ]
   [[ "$output" == "r-$DAY-1: available"* ]]
-  t report wait "r-$DAY-7" --timeout 5 --interval 1
+  t report wait "r-$DAY-7" --timeout 5
   [ "$status" -eq 2 ]
+  t report wait "nonsense" --timeout 5
+  [ "$status" -eq 2 ]
+  t report wait "r-$DAY-1" --interval 1
+  [ "$status" -eq 64 ]
 }
 
-@test "wait: polls until the fix lands" {
+@test "wait: returns when another process closes the report with a commit already here" {
+  notes_space
   file_report
-  git -C "$SRC/core" checkout -q -b fix
-  git -C "$SRC/core" -c user.name=t -c user.email=t@t commit -q --allow-empty -m fix
   sha=$(git -C "$SRC/core" rev-parse HEAD)
-  git -C "$SRC/core" checkout -q main
-  t report close "r-$DAY-1" --commit "$sha"
-  ( sleep 2; git -C "$SRC/core" merge -q --ff-only fix ) &
-  t report wait "r-$DAY-1" --timeout 30 --interval 1
+  ( sleep 2; t ANFS_EVENTS=on report close "r-$DAY-1" --commit "$sha" ) &
+  local t0=$EPOCHSECONDS
+  t report wait "r-$DAY-1" --timeout 30
   wait
   [ "$status" -eq 0 ]
   [[ "$output" == "r-$DAY-1: available"* ]]
+  (( EPOCHSECONDS - t0 < 10 ))
+}
+
+@test "wait: closed, then the fix pulled: returns on the source.updated" {
+  file_report
+  fix_branch
+  t report close "r-$DAY-1" --commit "$FIX"
+  ( sleep 2; git -C "$SRC/core" merge -q --ff-only fix; emit --host source.updated core from=a "to=$FIX" ) &
+  t report wait "r-$DAY-1" --timeout 30
+  wait
+  [ "$status" -eq 0 ]
+  [[ "$output" == "r-$DAY-1: available"* ]]
+}
+
+@test "wait: the fix merged with no event is not seen: it times out with 1 (nothing polls git)" {
+  file_report
+  fix_branch
+  t report close "r-$DAY-1" --commit "$FIX"
+  ( sleep 1; git -C "$SRC/core" merge -q --ff-only fix ) &
+  t report wait "r-$DAY-1" --timeout 3
+  wait
+  [ "$status" -eq 1 ]
+  [[ "$output" == "r-$DAY-1: fixed"* ]]
+  [[ "$stderr" == *"timed out after 3s"* ]]
+}
+
+@test "wait: git merge-base once per event, none per second; other events read nothing" {
+  notes_space
+  file_report
+  fix_branch
+  t report close "r-$DAY-1" --commit "$FIX"
+  local real
+  real=$(command -v git)
+  printf '#!/bin/sh
+[ "$1 $2 $3" != "-C %s merge-base" ] || echo x >> "%s/merge-base.log"
+exec %s "$@"
+' \
+    "$SRC/core" "$T" "$real" > "$T/bin/git"
+  chmod +x "$T/bin/git"
+  ( sleep 1; emit --at "$HOME/notes" report.closed "r-$DAY-9" commit=abc source=core; emit --host report.filed x ) &
+  t report wait "r-$DAY-1" --timeout 4
+  wait
+  [ "$status" -eq 1 ]
+  # the first read only, over 4 s and two events not about it
+  [ "$(wc -l < "$T/merge-base.log" | tr -d ' ')" = 1 ]
+  ( sleep 1; emit --host source.updated stack from=a to=b ) &
+  t report wait "r-$DAY-1" --timeout 3
+  wait
+  [ "$(wc -l < "$T/merge-base.log" | tr -d ' ')" = 3 ]
 }
 
 # --- check ----------------------------------------------------------------------------------

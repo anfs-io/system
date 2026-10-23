@@ -716,8 +716,8 @@ the caller's `container.yml` (`toolkit: read|write`, pcm above).
   `$ANFS_BIN_DIR` (never `PATH`); the rest is an argv, never a shell string or `eval`. Refused:
   `anfs rpc`, any tool's `implode`.
 - **The grant**: a read is a tool's `list|ls`, `show`, `status`, `path`, `validate`, `--version`,
-  `version` (in a group too, `pmm image list`; through anfs, `anfs package list`), plus `watch`
-  and `version`. Everything else is a write, refused under `--grant read` (the default).
+  `version` (in a group too, `pmm image list`; through anfs, `anfs package list`), `logs` without
+  `-f` (`anfs bus logs`), plus `watch` and `version`. Everything else is a write, refused under `--grant read` (the default).
 - **Each run**: stdin `/dev/null`, `ANFS_RPC=1`, a timeout of `ANFS_RPC_TIMEOUT` seconds (60;
   `{"exit":124,...}`; a stream has none). A read gets `--json` and `ANFS_LOG=off` (a poll is not
   an event). A failure is `{"exit":N,"error":"<last stderr line>"}`.
@@ -780,6 +780,9 @@ This repo (`core/`) contains:
 - `packages/{pcm,pmm,psm,wsm}` — the other tools, each its own package (deps, hooks, tests)
 - `packages/{podman,varlock,node}` — the software the tools run on, part of the base install;
   `packages/qemu` is pmm's, installed with it
+- `packages/{nats,anfsd}` — the bus: NATS with JetStream (pinned binaries) and anfsd (anfs-io/runtime's
+  daemon, pinned or built from source), each a service of the user's, and `anfs bus` (core/anfsd).
+  Not part of the base install yet ("The bus")
 - `stacks/system/` — the toolkit as a stack: `core/anfs`, `core/ppm`, `core/pcm`, `core/psm`,
   `core/wsm` and `podman`, `node`, `varlock`, and `core/ui` running. Not pmm or qemu
   (`ppm install core/pmm`)
@@ -843,7 +846,9 @@ person declared.
   (core/pmm's `05-pmm.conf`: `Include ~/.local/state/pmm/ssh_config`).
 - **Accepted exceptions**, each with its reason:
   - platform locations the OS or another program dictates: the RPC listener's launchd plist and
-    systemd user units (core/anfs), podman's machine (`pcm up` on macOS);
+    systemd user units (core/anfs), the bus's (core/nats's `io.anfs.nats` / `anfs-nats.service`,
+    core/anfsd's `io.anfs.anfsd` / `anfsd.service`: lib/anfs/service.sh), podman's machine (`pcm
+    up` on macOS);
   - stack/ssh's one `Include config.d/*.conf` line appended to `~/.ssh/config` (it is what makes
     `config.d/` work; idempotent), and stack/gam's `gam.cfg` (GAM fixes the place): future
     `setup:` steps;
@@ -1220,7 +1225,7 @@ and names the columns, and the library picks the form.
    `network create`, a build whose definition is gone. Its first column is its plain name (`web1`);
    a defined one is `core/web1`, and a shadowed definition's row is its own `source/name`.
 5. **Lists that are not of a source's resources** (`pmm ps`, `pmm snapshot list`, `anfs
-   callbacks`, `anfs report check`, `events ls`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
+   callbacks`, `anfs report check`, `events ls`, `anfs bus status`, onboard's, stack's ovm's, `anfs work list`, `<tool> config list`) take rule 2 only.
 
 `registry.bats` holds every `anfs_table` header in core's tools to rules 1, 2 and 5. A column a
 person does not need can be in `--json` only: name more keys than headers (`psm list`'s `config`
@@ -1250,6 +1255,7 @@ The keys, which are the interface:
 | `wsm id <prefix>/`, `wsm id --new` | `space`, `status` (`--new` only: `new`, `kept`, `invalid id`, `not written`), `id` |
 | `wsm events ls`, `anfs events ls` | `--json` is not this table's array: the event lines as stored, one per line; the rows' keys are `event`, `subject`, `space`, `by` |
 | `anfs report check` | `check` (`report-to`, `file`, `gh`, `gh-auth`, `origin core`, `origin stack`, `skill`), `status` (`ok`, `fail`), `detail` |
+| `anfs bus status` | `service` (`nats`, `jetstream`, `anfsd`, `shipper`, `linger`), `status` (`ok`, `fail`, `stopped`, `not installed`, `lag`, `off`), `detail` |
 | `pmm ps` | `name`, `arch`, `backend`, `pid`, `ssh` |
 | `pmm snapshot list` | `name`, `build` (the build key it is on; null for a tart snapshot) |
 
@@ -1484,7 +1490,7 @@ to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
 | `anfs report check` | `CHECK STATUS DETAIL`, `ok`/`fail` per row; exit 1 when one fails. The value of `ANFS_REPORT_TO` and its FROM; a file target writable or creatable; or `gh`, `gh auth status` (its only network call), core's and stack's origins on GitHub; and the skill installed for every detected agent (`lib/anfs/skill.sh`, read-only) |
 | `anfs report status <id>` | `open`, `fixed` (closed; the commit not in this host's checkout), `available` (the commit an ancestor of HEAD in the source's live checkout, or with `ANFS_WORK` the job's worktree); exit 0 available, 1 otherwise, 2 an unknown id |
 | `anfs report close <id> --commit SHA [--source S]` | the fix recorded: a file's `Status:` line rewritten; GitHub: a `Fixed in <source> <sha>` comment, then `gh issue close` |
-| `anfs report wait <id> [--timeout 3600] [--interval 60]` | `status` until `available` (0) or the timeout (1); 2 an unknown id. An agent runs it in the background |
+| `anfs report wait <id> [--timeout 3600]` | until `available` (0) or the timeout (1); 2 an unknown id. On events, not a timer: the state once, then the report's scope and the host scope followed (events.sh's `anfs_events_follow`), the state read again only on this report's `report.closed` or a `source.updated` (one `git merge-base` per event, none per tick). A GitHub issue closed by hand emits nothing: seen at the next `source.updated`. An agent runs it in the background |
 
 - **`ANFS_REPORT_TO`** (anfs.env, commented: `github`): `github`, or a path (a leading `~/`
   expanded; it must be absolute). Set per machine in `anfs.local.env`.
@@ -1541,7 +1547,9 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   (`_anfs_ev_parse`): a change to the profile is one place.
 - **Who emits** (01): `anfs report` (`report.filed`: package, title, `to` (`file` or `github`),
   `repo`; `report.closed`: commit, source), into the report file's space, or the host scope for
-  GitHub. `-n` emits nothing.
+  GitHub. `-n` emits nothing. (02a) `anfs src update`, and every source update through
+  `gitsrc_update` in a tool that sourced events.sh: `source.updated` into the host scope for each
+  source whose HEAD moved (subject the alias; `from`, `to` the commits; a clone's `from` empty).
 
 **`events ls`**, one helper (`anfs_events_cli`, `anfs_events_ls`), two commands, as `repo push`:
 
@@ -1557,12 +1565,60 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   (or id; `host`), BY the actor and ` as <role>`.
 - **`-f`** keeps printing (tab-separated, or JSON lines), the backlog first; **`--once`** (with `-f`)
   prints the first match and exits 0, an existing one included: **how an agent waits**, e.g. on a
-  fix: `wsm events ls -f --once --type report.closed --subject <report id>` (beside `anfs report
-  wait`, which polls git). It keeps one descriptor per scope on its newest file and reads what
-  each gained, once a second; a new month's file, a new scope and a file that did not exist yet are
+  fix: `wsm events ls -f --once --type report.closed --subject <report id>` (the bare form of
+  `anfs report wait`, which follows the same way). It keeps one descriptor per scope on its newest
+  file and reads what each gained, once a second (`anfs_events_follow <fn> [deadline]`, which a
+  caller hands each new line; `anfs_events_follow_init` starts it at the files' ends); a new month's file, a new scope and a file that did not exist yet are
   read from their start. The tick is `read -t 1` on a private FIFO: no process per tick, and a tick
   that returns early falls back to `sleep 1`, so it cannot spin (the 2026-10-23 loop).
 - The toolkit API's `watch` is unchanged: it still derives start/end from `anfs.log`.
+- **The files are the record; the bus is for programs.** `events ls` reads the files, `-f`
+  included, whether NATS is up or not (an emit never waits on the bus, so on this host they are
+  never behind it); anfsd ships every line to NATS ("The bus").
+
+## The bus (core/nats, core/anfsd)
+
+The event log on NATS JetStream, for programs (anfsd's consumers from agents/02b, the ui in its
+container from 03): every line of every month file is published, as it is, exactly once per
+event id. NATS is the broker; anfsd (anfs-io/runtime, Go) only ships. The plan is anfs-io/docs
+`units/agents/02-daemon/` (02a).
+
+| | |
+| --- | --- |
+| Subjects | `anfs.<scope>.<noun>.<verb>`: the scope a space id or `host`, then the short type (`anfs.tkj76y3nfx.report.filed`, `anfs.host.source.updated`) |
+| Stream | `ANFS`, subjects `anfs.>`, file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env). A bounded window: the files keep everything |
+| NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; 03's) |
+| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS) |
+| DATA | `~/.local/share/nats/<version>/{nats-server,nats}`, `~/.local/share/anfsd/<version>/anfsd`, linked from `~/.local/bin`; the downloads in `~/.cache/{nats,anfsd}/<version>/` |
+| Services | `lib/anfs/service.sh`: launchd `io.anfs.nats`, `io.anfs.anfsd` (`KeepAlive`, `ThrottleInterval` 10); systemd user `anfs-nats.service`, `anfsd.service` (`Requires=`/`After=` NATS, `KillMode=process`; `Restart=on-failure`, `RestartSec=5`). Written by the packages' `post_install` (absolute paths, the install's PATH and HOME), removed by `post_remove`. On Debian, running without a login needs `loginctl enable-linger` (by hand; `anfs bus status` says so) |
+
+- **Pinned binaries** (`lib/anfs/pins.sh`, `packages/<pkg>/pins.yml`: repo, version, the asset's
+  name, the program's path in it, a sha256 per platform): `anfs_pin_fetch` downloads once, checks
+  the sum (a mismatch fails the install naming both and deletes the file), unpacks into DATA.
+  `packages/<pkg>/tests/pins [--print]` fetches the real assets and checks or prints their sums:
+  by hand when bumping, never in bats. anfsd's sums come after its release (anfs-io/runtime's
+  `release.yml`, a `v*` tag); until then `ANFSD_BIN` (anfsd.local.env: a build from source) is
+  what core/anfsd runs, and `anfs bus status` says `from source`.
+- **The shipper** (anfsd): fsnotify on `events/` and each scope plus a 30 s reconcile; complete
+  lines only; a cursor per month file, written (temp, fsync, rename) only over the prefix NATS
+  acknowledged; `Nats-Msg-Id` the event id, so a resend after a crash is dropped; at most 256
+  awaiting acks, 100 events/s per scope (burst 1000). A line that is not an event is logged once
+  and stepped past. NATS down: backoff 1, 2, 5, 10, 30 s, one log line per change, emitting
+  unaffected.
+- **`anfs bus`** (core/anfsd's `anfs-bus`, the package seam):
+
+| Command | Does |
+| --- | --- |
+| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
+| `anfs bus start\|stop\|restart [nats\|anfsd]` | load, unload (it starts again at the next login), or write again and load; both when none is named, NATS first up and last down. `restart nats` renders `server.conf` from nats.env first; `restart anfsd` writes `ANFSD_BIN` or the release into the unit |
+| `anfs bus reload` | SIGHUP to anfsd (its rules, from 02b) |
+| `anfs bus logs [nats\|anfsd] [-f]` | the log files (macOS) or `journalctl --user` (Linux) |
+| `anfs bus nats -- <args>` | the nats CLI with `NATS_URL` and the admin user in its environment, never on its command line: `anfs bus nats -- stream info ANFS`, `-- sub 'anfs.>'` |
+
+- Under the toolkit API (`bus` is a group), `status` and `logs` without `-f` are reads.
+- Tests: core's bats stub `curl`, `launchctl`, `systemctl` (`ANFS_SERVICE_OS`, `ANFS_PIN_PLATFORM`
+  pick the platforms) and never start a service or reach the network; anfs-io/runtime's Go tests
+  run an embedded nats-server, and its `go/test/e2e.bats` the pinned one in a temp HOME.
 
 ## Key Files
 
@@ -1975,6 +2031,14 @@ packages/anfs/home/.local/lib/anfs/     what every tool sources
                # per line in STATE, built by _anfs_ev_envelope only), anfs_events_space_at/_named, and
                # events ls (anfs_events_cli, anfs_events_ls; read through _anfs_ev_parse only). anfs
                # and wsm source it. See "Events"
+  service.sh   # a user's long-running service: a launchd agent or a systemd user unit, written (absolute
+               # paths, PATH, HOME), loaded, stopped, removed, asked (anfs_service_*; ANFS_SERVICE_OS for
+               # tests). The bus's two; listener.sh (socket-activated) stays as it is
+  pins.sh      # pinned release binaries: anfs_pin_read/_fetch (pins.yml; sha256 checked; CACHE, then
+               # DATA), anfs_pin_link/_unlink (~/.local/bin). core/nats and core/anfsd
+  bus.sh       # the bus's definitions, shared by core/nats's and core/anfsd's hooks and anfs bus: the
+               # service specs, NATS's users and server.conf (anfs_bus_nats_*), anfsd's binary
+               # (anfs_bus_anfsd_bin: ANFSD_BIN or the release). See "The bus"
   report.sh    # anfs report (anfs_report_cli: new, diag, check, status, close, wait): the issue with its
                # diagnostics, filed where ANFS_REPORT_TO says, and followed to its fix. See "Reporting a
                # bug: anfs report"
@@ -2120,6 +2184,9 @@ bats packages/ppm/tests      # ppm: callbacks, meta, linking and -f's backups, i
                              # (manifest.bats: platform, brew and mise stubbed)
 bats packages/pcm/tests      # pcm: sources, validate, remove
 bats packages/psm/tests      # psm: skills from sources, install, implode, ANFS_SKILLS_CLI_VERSION (skills CLI stubbed)
+bats packages/nats/tests     # core/nats's hooks: pins (curl serves fixtures), STATE, server.conf, the service (stubs)
+bats packages/anfsd/tests    # core/anfsd's hooks (the release or ANFSD_BIN) and anfs bus (curl, launchctl,
+                             # systemctl stubbed: status rows, start/stop/restart, logs, nats --)
 bats packages/wsm/tests      # wsm: install (spaces at any depth, ownership, specs, dependencies, the root, -f,
                              # repositories), the state (ls), path/remove/new/add/repo/implode, events,
                              # links: (links.bats), skills: and wsm skill, the ppm callback (skills.bats,

@@ -17,8 +17,10 @@ not_settings() {
     # the bash floor, debug/trace/log/output switches, the manifest's, resolve's and move's per-caller
     # knobs, the API's per-request marker and its test hook, table tests; the job switch
     # (environment only, lib/anfs/work.sh); an event's actor, role and space (each process's own,
-    # lib/anfs/events.sh) and its clock for tests
-    anfs) echo "ANFS_ACTOR ANFS_AS ANFS_SPACE ANFS_EVENTS_TEST_MS ANFS_WORK ANFS_WORK_HOME ANFS_WORK_SAID ANFS_BASH_CANDIDATES ANFS_BASH_REEXEC ANFS_COLOR ANFS_DEBUG ANFS_JSON ANFS_LOG
+    # lib/anfs/events.sh) and its clock for tests; the platform overrides of service.sh and
+    # pins.sh (tests); NATS's settings, which bus.sh reads and core/nats's nats.env documents
+    anfs) echo "ANFS_SERVICE_OS ANFS_PIN_PLATFORM ANFS_NATS_PORT ANFS_NATS_HTTP_PORT ANFS_NATS_MAX_FILE ANFS_NATS_MAX_MEM
+                ANFS_ACTOR ANFS_AS ANFS_SPACE ANFS_EVENTS_TEST_MS ANFS_WORK ANFS_WORK_HOME ANFS_WORK_SAID ANFS_BASH_CANDIDATES ANFS_BASH_REEXEC ANFS_COLOR ANFS_DEBUG ANFS_JSON ANFS_LOG
                 ANFS_MF_KINDS ANFS_MF_SRC_BASE ANFS_MF_YQ_EXTRA ANFS_MOVE_MANIFEST ANFS_NAME_NEST ANFS_RESOLVE_FIRST
                 ANFS_RESOLVE_MARKER ANFS_RPC ANFS_RPC_OS ANFS_TABLE ANFS_TEST_TERMINAL ANFS_TRACE
                 ANFS_ISO_HOME ANFS_SOURCES_HOME" ;;

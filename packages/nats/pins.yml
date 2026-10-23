@@ -1,0 +1,27 @@
+# The NATS programs core/nats installs, at these versions: downloaded once from the release
+# (https://github.com/<repo>/releases/download/<version>/<asset>) into ~/.cache/nats/<version>/,
+# checked against these sha256s (the releases' own SHA256SUMS, 2026-10-23), unpacked into
+# ~/.local/share/nats/<version>/ and linked from ~/.local/bin (lib/anfs/pins.sh).
+#
+# Bump: change version, then every sha256 (tests/pins --print fetches the assets and prints them;
+# the bats tests never reach the network). anfs-io/runtime's CI pins the same nats-server.
+nats-server:
+  repo: nats-io/nats-server
+  version: v2.15.1
+  asset: nats-server-{version}-{os}-{arch}.tar.gz
+  bin: nats-server-{version}-{os}-{arch}/nats-server
+  sha256:
+    darwin-arm64: ed0fe39222ec2e317c4d0e1a9cdc16c63ec523d94f9355d24a902a4db2655ffd
+    darwin-amd64: 3cba5976a4fbd022669d3401cab4147faeb2b4c079712c882edb9ae4e52feb06
+    linux-amd64: bf5edc7b1ce98e885c368cb43a886eb148dc5d0551d99f3cf6141fb5e1954c70
+    linux-arm64: e2fbab4cad7d3c76e3052eb959570393c9d73ba756b70bf8e9eea61e9ae6d49c
+nats:
+  repo: nats-io/natscli
+  version: v0.5.0
+  asset: nats-{version#v}-{os}-{arch}.zip
+  bin: nats-{version#v}-{os}-{arch}/nats
+  sha256:
+    darwin-arm64: 37a6f924bc42c72a38856d9c6125c38885732b2a13387b8bc15d1ff80987520b
+    darwin-amd64: 9fcf6dbe6462c78a1564d03c8970158f50f50c31ebda5350d2da4a597de796e7
+    linux-amd64: d9fc93e9e9ab0310deff7e719a8a0da6f9d66f26d473f039aaee70155507aecc
+    linux-arm64: 39496b0e332ba8d1b7dcbac2019c7d1e7a7f0d0ccefef9da547e9d6eeed408c8

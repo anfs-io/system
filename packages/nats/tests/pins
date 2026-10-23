@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Check core/nats's pins (pins.yml) against GitHub: fetch every pinned asset into a temp directory
+# and compare its sha256 with the pin's. Not part of the bats suite (it reaches the network): run by
+# hand when bumping a pin, and paste what --print prints into pins.yml.
+#
+#   packages/nats/tests/pins            check
+#   packages/nats/tests/pins --print    also print each asset's sha256 as fetched (for a bump)
+set -euo pipefail
+here=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+exec "$here/../../anfs/tests/pins-check" "$here/../pins.yml" "$@"

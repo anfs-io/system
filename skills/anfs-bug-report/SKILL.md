@@ -43,9 +43,11 @@ origins, this skill's install). Exit 1 means a row failed; its DETAIL says what 
 
 ## Waiting for the fix
 
-Run `anfs report wait <id> [--timeout SECS] [--interval SECS]` as a **background command**, so
-your harness tells you when it exits: 0 means the fix is in this host's checkout of the source
-(`anfs report status <id>` says `available`), 1 a timeout. Meanwhile carry on with other work, or
+Run `anfs report wait <id> [--timeout SECS]` as a **background command**, so your harness tells
+you when it exits: 0 means the fix is in this host's checkout of the source (`anfs report status
+<id>` says `available`), 1 a timeout. It waits on events, not on a timer: it looks again when the
+report is closed (`report.closed`) and when a source is updated (`source.updated`, from `anfs src
+update`), so it costs nothing while it waits. Meanwhile carry on with other work, or
 hand the blocked part to someone else; when it exits 0, resume what the bug blocked.
 
 The event way, for the closing itself rather than its arrival here: `wsm events ls -f --once

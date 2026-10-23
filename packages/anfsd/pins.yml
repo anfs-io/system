@@ -1,0 +1,13 @@
+# anfsd, from anfs-io/runtime's releases (a v* tag: .github/workflows/release.yml builds
+# anfsd-<tag>-<os>-<arch>.tar.gz, the binary at its root, and SHA256SUMS). Downloaded once into
+# ~/.cache/anfsd/<version>/, checked, unpacked into ~/.local/share/anfsd/<version>/ and linked
+# from ~/.local/bin (lib/anfs/pins.sh).
+#
+# The sums come after the release exists: tests/pins --print fetches the assets and prints them.
+# Until then no platform is pinned, and the install needs ANFSD_BIN (a build from source; README).
+anfsd:
+  repo: anfs-io/runtime
+  version: v0.1.0
+  asset: anfsd-{version}-{os}-{arch}.tar.gz
+  bin: anfsd
+  sha256: {}

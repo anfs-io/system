@@ -313,3 +313,32 @@ SH
   run rpc <<<'{"run":["wsm","skill","install"]}'
   [[ "$output" == *'refused: a write request (install) under --grant read'* ]]
 }
+
+@test "anfs bus: status and logs without -f are reads; logs -f, start and nats are writes" {
+  cat > "$BIN/anfs-bus" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+source "$LIB/log.sh"
+source "$LIB/table.sh"
+source "$LIB/cli.sh"
+CLI_TOOL="anfs bus"
+cli_cmd status "Status"
+cli_cmd logs "Logs" --opt "-f --follow: Follow"
+cli_cmd start "Start"
+cli_cmd nats "nats" --passthrough --arg "args..."
+cmd_status() { echo '[{"service":"nats","status":"ok","detail":"x"}]'; }
+cmd_logs() { echo "a log line"; }
+cmd_start() { echo started; }
+cmd_nats() { echo nats; }
+cli_dispatch "\$@"
+SH
+  chmod +x "$BIN/anfs-bus"
+  run rpc <<<'{"run":["anfs","bus","status"]}'
+  [ "$output" = '{"exit":0,"data":[{"service":"nats","status":"ok","detail":"x"}]}' ]
+  run rpc <<<'{"run":["anfs","bus","logs"]}'
+  [ "$output" = '{"exit":0,"out":"a log line"}' ]
+  for w in '"logs","-f"' '"logs","--follow"' '"start"' '"nats","--","stream","ls"'; do
+    run rpc <<<"{\"run\":[\"anfs\",\"bus\",$w]}"
+    [[ "$output" == *'refused: a write request ('*') under --grant read'* ]] || { echo "$w: $output"; false; }
+  done
+}

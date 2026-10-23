@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Check core/anfsd's pin (pins.yml) against anfs-io/runtime's release: fetch the asset of every
+# platform the release builds into a temp directory and compare (or, with --print, print) its
+# sha256. After a release, --print gives the four lines to paste under sha256: in pins.yml. Not part
+# of the bats suite (it reaches the network).
+#
+#   packages/anfsd/tests/pins            check
+#   packages/anfsd/tests/pins --print    print each platform's sha256 as fetched
+set -euo pipefail
+here=$(cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+exec "$here/../../anfs/tests/pins-check" "$here/../pins.yml" "$@"

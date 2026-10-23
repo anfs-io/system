@@ -354,3 +354,40 @@ bg_wait() {
   [ "${#lines[@]}" -eq 3 ]
   [[ "$cpu" =~ ^0:00\.[0-2] ]]
 }
+
+# anfs_events_follow with a predicate (anfs report wait's use): <subject to stop on> <seconds>
+follow_from_now() {
+  ( exec env -i HOME="$HOME" PATH="$SYSPATH" TMPDIR="$T" ANFS_LOG=off bash -c '
+      source "$1/paths.sh"; source "$1/log.sh"; source "$1/events.sh"
+      ANFS_EVENTS_DIRS=("$ANFS_EVENTS_HOME/host" "$ANFS_EVENTS_HOME/acmetech22")
+      stop_on() { _anfs_ev_parse "$1" && echo "saw $EV_SUBJECT" && [[ "$EV_SUBJECT" == "$2" ]]; }
+      pred() { stop_on "$1" "$STOP"; }
+      anfs_events_follow_init
+      echo ready
+      STOP="$2" anfs_events_follow pred $(( EPOCHSECONDS + $3 )) && echo stopped || echo "deadline"
+    ' _ "$PKGS/anfs/home/.local/lib/anfs" "$@" ) > "$T/follow" 2>&1 3>&- &
+  BG=$!
+  for _ in $(seq 30); do grep -q ready "$T/follow" 2>/dev/null && break; sleep 0.1; done
+}
+
+@test "follow from now: what is there is skipped; a predicate stops it; a deadline ends it with 1, idle" {
+  cd "$T/out"
+  emit a.b before
+  follow_from_now done 30
+  emit a.b one
+  cd "$SRC/spaces/tech"; emit a.b done
+  bg_wait 5
+  [ "$BG_RC" -eq 0 ]
+  [ "$(cat "$T/follow")" = "ready
+saw one
+saw done
+stopped" ]
+  cd "$T/out"
+  follow_from_now never 3
+  sleep 2
+  cpu=$(ps -o time= -p "$BG" | tr -d ' ')
+  bg_wait 5
+  [ "$(cat "$T/follow")" = "ready
+deadline" ]
+  [[ "$cpu" =~ ^0:00\.[0-1] ]]
+}

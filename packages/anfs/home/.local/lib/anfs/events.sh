@@ -35,7 +35,7 @@
 ANFS_EVENTS_HOME="$ANFS_STATE_HOME/events"
 ANFS_EVENT_MAX=4096
 # The types toolkit code emits (completion; a glob of each noun is offered too)
-ANFS_EVENT_TYPES="report.filed report.closed"
+ANFS_EVENT_TYPES="report.filed report.closed source.updated"
 
 # --- space ids ------------------------------------------------------------------------------
 
@@ -511,9 +511,46 @@ anfs_events_ls() {
   [[ -z "$out" ]] || _anfs_ev_print "$out"
   $follow || return 0
 
-  # Follow: a tick a second; new lines from each scope's newest file; a newer file (a new month),
-  # a new scope or a file that did not exist is read from its start
+  anfs_events_follow _anfs_ev_ls_line
+}
+
+# A followed line, for events ls: printed when it matches; 0 (stop) with --once
+_anfs_ev_ls_line() {
+  _anfs_ev_match "$1" || return 1
+  _anfs_ev_print "$(_anfs_ev_out "$1")"$'\n'
+  ${CLI_OPT[once]:-false}
+}
+
+# Position on each scope's newest file at its end, so anfs_events_follow reads only what is
+# appended from now (anfs report wait: the state is read after this, so nothing falls between)
+anfs_events_follow_init() {
+  local d f
+  local -a files got
+  declare -gA _EV_CUR=() _EV_FD=() _EV_PEND=()
+  _anfs_ev_scopes
+  for d in ${_EV_SCOPES[@]+"${_EV_SCOPES[@]}"}; do
+    files=("$d"/*.jsonl)
+    [[ -e "${files[0]}" ]] || continue
+    f="${files[-1]}"
+    exec {_EV_FD[$d]}<"$f"
+    _EV_CUR[$d]="$f" _EV_PEND[$d]=""
+    mapfile -u "${_EV_FD[$d]}" got
+    (( ${#got[@]} )) && [[ "${got[-1]}" != *$'\n' ]] && _EV_PEND[$d]="${got[-1]}"
+  done
+  return 0
+}
+
+# Follow the scopes (ANFS_EVENTS_DIRS, or every one with ANFS_EVENTS_EVERY=true) from where
+# anfs_events_ls's backlog or anfs_events_follow_init left each: a tick a second, the lines each
+# scope's newest file gained handed to <fn> one by one; a newer file (a new month), a new scope or
+# a file that did not exist is read from its start. 0 when <fn> returns 0 for a line (stop), 1
+# when the deadline (epoch seconds) passes. The tick sleeps (_anfs_ev_tick): no loop spins.
+# Usage: anfs_events_follow <fn> [deadline]
+anfs_events_follow() {
+  local fn="$1" deadline="${2:-}" d f
+  local -a files
   while :; do
+    [[ -z "$deadline" ]] || (( EPOCHSECONDS < deadline )) || return 1
     _anfs_ev_tick
     _anfs_ev_scopes
     for d in ${_EV_SCOPES[@]+"${_EV_SCOPES[@]}"}; do
@@ -522,29 +559,27 @@ anfs_events_ls() {
       f="${files[-1]}"
       if [[ "${_EV_CUR[$d]:-}" != "$f" ]]; then
         if [[ -n "${_EV_CUR[$d]:-}" ]]; then
-          _anfs_ev_drain "$d" && return 0
+          _anfs_ev_drain "$d" "$fn" && return 0
           exec {_EV_FD[$d]}<&-
         fi
         exec {_EV_FD[$d]}<"$f"
         _EV_CUR[$d]="$f" _EV_PEND[$d]=""
       fi
-      _anfs_ev_drain "$d" && return 0
+      _anfs_ev_drain "$d" "$fn" && return 0
     done
   done
 }
 
-# Print what a followed scope's file gained; 0 when --once has its match (stop), 1 otherwise
+# Hand what a followed scope's file gained to <fn>, line by line; 0 when <fn> said stop
 _anfs_ev_drain() {
-  local d="$1" el line
+  local d="$1" fn="$2" el line
   local -a got=()
   mapfile -u "${_EV_FD[$d]}" got
   for el in ${got[@]+"${got[@]}"}; do
     if [[ "$el" != *$'\n' ]]; then _EV_PEND[$d]+="$el"; continue; fi
     line="${_EV_PEND[$d]:-}${el%$'\n'}"
     _EV_PEND[$d]=""
-    _anfs_ev_match "$line" || continue
-    _anfs_ev_print "$(_anfs_ev_out "$line")"$'\n'
-    ${CLI_OPT[once]:-false} && return 0
+    "$fn" "$line" && return 0
   done
   return 1
 }

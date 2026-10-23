@@ -7,7 +7,7 @@
 #   anfs report check                                   can this machine file one: CHECK STATUS DETAIL
 #   anfs report status <id>                             open, fixed or available (exit 0, 1, 1; 2 unknown)
 #   anfs report close <id> --commit SHA [--source S]    the fix: recorded on the report, closed
-#   anfs report wait <id> [--timeout S] [--interval S]  poll status until available (0) or timeout (1)
+#   anfs report wait <id> [--timeout S]                 until available (0) or the timeout (1), on events
 #
 # WHERE IT GOES is ANFS_REPORT_TO (anfs.env; a machine's in anfs.local.env), never the caller's
 # choice: `github` (the default) or a file (a leading ~/ is $HOME; it must then be absolute).
@@ -20,7 +20,10 @@
 #
 # EVENTS (lib/anfs/events.sh): `new` emits report.filed (data: package, title, to, and repo for
 # GitHub) and `close` report.closed (data: commit, source), into the file's space, or the host
-# scope for GitHub; -n emits nothing. An agent waits on the event with
+# scope for GitHub; -n emits nothing. `wait` waits on events: it reads the state once, then
+# follows the report's scope and the host scope and reads it again only on this report's
+# report.closed or a source.updated (anfs src update emits one per source whose HEAD moved): one
+# git merge-base per event, none per tick. The bare form of waiting for the close:
 #   wsm events ls -f --once --type report.closed --subject <id>
 #
 # THE FIX. `close` records the commit: a file's Status line becomes `Status: fixed in <source>
@@ -68,10 +71,12 @@ when available, 1 otherwise, 2 for an unknown id" --arg "id"
     --opt "--commit SHA: The fix" \
     --opt "--source SOURCE: The source the commit is in (default: the report's repo's, or core)" \
     --arg "id"
-  cli_cmd "report wait" "Poll status until the fix is available here (exit 0), or the timeout (1).
-The event way: wsm events ls -f --once --type report.closed --subject <id>" \
+  cli_cmd "report wait" "Wait until the fix is available here (exit 0), or the timeout (1); 2 for
+an unknown id. Waits on events: the state is read again on the report's
+report.closed and on each source.updated (anfs src update), never on a
+timer. A GitHub issue closed by hand is seen at the next source.updated.
+The bare form: wsm events ls -f --once --type report.closed --subject <id>" \
     --opt "--timeout SECS: Give up after this long (default 3600)" \
-    --opt "--interval SECS: Between checks (default 60)" \
     --arg "id"
 }
 
@@ -502,27 +507,57 @@ cmd_report_status() {
   return "$rc"
 }
 
+# The scopes a report's events go to, and source.updated's (the host scope), into ANFS_EVENTS_DIRS
+_anfs_report_scopes() {
+  local sid=""
+  if [[ "$_R_KIND" == file ]] && _anfs_report_dest_try && [[ "$_R_TO" == file ]] &&
+     anfs_events_space_at "${_R_FILE%/*}"; then
+    sid="$ANFS_EV_SID"
+  fi
+  ANFS_EVENTS_DIRS=("$ANFS_EVENTS_HOME/host") ANFS_EVENTS_EVERY=false
+  [[ -z "$sid" ]] || ANFS_EVENTS_DIRS+=("$ANFS_EVENTS_HOME/$sid")
+}
+
+# A followed event, for wait: the state read again on a report.closed of this id or a
+# source.updated, and nothing else; 0 (stop) once it is available, or the id is unknown
+_anfs_report_wait_event() {
+  _anfs_ev_parse "$1" || return 1
+  [[ "$EV_TYPE" == source.updated || ( "$EV_TYPE" == report.closed && "$EV_SUBJECT" == "$_R_WAIT_ID" ) ]] || return 1
+  _R_WAIT_RC=0
+  _anfs_report_state "$_R_WAIT_ID" || _R_WAIT_RC=$?
+  case "$_R_WAIT_RC" in
+    0|2) return 0 ;;
+    3) anfs_warn "$_R_DETAIL; waiting for the next event" ;;
+  esac
+  return 1
+}
+
+# The state once; then the report's scope and the host scope followed (events.sh), the state read
+# again only on a report.closed of this id or a source.updated: one git merge-base per event, none
+# per tick. A GitHub issue closed by hand emits nothing: wait sees it at the next source.updated.
 cmd_report_wait() {
-  local id="$1" timeout="${CLI_OPT[timeout]:-3600}" interval="${CLI_OPT[interval]:-60}" rc start
+  local id="$1" timeout="${CLI_OPT[timeout]:-3600}"
   [[ "$timeout" =~ ^[0-9]+$ ]] || cli_usage_err "--timeout is seconds"
-  [[ "$interval" =~ ^[0-9]+$ ]] || cli_usage_err "--interval is seconds"
-  start=$EPOCHSECONDS
-  while :; do
-    rc=0
-    _anfs_report_state "$id" || rc=$?
-    case "$rc" in
-      0) _anfs_report_say_state "$id"; return 0 ;;
-      2) anfs_fail 2 "$_R_DETAIL" ;;
-      3) anfs_warn "$_R_DETAIL; asking again" ;;
-    esac
-    if (( EPOCHSECONDS - start >= timeout )); then
-      [[ "$rc" != 3 ]] || _R_STATUS=unknown
-      anfs_json_on || anfs_warn "timed out after ${timeout}s"
-      _anfs_report_say_state "$id"
-      return 1
-    fi
-    sleep "$interval"
-  done
+  _anfs_report_need anfs_events_follow events.sh
+  _anfs_report_parse_id "$id" || anfs_fail 2 "'$id' is no report id (r-<date>-<n>, or owner/repo#<n>)"
+  _anfs_report_scopes
+  anfs_events_follow_init
+  _R_WAIT_ID="$id" _R_WAIT_RC=0
+  _anfs_report_state "$id" || _R_WAIT_RC=$?
+  case "$_R_WAIT_RC" in
+    0) _anfs_report_say_state "$id"; return 0 ;;
+    2) anfs_fail 2 "$_R_DETAIL" ;;
+    3) anfs_warn "$_R_DETAIL; waiting for an event" ;;
+  esac
+  if anfs_events_follow _anfs_report_wait_event $(( EPOCHSECONDS + timeout )); then
+    [[ "$_R_WAIT_RC" != 2 ]] || anfs_fail 2 "$_R_DETAIL"
+    _anfs_report_say_state "$id"
+    return 0
+  fi
+  [[ "$_R_WAIT_RC" != 3 ]] || _R_STATUS=unknown
+  anfs_json_on || anfs_warn "timed out after ${timeout}s"
+  _anfs_report_say_state "$id"
+  return 1
 }
 
 cmd_report_close() {

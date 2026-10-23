@@ -687,11 +687,12 @@ _tilde() { anfs_display "$1"; }
 # run[0] is anfs or one of ANFS_TOOLS, from $ANFS_BIN_DIR, never PATH; the rest is an argv,
 # never a shell. Refused: anfs rpc, any implode. Read (allowed under --grant read): a tool's
 # list|ls, show, status, path, validate, --version, version (in a group too: pmm image list;
-# through anfs: anfs package list). A read gets --json and ANFS_LOG=off; every run has stdin
+# through anfs: anfs package list), and logs without -f (anfs bus logs). A read gets --json and
+# ANFS_LOG=off; every run has stdin
 # /dev/null, ANFS_RPC=1 (no terminal: confirm and sudo exit 77) and ANFS_RPC_TIMEOUT seconds
 # (60; a stream has none).
 
-RPC_GROUPS=" agents file image iso link machine network repo skill snapshot src "
+RPC_GROUPS=" agents bus file image iso link machine network repo skill snapshot src "
 RPC_READ=" list ls show status path validate --version version "
 
 # A JSON string, into REPLY
@@ -750,6 +751,7 @@ _rpc_run() {
   [[ "$RPC_VERB" != implode ]] || { _rpc_error "refused: implode"; return 0; }
   [[ "$tool $RPC_VERB" != "anfs rpc" ]] || { _rpc_error "refused: anfs rpc"; return 0; }
   [[ -z "$RPC_VERB" || "$RPC_READ" != *" $RPC_VERB "* ]] || read=true
+  if [[ "$RPC_VERB" == logs && " ${args[*]} " != *" -f "* && " ${args[*]} " != *" --follow "* ]]; then read=true; fi
   [[ -n "$RPC_VERB" ]] || read=true   # the tool's help
   if ! $read && [[ "$RPC_GRANT" != write ]]; then
     _rpc_error "refused: a write request (${RPC_VERB}) under --grant read"
