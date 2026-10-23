@@ -192,6 +192,31 @@ EOF
   ! grep -q '"tool":"anfs"' "$out"
 }
 
+@test "watch: another API connection is not an event; the write it runs is" {
+  unset ANFS_LOG
+  local in="$BATS_TEST_TMPDIR/in" out="$BATS_TEST_TMPDIR/out" i w
+  mkfifo "$in"
+  "$ANFS" rpc <"$in" >"$out" 2>&1 &
+  RPID=$!
+  exec {w}>"$in"
+  printf '%s\n' '{"watch":true}' '{"version":true}' >&$w
+  for i in $(seq 50); do grep -q '"anfs":' "$out" && break; sleep 0.1; done
+  # a client's connection (as a refresh makes), with options before rpc too
+  rpc <<<'{"run":["ppm","list"]}' >/dev/null
+  "$ANFS" -d rpc --grant write <<<'{"run":["ppm","install","a"]}' >/dev/null 2>&1
+  for i in $(seq 50); do grep -q '"event":"end"' "$out" && break; sleep 0.1; done
+  sleep 0.3
+  exec {w}>&-
+  wait "$RPID"
+  RPID=""
+  # both connections are in the log (with the watcher's own), and neither reached the watcher
+  [ "$(grep -c 'anfs\[[0-9]*\] start: [0-9]*-[0-9]* .*rpc' "$HOME/.local/state/anfs/anfs.log")" = 3 ]
+  [ "$(grep -c '"tool":"anfs"' "$out")" = 0 ]
+  grep -Eq '^\{"event":"start",.*"tool":"ppm",.*"args":"install a"\}$' "$out"
+  grep -Eq '^\{"event":"end",.*"tool":"ppm",.*"exit":0\}$' "$out"
+  [ "$(grep -c '"event"' "$out")" = 2 ]
+}
+
 @test "a read is not an event: reads run with ANFS_LOG=off" {
   unset ANFS_LOG
   rpc <<<'{"run":["ppm","list"]}' >/dev/null

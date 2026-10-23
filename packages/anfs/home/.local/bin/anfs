@@ -640,7 +640,8 @@ _tilde() { anfs_display "$1"; }
 #   {"run":[...],"stream":true}            {"out":"<line>"} per line of stdout+stderr, then {"exit":N}
 #   {"run":[...],"yes":true}               the same with -y (before a --, else at the end)
 #   {"watch":true}                         {"event":"start"|"end",...} per tool run, from anfs.log,
-#                                          until stdin closes (other requests still answered)
+#                                          until stdin closes (other requests still answered); an
+#                                          anfs rpc connection itself is never one
 #   {"version":true}                       {"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}
 # A failed run is {"exit":N,"error":"<last stderr line>"}; 77 adds "needs":"terminal" and the
 # command. Anything else is {"error":"..."} and the next line is read.
@@ -780,13 +781,22 @@ _rpc_run() {
 }
 
 # One anfs.log line as an event: <time> <tool>[<pid>] start: <id> <args> | end: <id> <exit>
+# An API connection (anfs rpc) is not a tool run: neither its start nor its end is an event, or a
+# client that refreshes on events and connects to refresh would wake itself forever. What it runs
+# for a client logs (and so is an event) on its own.
 _rpc_events() {
   local line re='^([^ ]+) ([^[ ]+)\[([0-9]+)\] (start|end): ([0-9]+-[0-9]+) ?(.*)$'
-  local time tool pid kind id rest
+  local conn='^(-[^ ]+ )*rpc( |$)' time tool pid kind id rest
+  local -A skip=()
   while IFS= read -r line; do
     [[ "$line" =~ $re ]] || continue
     time=${BASH_REMATCH[1]} pid=${BASH_REMATCH[3]} kind=${BASH_REMATCH[4]}
     id=${BASH_REMATCH[5]} rest=${BASH_REMATCH[6]}
+    if [[ "$kind" == start && "${BASH_REMATCH[2]}" == anfs && "$rest" =~ $conn ]]; then
+      skip[$id]=1
+      continue
+    fi
+    if [[ -n "${skip[$id]:-}" ]]; then unset 'skip[$id]'; continue; fi
     _rpc_str "${BASH_REMATCH[2]}"; tool=$REPLY
     if [[ "$kind" == start ]]; then
       _rpc_str "$rest"
