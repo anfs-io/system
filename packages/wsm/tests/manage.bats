@@ -388,6 +388,11 @@ YML
 repositories:
   - url: $c
 YML
+  space_def acme lab/tech <<YML
+repositories:
+  - url: $c
+    path: repos/gamma
+YML
   wsm install -y acme/ >/dev/null
   d="$HOME/spaces/acme/main"
   br=$(git -C "$d/tech/alpha" branch --show-current)
@@ -402,6 +407,10 @@ YML
   run wsm repo push acme/main
   [ "$status" -eq 1 ]
   [[ "$output" == *"no repositories in space 'acme/main'; did you mean acme/main/?"* ]]
+  # not a space (no space.yml at acme/lab), a prefix of spaces with some: the hint
+  run wsm repo push -n acme/lab
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no space or repository 'acme/lab'; did you mean acme/lab/?"* ]]
   # a spec with no repositories at all
   run wsm repo push acme/spikes/
   [ "$status" -eq 1 ]

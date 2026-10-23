@@ -30,7 +30,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.11.0
+WSM_VERSION=0.11.1
 
 # Paths, sources and the command line come from anfs
 if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
@@ -2146,6 +2146,13 @@ cmd_repo_push() {
     hit=()
     for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do _spec_match "$id" && hit+=("$id"); done
     if [[ ${#hit[@]} -eq 0 ]]; then
+      # Not a space, but a prefix of spaces with repositories (cnfs for cnfs/apps): the prefix was meant
+      if ! $SP_PREFIX; then
+        _spec_parse "$arg/"
+        for i in "${!ANFS_PUSH_IDS[@]}"; do
+          ! _spec_match "${sp[$i]}" || fail 1 "no space or repository '$arg'; did you mean $arg/?"
+        done
+      fi
       [[ -n "${seen[$arg]:-}" ]] || { seen[$arg]=1; names+=("$arg"); }
       continue
     fi
