@@ -371,7 +371,65 @@ YML
   [ -L "$HOME/spaces/acme/main/tech/out" ]
   run wsm __complete repo push ""
   [ "$status" -eq 0 ]
-  [ "$output" = acme/main/tech/repos/alpha ]
+  [ "$output" = $'acme/main/tech/repos/alpha\nacme/main/tech\nacme/main/\nacme/' ]
+}
+
+@test "repo push SPEC: a prefix, a bare id, a name, deduplicated in order; the hint; -n; empty" {
+  local a b c d br
+  export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+  a=$(mkbare alpha) b=$(mkbare beta) c=$(mkbare gamma)
+  space_def acme main <<<'repositories: []'
+  space_def acme main/tech <<YML
+repositories:
+  - url: $a
+  - url: $b
+YML
+  space_def acme main/finance <<YML
+repositories:
+  - url: $c
+YML
+  wsm install -y acme/ >/dev/null
+  d="$HOME/spaces/acme/main"
+  br=$(git -C "$d/tech/alpha" branch --show-current)
+  git -C "$d/tech/alpha" commit -q --allow-empty -m a
+  git -C "$d/finance/gamma" commit -q --allow-empty -m c
+  # -n over the subtree: each in list order, the one not ahead up to date; nothing pushed
+  run wsm repo push -n acme/main/
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/finance/gamma"$'\t'"would push 1"$'\t'"$br"$'\t'"origin/$br"$'\n'"acme/main/tech/alpha"$'\t'"would push 1"$'\t'"$br"$'\t'"origin/$br"$'\n'"acme/main/tech/beta"$'\t'"up to date"$'\t'"$br"$'\t'"origin/$br" ]
+  [ "$(git -C "$a" rev-parse "$br")" != "$(git -C "$d/tech/alpha" rev-parse HEAD)" ]
+  # a bare id with none of its own, children with some: the hint
+  run wsm repo push acme/main
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no repositories in space 'acme/main'; did you mean acme/main/?"* ]]
+  # a spec with no repositories at all
+  run wsm repo push acme/spikes/
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no repositories in the spaces under 'acme/spikes/'"* ]]
+  run wsm repo push acme/spikes/tech
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no repositories in space 'acme/spikes/tech'"* && "$output" != *"did you mean"* ]]
+  # neither a repository nor a space; a spec with --all
+  run wsm repo push acme/nope
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"no repository 'acme/nope' (wsm repo ls)"* ]]
+  run wsm repo push --all acme/main/
+  [ "$status" -eq 64 ]
+  # a name, then a bare id that holds it, then the prefix: each once, in the arguments' order
+  run wsm repo push acme/main/tech/beta acme/main/tech acme/main/
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/tech/beta"$'\t'"up to date"$'\t'"$br"$'\t'"origin/$br"$'\n'"acme/main/tech/alpha"$'\t'"pushed 1"$'\t'"$br"$'\t'"origin/$br"$'\n'"acme/main/finance/gamma"$'\t'"pushed 1"$'\t'"$br"$'\t'"origin/$br" ]
+  [ "$(git -C "$a" rev-parse "$br")" = "$(git -C "$d/tech/alpha" rev-parse HEAD)" ]
+  [ "$(git -C "$c" rev-parse "$br")" = "$(git -C "$d/finance/gamma" rev-parse HEAD)" ]
+  # a bare id: that space's own; nothing ahead is not an error
+  run wsm repo push acme/main/finance
+  [ "$status" -eq 0 ]
+  [ "$output" = "acme/main/finance/gamma"$'\t'"up to date"$'\t'"$br"$'\t'"origin/$br" ]
+  # a spec whose repositories are not cloned: nothing to push
+  rm -rf "$d/finance/gamma"
+  run wsm repo push acme/main/finance
+  [ "$status" -eq 0 ]
+  [ "$output" = "Nothing to push: no repository under acme/main/finance is cloned with an upstream" ]
 }
 
 # --- path ----------------------------------------------------------------------------------

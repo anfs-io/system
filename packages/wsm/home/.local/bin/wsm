@@ -30,7 +30,7 @@ set -euo pipefail
 
 # Bumped by hand at release time. The pre-commit hook bumps package.yml, which the stowed script
 # cannot read at runtime, so the two are kept in step manually.
-WSM_VERSION=0.10.0
+WSM_VERSION=0.11.0
 
 # Paths, sources and the command line come from anfs
 if [[ ! -f "$HOME/.local/lib/anfs/paths.sh" ]]; then
@@ -124,10 +124,11 @@ cli_cmd "repo ssh" "Switch the clones under SPEC from GitHub https to ssh (their
 space.yml is the source's and is not edited" --arg "[spec]"
 cli_cmd "repo push" "Push the current branch of each clone to its upstream (plain git
 push: never forced, no --set-upstream); one with uncommitted changes
-still pushes its commits. Name repositories (as repo list does), or --all" \
+still pushes its commits. Name repositories (as repo list does), or specs
+(an id: that space's; a prefix like cnfs/: every space under it), or --all" \
   --opt "--all: Every repository ahead of its upstream" \
   --opt "-n --dry-run: Say what would be pushed: the branch, its upstream, the commits" \
-  --arg "[repository...]"
+  --arg "[spec-or-repository...]"
 cli_group skill "The agent skills the spaces' space.yml files declare, installed into each space"
 cli_cmd "skill list" "Each skill an installed space declares, and its state there" --alias ls --arg "[spec]"
 cli_cmd "skill install" "Install the skills of the installed spaces under SPEC into their
@@ -180,7 +181,7 @@ and the links that still point at their src first.
 
 A repository is cloned when it is missing and never pulled or deleted: what is checked out is
 yours. repo ssh switches a clone's origin from GitHub https to ssh; repo push pushes the ones you
-name, or every one ahead of its upstream (--all).
+name, those under a spec (repo push cnfs/) that are ahead, or every one ahead of its upstream (--all).
 
 Nothing is recorded: list reads the state off the links (ok, partial with what is missing, wrong,
 in the way or left over, or not in the source).
@@ -2107,11 +2108,15 @@ cmd_repo_ssh() {
   [[ -z "$spec" ]] || $any || fail "$EX_NOTFOUND" "no space '$spec' (wsm ls)"
 }
 
-# `wsm repo push [REPOSITORY...] [--all] [-n]`: every repository the spaces declare (a valid path),
-# named as repo list names it, and its clone (none while its space is not installed), for
-# lib/anfs/repo.sh's push command
+# `wsm repo push [SPEC|REPOSITORY...] [--all] [-n]`: every repository the spaces declare (a valid
+# path), named as repo list names it, and its clone (none while its space is not installed), for
+# lib/anfs/repo.sh's push command. An argument is a repository by that name, else a spec as repo
+# list resolves it: its repositories in list order, those cloned on a branch with an upstream
+# (pushed when ahead, up to date when not; the rest are passed over, as --all passes them over).
 cmd_repo_push() {
-  local id url path ref
+  local id url path ref arg i rid n kids
+  local -a sp=() names=() hit=()
+  local -A seen=()
   _require_yq
   _spaces_load
   _root_load
@@ -2122,13 +2127,53 @@ cmd_repo_push() {
       [[ -n "$path" ]] || continue
       _repo_invalid "$id" "$path"
       [[ -z "$REPLY" ]] || continue
-      ANFS_PUSH_IDS+=("$id/$path")
+      ANFS_PUSH_IDS+=("$id/$path") sp+=("$id")
       if [[ -n "${INSTALLED[$id]:-}" ]]; then _home_of "$id"; ANFS_PUSH_DIRS+=("$REPLY/$path")
       else ANFS_PUSH_DIRS+=("")
       fi
     done < <(_repo_entries "${SPACE_DIR[$id]}/space.yml")
   done
-  anfs_repo_push_cli repository "wsm repo ls" "$@"
+  [[ $# -eq 0 ]] || ! ${CLI_OPT[all]:-false} || cli_usage_err "names or --all, not both"
+  for arg in "$@"; do
+    # An exact repository name wins; neither a repository nor a space: the helper's error
+    rid=""
+    for i in "${!ANFS_PUSH_IDS[@]}"; do [[ "${ANFS_PUSH_IDS[$i]}" != "$arg" ]] || { rid="$arg"; break; }; done
+    if [[ -n "$rid" ]] || ! _valid_spec "$arg"; then
+      [[ -n "${seen[$arg]:-}" ]] || { seen[$arg]=1; names+=("$arg"); }
+      continue
+    fi
+    _spec_parse "$arg"
+    hit=()
+    for id in ${SPACE_IDS[@]+"${SPACE_IDS[@]}"}; do _spec_match "$id" && hit+=("$id"); done
+    if [[ ${#hit[@]} -eq 0 ]]; then
+      [[ -n "${seen[$arg]:-}" ]] || { seen[$arg]=1; names+=("$arg"); }
+      continue
+    fi
+    n=0
+    for i in "${!ANFS_PUSH_IDS[@]}"; do
+      [[ " ${hit[*]} " == *" ${sp[$i]} "* ]] || continue
+      n=$((n + 1))
+      [[ -n "${ANFS_PUSH_DIRS[$i]}" ]] || continue
+      git -C "${ANFS_PUSH_DIRS[$i]}" rev-parse -q --abbrev-ref '@{upstream}' >/dev/null 2>&1 || continue
+      rid="${ANFS_PUSH_IDS[$i]}"
+      [[ -n "${seen[$rid]:-}" ]] || { seen[$rid]=1; names+=("$rid"); }
+    done
+    (( n == 0 )) || continue
+    if ! $SP_PREFIX; then
+      # A bare id whose space has none, but whose children do: the prefix was meant
+      SP_PREFIX=true kids=false
+      for i in "${!ANFS_PUSH_IDS[@]}"; do _spec_match "${sp[$i]}" && { kids=true; break; }; done
+      ! $kids || fail 1 "no repositories in space '$arg'; did you mean $arg/?"
+      fail 1 "no repositories in space '$arg' (wsm repo ls $arg/)"
+    fi
+    fail 1 "no repositories in the spaces under '$arg' (wsm repo ls $arg)"
+  done
+  # Only specs, and none of their repositories can be pushed (not cloned, no upstream)
+  if [[ $# -gt 0 && ${#names[@]} -eq 0 ]]; then
+    if anfs_json_on; then echo '[]'; else echo "Nothing to push: no repository under $* is cloned with an upstream"; fi
+    return 0
+  fi
+  anfs_repo_push_cli repository "wsm repo ls" ${names[@]+"${names[@]}"}
 }
 
 # `wsm new SPACE`: SOURCE/PATH anywhere, or a PATH below where you are (in the tree, or in a source
@@ -2559,6 +2604,17 @@ complete_repository() {
       done
       [[ -n "$q" ]] || printf '%s/%s\n' "$id" "$p"
     done
+  done < <(complete_space) | awk '!seen[$0]++'
+}
+# What repo push takes: the clones (complete_repository), the installed spaces, and the prefixes
+# above them (cnfs/, cnfs/apps/)
+complete_spec_or_repository() {
+  local id p
+  complete_repository
+  while IFS= read -r id; do
+    printf '%s\n' "$id"
+    p="$id"
+    while [[ "$p" == */* ]]; do p="${p%/*}"; printf '%s/\n' "$p"; done
   done < <(complete_space) | awk '!seen[$0]++'
 }
 # The sources (move's destination)

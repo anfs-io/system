@@ -669,8 +669,11 @@ help` documents the commands.
     [SPEC|REPOSITORY]` clones what an installed space declares and is missing (install's clone
     half), and `wsm repo ssh [SPEC]` switches each clone's GitHub https origin to ssh, as `anfs src
     ssh` (`<id>: origin -> git@...`); `space.yml` is the source's and is not edited, an https URL
-    in it is noted (`<id>: https in space.yml`). `wsm repo push [REPOSITORY...|--all] [-n]` is
-    `anfs src push` over the repositories (the same helper, below). The group follows `anfs src`
+    in it is noted (`<id>: https in space.yml`). `wsm repo push [SPEC|REPOSITORY...|--all] [-n]` is
+    `anfs src push` over the repositories (the same helper, below); an argument is an exact
+    repository name, else a spec resolved as `repo ls` does (`_spec_parse`/`_spec_match`), expanded
+    in list order to its clones with an upstream (pushed when ahead, `up to date` when not),
+    deduplicated. A bare id whose space has none but whose children do: `did you mean <id>/?`, 1. The group follows `anfs src`
     where it is cheap: no `update` (space repositories are never pulled), no `add`/`remove` (a
     repository is declared in the source's `space.yml`).
   - `wsm path`/`cd [-s] [QUERY]`: an installed id, else the installed ids that end in `/QUERY`
