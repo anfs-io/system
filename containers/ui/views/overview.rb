@@ -3,12 +3,14 @@
 module Views
   # Everything at a glance: a tile per kind, then sources against kinds.
   class Overview < Phlex::HTML
-    def initialize(store:)
+    def initialize(store:, bus:)
       @store = store
+      @bus = bus
     end
 
     def view_template
       div(id: "overview") do
+        a(href: "/events") { render BusLine.new(bus: @bus) }
         section(class: "tiles") do
           Anfs::KINDS.each_value { |kind| tile(kind, @store[kind.key]) }
         end

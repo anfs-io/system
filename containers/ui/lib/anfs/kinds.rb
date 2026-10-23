@@ -1,6 +1,11 @@
 # frozen_string_literal: true
 
 module Anfs
+  # Every kind is listed again this often (seconds) whatever happens: the slow reconcile behind
+  # the bus's events (Poller), and all a kind with no events of its own gets besides the commands
+  # run from here.
+  RECONCILE = 300
+
   # One kind of asset: the list command that reports it, how often to ask, and how to read a
   # row (core AGENTS.md "Lists and --json"). Every list's first key is the resource, `source/name`
   # (`id`), and `status` is the second; `unset` names a null status (a string, or from the row). `columns` is header =>
@@ -14,7 +19,7 @@ module Anfs
   # `action` says what can be done to a row, as [verb, subject] or nil: the one command that
   # moves it out of the state it is in. The subject is the qualified resource.
   Kind = Data.define(:key, :label, :tool, :args, :every, :id, :columns, :unset, :sourced, :action) do
-    def initialize(unset: nil, sourced: true, action: nil, **) = super
+    def initialize(unset: nil, sourced: true, action: nil, every: RECONCILE, **) = super
 
     def command = [tool, *args, "--json"].join(" ")
 
@@ -45,43 +50,43 @@ module Anfs
   end
 
   KINDS = [
-    Kind.new(key: "sources", label: "Sources", tool: "anfs", args: %w[src list], every: 30, id: "source",
+    Kind.new(key: "sources", label: "Sources", tool: "anfs", args: %w[src list], id: "source",
              sourced: :self,
              columns: { "Source" => "source", "List" => "list", "Provides" => "provides", "URL" => "url" }),
-    Kind.new(key: "stacks", label: "Stacks", tool: "anfs", args: %w[list], every: 60, id: "stack",
+    Kind.new(key: "stacks", label: "Stacks", tool: "anfs", args: %w[list], id: "stack",
              unset: "not installed",
              columns: { "Stack" => "stack", "Version" => "version" }),
     # installed, outdated (the source's version is newer) or null.
-    Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], every: 60, id: "package",
+    Kind.new(key: "packages", label: "Packages", tool: "ppm", args: %w[list], id: "package",
              unset: "available",
              columns: { "Package" => "package", "Version" => "version" },
              action: ->(row) { [row["status"] ? "remove" : "install", row["package"]] }),
-    Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], every: 5, id: "container",
+    Kind.new(key: "containers", label: "Containers", tool: "pcm", args: %w[list], id: "container",
              unset: "not created",
              columns: { "Container" => "container", "Version" => "version", "Description" => "description" },
              action: toggle["container"]),
-    Kind.new(key: "images", label: "Images", tool: "pmm", args: %w[image list], every: 30, id: "image",
+    Kind.new(key: "images", label: "Images", tool: "pmm", args: %w[image list], id: "image",
              columns: { "Image" => "image", "Arch" => "arch", "Backend" => "backend", "Built" => "built" },
              # A plain name's definition is gone: nothing to build it from.
              action: lambda { |row|
                ["build", row["image"]] if %w[unbuilt stale].include?(row["status"]) && row["image"].include?("/")
              }),
-    Kind.new(key: "machines", label: "Machines", tool: "pmm", args: %w[list], every: 5, id: "machine",
+    Kind.new(key: "machines", label: "Machines", tool: "pmm", args: %w[list], id: "machine",
              columns: { "Machine" => "machine", "Image" => "image", "Address" => "address" },
              action: toggle["machine"]),
     # ok, partial (Note says what is missing, wrong, in the way or left over) or not in the source;
     # null is not installed. An id is a path: the root space is its source's alias alone.
-    Kind.new(key: "spaces", label: "Spaces", tool: "wsm", args: %w[list], every: 30, id: "space",
+    Kind.new(key: "spaces", label: "Spaces", tool: "wsm", args: %w[list], id: "space",
              unset: "not installed", sourced: :first,
              columns: { "Space" => "space", "Directory" => "dir", "Note" => "note" },
              action: ->(row) { [row["dir"] ? "remove" : "install", row["space"]] }),
     # missing: its space is installed and it is not cloned. A space not installed is the
     # Spaces panel's install, which clones its repositories too.
-    Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[repo list], every: 60, id: "repository",
+    Kind.new(key: "repos", label: "Repositories", tool: "wsm", args: %w[repo list], id: "repository",
              sourced: :first,
              columns: { "Repository" => "repository", "URL" => "url" },
              action: ->(row) { ["install", row["repository"]] if row["status"] == "missing" }),
-    Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], every: 300, id: "skill",
+    Kind.new(key: "skills", label: "Skills", tool: "psm", args: %w[list], id: "skill",
              columns: { "Skill" => "skill", "Config" => "config", "Repo" => "repo" },
              # psm syncs a whole config, so every row of one shares the subject and the job.
              action: ->(row) { ["sync", row["config"]] unless row["status"] == "ok" })

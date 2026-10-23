@@ -23,7 +23,7 @@ anfs bus nats -- stream info ANFS
 
 NATS listens on `127.0.0.1:47222` (not 4222, which apps in containers publish), its monitoring on
 `127.0.0.1:47223`. The users: `anfsd` publishes, `admin` is yours (`anfs bus nats`), `reader`
-subscribes to `anfs.>` and keeps its own consumers on `ANFS` (the ui's, from 03).
+subscribes to `anfs.>` and keeps its own consumers on `ANFS` (the ui's: `ui`, with the password file mounted read-only into its container).
 
 ## Settings
 

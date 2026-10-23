@@ -37,19 +37,6 @@ module Anfs
       end
     end
 
-    # Yields each event until the connection drops, which raises.
-    def watch
-      connect do |io|
-        send_lines(io, { watch: true })
-        each_answer(io) do |answer|
-          raise Error, answer["error"] if answer["error"]
-
-          yield answer if answer["event"]
-        end
-        raise Error, "the toolkit API closed the connection"
-      end
-    end
-
     private
 
     def parse(url)

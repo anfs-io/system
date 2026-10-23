@@ -58,7 +58,6 @@ SH
 }
 
 teardown() {
-  [[ -z "${RPID:-}" ]] || kill "$RPID" 2>/dev/null || true
   [[ ! -f "$BATS_TEST_TMPDIR/hang.pid" ]] || kill "$(cat "$BATS_TEST_TMPDIR/hang.pid")" 2>/dev/null || true
 }
 
@@ -171,50 +170,11 @@ EOF
   ! kill -0 "$(cat "$BATS_TEST_TMPDIR/hang.pid")" 2>/dev/null
 }
 
-@test "watch: a start and an end event for a run in another process" {
-  unset ANFS_LOG
-  local in="$BATS_TEST_TMPDIR/in" out="$BATS_TEST_TMPDIR/out" i w
-  mkfifo "$in"
-  "$ANFS" rpc <"$in" >"$out" 2>&1 &
-  RPID=$!
-  exec {w}>"$in"
-  printf '%s\n' '{"watch":true}' '{"version":true}' >&$w
-  for i in $(seq 50); do grep -q '"anfs":' "$out" && break; sleep 0.1; done
-  "$BIN/ppm" path core/z >/dev/null
-  for i in $(seq 50); do grep -q '"event":"end"' "$out" && break; sleep 0.1; done
-  exec {w}>&-
-  wait "$RPID"
-  RPID=""
-  grep -Eq '^\{"event":"start","id":"[0-9]+-[0-9]+","tool":"ppm","pid":[0-9]+,"time":"[^"]+","args":"path core/z"\}$' "$out"
-  grep -Eq '^\{"event":"end","id":"[0-9]+-[0-9]+","tool":"ppm","pid":[0-9]+,"time":"[^"]+","exit":0\}$' "$out"
-  # the pair has one id; the rpc's own start (before the watch) is not an event
-  [ "$(grep -o '"id":"[^"]*"' "$out" | sort -u | wc -l | tr -d ' ')" = 1 ]
-  ! grep -q '"tool":"anfs"' "$out"
-}
-
-@test "watch: another API connection is not an event; the write it runs is" {
-  unset ANFS_LOG
-  local in="$BATS_TEST_TMPDIR/in" out="$BATS_TEST_TMPDIR/out" i w
-  mkfifo "$in"
-  "$ANFS" rpc <"$in" >"$out" 2>&1 &
-  RPID=$!
-  exec {w}>"$in"
-  printf '%s\n' '{"watch":true}' '{"version":true}' >&$w
-  for i in $(seq 50); do grep -q '"anfs":' "$out" && break; sleep 0.1; done
-  # a client's connection (as a refresh makes), with options before rpc too
-  rpc <<<'{"run":["ppm","list"]}' >/dev/null
-  "$ANFS" -d rpc --grant write <<<'{"run":["ppm","install","a"]}' >/dev/null 2>&1
-  for i in $(seq 50); do grep -q '"event":"end"' "$out" && break; sleep 0.1; done
-  sleep 0.3
-  exec {w}>&-
-  wait "$RPID"
-  RPID=""
-  # both connections are in the log (with the watcher's own), and neither reached the watcher
-  [ "$(grep -c 'anfs\[[0-9]*\] start: [0-9]*-[0-9]* .*rpc' "$HOME/.local/state/anfs/anfs.log")" = 3 ]
-  [ "$(grep -c '"tool":"anfs"' "$out")" = 0 ]
-  grep -Eq '^\{"event":"start",.*"tool":"ppm",.*"args":"install a"\}$' "$out"
-  grep -Eq '^\{"event":"end",.*"tool":"ppm",.*"exit":0\}$' "$out"
-  [ "$(grep -c '"event"' "$out")" = 2 ]
+@test "watch is gone (agents/03: the ui reads the bus): an unknown request, and the next is answered" {
+  run rpc <<<'{"watch":true}
+{"version":true}'
+  [ "${lines[0]}" = '{"error":"unknown request (run or version)"}' ]
+  [[ "${lines[1]}" == '{"anfs":'* ]]
 }
 
 @test "a read is not an event: reads run with ANFS_LOG=off" {
@@ -287,7 +247,7 @@ tokens() {
   # only the first line: a later one is a request, and not one rpc knows
   run rpc <<<'{"run":["ppm","path","x"]}
 {"token":"anything"}'
-  [ "${lines[1]}" = '{"error":"unknown request (run, watch or version)"}' ]
+  [ "${lines[1]}" = '{"error":"unknown request (run or version)"}' ]
 }
 
 @test "a group's list is a read: wsm skill list (skill is a group), not a write" {

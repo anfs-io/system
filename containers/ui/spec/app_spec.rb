@@ -55,6 +55,54 @@ RSpec.describe App do
     expect(last_response.body).to include("Loading")
   end
 
+  describe "the events page" do
+    let(:events) { Anfs::EventLog.new }
+    let(:bus) { Anfs::BusStatus.new(log: ->(_) {}) }
+    let(:app) do
+      store = self.store
+      jobs = self.jobs
+      events = self.events
+      bus = self.bus
+      Class.new(described_class) do
+        opts.merge!(store:, jobs:, events:, bus_status: bus)
+      end.app
+    end
+
+    it "lists the latest events, newest first: time, type, subject, space, by" do
+      events.add({ "type" => "io.anfs.container.died", "subject" => "valkey_valkey_1", "source" => "/anfs/host",
+                   "time" => "2026-10-23T19:22:07.804Z", "actor" => "podman" })
+      events.add({ "type" => "io.anfs.report.filed", "subject" => "r-20261023-1", "spacepath" => "anfs-dev",
+                   "source" => "/anfs/spaces/tkj76y3nfx", "time" => "2026-10-23T19:23:00Z",
+                   "actor" => "claude:2e9431a0", "actorrole" => "maintainer" })
+
+      get "/events"
+
+      body = last_response.body
+      expect(body).to include('id="events"', "report.filed", "r-20261023-1", "anfs-dev",
+                              "claude:2e9431a0 as maintainer", "container.died", "valkey_valkey_1", "host", "podman",
+                              'src="/stream?show=events"')
+      expect(body.index("report.filed")).to be < body.index("container.died")
+      expect(body).to include("Bus: connecting")
+    end
+
+    it "says the bus is unreachable, why, and that lists are only reconciled" do
+      bus.unreachable("cannot connect to nats://host.containers.internal:47222: Connection refused; next try in 5s", 5)
+
+      get "/events"
+
+      expect(last_response.body).to include("Bus unreachable", "Connection refused; next try in 5s", "every 5 minutes",
+                                            "No events since the dashboard started")
+    end
+
+    it "shows the bus's state on the overview" do
+      bus.connected("nats://host.containers.internal:47222")
+
+      get "/"
+
+      expect(last_response.body).to include("Bus connected", 'href="/events"')
+    end
+  end
+
   it "answers 404 for anything else" do
     get "/nope"
     expect(last_response.status).to eq(404)
@@ -66,7 +114,7 @@ RSpec.describe App do
   context "with no tools, as in a container before the toolkit API" do
     let(:store) do
       Anfs::Store.new.tap do |store|
-        poller = Anfs::Poller.new(store:, hub: Anfs::Hub.new, cli: Anfs::CLI.new(bin_dir: Dir.mktmpdir), events: nil)
+        poller = Anfs::Poller.new(store:, hub: Anfs::Hub.new, cli: Anfs::CLI.new(bin_dir: Dir.mktmpdir))
         Anfs::KINDS.each_value { poller.refresh(it) }
       end
     end

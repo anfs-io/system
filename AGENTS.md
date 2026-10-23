@@ -712,7 +712,6 @@ the caller's `container.yml` (`toolkit: read|write`, pcm above).
 | `{"run":["ppm","list"]}` | `{"exit":0,"data":<the --json output, parsed>}`, or `{"exit":0,"out":"..."}` for text |
 | `{"run":[...],"stream":true}` | `{"out":"<line>"}` per line of stdout and stderr, then `{"exit":N}` |
 | `{"run":[...],"yes":true}` | the same with `-y` (before a `--`, else last) |
-| `{"watch":true}` | `{"event":"start",...}` / `{"event":"end",...,"exit":N}` per tool run, from `anfs.log`, until stdin closes; other requests are still answered |
 | `{"version":true}` | `{"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}`, the installed tools |
 | anything else | `{"error":"..."}`; the next line is still read |
 
@@ -721,7 +720,7 @@ the caller's `container.yml` (`toolkit: read|write`, pcm above).
   `anfs rpc`, any tool's `implode`.
 - **The grant**: a read is a tool's `list|ls`, `show`, `status`, `path`, `validate`, `--version`,
   `version` (in a group too, `pmm image list`; through anfs, `anfs package list`), `logs` without
-  `-f` (`anfs bus logs`), plus `watch` and `version`. Everything else is a write, refused under `--grant read` (the default).
+  `-f` (`anfs bus logs`), plus `version`. Everything else is a write, refused under `--grant read` (the default).
 - **Each run**: stdin `/dev/null`, `ANFS_RPC=1`, a timeout of `ANFS_RPC_TIMEOUT` seconds (60;
   `{"exit":124,...}`; a stream has none). A read gets `--json` and `ANFS_LOG=off` (a poll is not
   an event). A failure is `{"exit":N,"error":"<last stderr line>"}`.
@@ -806,8 +805,13 @@ This repo (`core/`) contains:
   directory read-only at `/app` and `views/` reload) and a `release` one (the source copied in).
   Its own suite: `cd containers/ui && bundle exec rspec && bundle exec rubocop`. In a container it
   reaches the tools through the toolkit API (`lib/anfs/rpc.rb`, `ANFS_RPC_URL`/`ANFS_RPC_TOKEN`:
-  lists, commands streamed with `yes`, `watch` for events); without `ANFS_RPC_URL` it runs them
-  from `ANFS_BIN` and follows `anfs.log` (on the host)
+  lists, commands streamed with `yes`); without `ANFS_RPC_URL` it runs them from `ANFS_BIN` (on
+  the host). It hears what changes from the bus, as NATS's `reader` (`lib/anfs/bus.rb`, the durable
+  consumer `ui` on `ANFS`; the password a read-only mount of `users/reader`, the address
+  `ANFS_UI_BUS_URL`), updates only the kind an event names (container.* from the event's data;
+  `source.updated` and `podman.*` with one list of that kind; the 2 s guard on both), and lists
+  every kind again every 5 minutes. The bus is required: unreachable, it says so on the page and
+  retries (1, 2, 5, 10, 30, then 60 s). `/events` shows the latest events
 - `install.sh` — bootstrap installer for new machines (installs the irreducible prereqs —
   Homebrew, yq, mise — clones this repo, links the base packages `core/anfs` and `core/ppm`,
   installs the login shell's package from stack (`stack/bash` or `stack/zsh`: only a shell
@@ -1608,15 +1612,14 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   caller hands each new line; `anfs_events_follow_init` starts it at the files' ends); a new month's file, a new scope and a file that did not exist yet are
   read from their start. The tick is `read -t 1` on a private FIFO: no process per tick, and a tick
   that returns early falls back to `sleep 1`, so it cannot spin (the 2026-10-23 loop).
-- The toolkit API's `watch` is unchanged: it still derives start/end from `anfs.log`.
+- The toolkit API's `watch` is gone (agents/03): a program follows the bus ("The bus").
 - **The files are the record; the bus is for programs.** `events ls` reads the files, `-f`
   included, whether NATS is up or not (an emit never waits on the bus, so on this host they are
   never behind it); anfsd ships every line to NATS ("The bus").
 
 ## The bus (core/nats, core/anfsd)
 
-The event log on NATS JetStream, for programs (anfsd's consumers, the ui in its container from
-03): every line of every month file is published, as it is, exactly once per event id. NATS is the
+The event log on NATS JetStream, for programs (anfsd's consumers, the ui in its container): every line of every month file is published, as it is, exactly once per event id. NATS is the
 broker; anfsd (anfs-io/runtime, Go) ships, dispatches and supervises ("Dispatch"), and renders the
 report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemon/` (02a, 02b, 02c).
 
@@ -1624,7 +1627,7 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
 | --- | --- |
 | Subjects | `anfs.<scope>.<noun>.<verb>`: the scope a space id or `host`, then the short type (`anfs.tkj76y3nfx.report.filed`, `anfs.host.source.updated`) |
 | Stream | `ANFS`, subjects `anfs.>`, file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env). A bounded window: the files keep everything |
-| NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; 03's) |
+| NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; the ui's, consumer `ui`) |
 | STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch"), `podman.json` (podman's state) |
 | DATA | `~/.local/share/nats/<version>/{nats-server,nats}`, `~/.local/share/anfsd/<version>/anfsd`, linked from `~/.local/bin`; the downloads in `~/.cache/{nats,anfsd}/<version>/` |
 | Services | `lib/anfs/service.sh`: launchd `io.anfs.nats`, `io.anfs.anfsd` (`KeepAlive`, `ThrottleInterval` 10); systemd user `anfs-nats.service`, `anfsd.service` (`Requires=`/`After=` NATS, `KillMode=process`; `Restart=on-failure`, `RestartSec=5`). Written by the packages' `post_install` (absolute paths, the install's PATH and HOME), removed by `post_remove`. On Debian, running without a login needs `loginctl enable-linger` (by hand; `anfs bus status` says so) |

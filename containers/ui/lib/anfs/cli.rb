@@ -20,8 +20,8 @@ module Anfs
   # one (ANFS_RPC_URL), else from ANFS_BIN. Never raises: the tools report failure as text on
   # stderr plus an exit code, and a panel has to be able to show that.
   class CLI
-    # The tools append every invocation to a shared log. The poller follows
-    # that log, so our own calls must stay out of it.
+    # The tools append every invocation to a shared log; a dashboard's reads
+    # are not worth a line in it.
     ENV_OVERRIDES = { "ANFS_LOG" => "off" }.freeze
 
     # Neither the toolkit API (ANFS_RPC_URL) nor the tools themselves (ANFS_BIN).

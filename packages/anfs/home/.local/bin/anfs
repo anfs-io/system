@@ -152,7 +152,7 @@ install and remove): tool, listener, ok or stale, handler" --arg "[tool]"
 cli_cmd log "Print the log every tool writes; of one tool when named" \
   --opt "-f --follow: Keep printing as it grows" --arg "[tool]"
 cli_cmd rpc "The toolkit's API: a JSON request per line on stdin, a JSON
-answer per line on stdout (run, stream, yes, watch, version). Only
+answer per line on stdout (run, stream, yes, version). Only
 the toolkit's tools, never a shell; a write needs --grant write" \
   --opt "--grant GRANT: read (the default) or write" \
   --opt "--token: The first line must be {\"token\":\"...\"}; the token is the grant (the listener's TCP mode)"
@@ -677,9 +677,6 @@ _tilde() { anfs_display "$1"; }
 #   {"run":["ppm","list"]}                 {"exit":0,"data":<--json output>} or {"exit":0,"out":"..."}
 #   {"run":[...],"stream":true}            {"out":"<line>"} per line of stdout+stderr, then {"exit":N}
 #   {"run":[...],"yes":true}               the same with -y (before a --, else at the end)
-#   {"watch":true}                         {"event":"start"|"end",...} per tool run, from anfs.log,
-#                                          until stdin closes (other requests still answered); an
-#                                          anfs rpc connection itself is never one
 #   {"version":true}                       {"anfs":"0.2.9","tools":{"ppm":"0.2.5",...}}
 # A failed run is {"exit":N,"error":"<last stderr line>"}; 77 adds "needs":"terminal" and the
 # command. Anything else is {"error":"..."} and the next line is read.
@@ -821,47 +818,6 @@ _rpc_run() {
   fi
 }
 
-# One anfs.log line as an event: <time> <tool>[<pid>] start: <id> <args> | end: <id> <exit>
-# An API connection (anfs rpc) is not a tool run: neither its start nor its end is an event, or a
-# client that refreshes on events and connects to refresh would wake itself forever. What it runs
-# for a client logs (and so is an event) on its own.
-_rpc_events() {
-  local line re='^([^ ]+) ([^[ ]+)\[([0-9]+)\] (start|end): ([0-9]+-[0-9]+) ?(.*)$'
-  local conn='^(-[^ ]+ )*rpc( |$)' time tool pid kind id rest
-  local -A skip=()
-  while IFS= read -r line; do
-    [[ "$line" =~ $re ]] || continue
-    time=${BASH_REMATCH[1]} pid=${BASH_REMATCH[3]} kind=${BASH_REMATCH[4]}
-    id=${BASH_REMATCH[5]} rest=${BASH_REMATCH[6]}
-    if [[ "$kind" == start && "${BASH_REMATCH[2]}" == anfs && "$rest" =~ $conn ]]; then
-      skip[$id]=1
-      continue
-    fi
-    if [[ -n "${skip[$id]:-}" ]]; then unset 'skip[$id]'; continue; fi
-    _rpc_str "${BASH_REMATCH[2]}"; tool=$REPLY
-    if [[ "$kind" == start ]]; then
-      _rpc_str "$rest"
-      printf '{"event":"start","id":"%s","tool":%s,"pid":%s,"time":"%s","args":%s}\n' \
-        "$id" "$tool" "$pid" "$time" "$REPLY"
-    elif [[ "$rest" =~ ^[0-9]+$ ]]; then
-      printf '{"event":"end","id":"%s","tool":%s,"pid":%s,"time":"%s","exit":%s}\n' \
-        "$id" "$tool" "$pid" "$time" "$rest"
-    fi
-  done
-}
-
-# Follow anfs.log from where it is now; stopped at EOF
-_rpc_watch() {
-  [[ -z "$RPC_WATCH" ]] || { _rpc_error "already watching"; return 0; }
-  declare -F anfs_log_file >/dev/null && anfs_log_file || { _rpc_error "logging is off (ANFS_LOG=off)"; return 0; }
-  mkdir -p "${ANFS_LOG_FILE%/*}"
-  [[ -f "$ANFS_LOG_FILE" ]] || : > "$ANFS_LOG_FILE"
-  local size
-  size=$(wc -c < "$ANFS_LOG_FILE" | tr -d ' ')
-  tail -c +$(( size + 1 )) -F "$ANFS_LOG_FILE" 2>/dev/null > >(_rpc_events) &
-  RPC_WATCH=$!
-}
-
 _rpc_version() {
   local t v out=""
   [[ -n "$CLI_VERSION" ]] || cli_package_version
@@ -887,30 +843,29 @@ _rpc_token() {
 _rpc_request() {
   local f="$RPC_TMP/req" n i
   local -a h
-  if ! printf '%s' "$1" | yq -p json -0 'tag, ((.run | tag) // ""), (.stream // false), (.yes // false), (.watch // false), (.version // false), (.run[]? | (tag, .))' > "$f" 2>/dev/null; then
+  if ! printf '%s' "$1" | yq -p json -0 'tag, ((.run | tag) // ""), (.stream // false), (.yes // false), (.version // false), (.run[]? | (tag, .))' > "$f" 2>/dev/null; then
     _rpc_error "not a JSON request"; return 0
   fi
   mapfile -d '' -t h < "$f"
   [[ "${h[0]:-}" == '!!map' ]] || { _rpc_error "a request is a JSON object"; return 0; }
   if [[ "${h[1]}" == '!!seq' ]]; then
-    n=$(( (${#h[@]} - 6) / 2 ))
+    n=$(( (${#h[@]} - 5) / 2 ))
     (( n > 0 )) || { _rpc_error "run is a non-empty array of strings"; return 0; }
     RPC_ARGV=()
     for (( i = 0; i < n; i++ )); do
-      [[ "${h[6 + i]}" == '!!str' ]] || { _rpc_error "run is a non-empty array of strings"; return 0; }
-      RPC_ARGV+=("${h[6 + n + i]}")
+      [[ "${h[5 + i]}" == '!!str' ]] || { _rpc_error "run is a non-empty array of strings"; return 0; }
+      RPC_ARGV+=("${h[5 + n + i]}")
     done
     _rpc_run "$([[ ${h[2]} == true ]] && echo true || echo false)" "$([[ ${h[3]} == true ]] && echo true || echo false)"
   elif [[ -n "${h[1]}" && "${h[1]}" != '!!null' ]]; then
     _rpc_error "run is a non-empty array of strings"
-  elif [[ "${h[4]}" == true ]]; then _rpc_watch
-  elif [[ "${h[5]}" == true ]]; then _rpc_version
-  else _rpc_error "unknown request (run, watch or version)"
+  elif [[ "${h[4]}" == true ]]; then _rpc_version
+  else _rpc_error "unknown request (run or version)"
   fi
 }
 
 cmd_rpc() {
-  RPC_GRANT="${CLI_OPT[grant]:-read}" RPC_WATCH="" RPC_TIMEOUT="${ANFS_RPC_TIMEOUT:-60}"
+  RPC_GRANT="${CLI_OPT[grant]:-read}" RPC_TIMEOUT="${ANFS_RPC_TIMEOUT:-60}"
   [[ "$RPC_GRANT" == read || "$RPC_GRANT" == write ]] || cli_usage_err "--grant is read or write"
   [[ "$RPC_TIMEOUT" =~ ^[0-9]+$ ]] || cli_usage_err "ANFS_RPC_TIMEOUT is seconds"
   command -v yq >/dev/null 2>&1 || { echo "anfs: yq is required" >&2; exit 69; }
@@ -936,10 +891,6 @@ cmd_rpc() {
     fi
     _rpc_request "$line"
   done
-  if [[ -n "$RPC_WATCH" ]]; then
-    kill "$RPC_WATCH" 2>/dev/null || true
-    wait "$RPC_WATCH" 2>/dev/null || true
-  fi
   rm -rf "$RPC_TMP"
 }
 

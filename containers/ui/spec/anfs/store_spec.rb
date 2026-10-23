@@ -26,4 +26,15 @@ RSpec.describe Anfs::Store do
     expect(store.rows("machines")).to eq([])
     expect(store.rows("containers")).to eq([])
   end
+
+  it "updates a result in one step, from what it holds now" do
+    store.put("containers", result([{ "container" => "stack/valkey", "status" => nil }]))
+
+    expect(store.update("containers") { it.with(rows: [{ "container" => "stack/valkey", "status" => "running" }]) })
+      .to be(true)
+    expect(store.update("containers") { it }).to be(false)
+    expect(store.update("containers") { nil }).to be(false)
+    expect(store.update("machines") { it }).to be(false)
+    expect(store.rows("containers")).to eq([{ "container" => "stack/valkey", "status" => "running" }])
+  end
 end

@@ -20,6 +20,20 @@ module Anfs
       end
     end
 
+    # Replaces a kind's result with what the block makes of it, in one step: a list put meanwhile
+    # is never overwritten with rows older than it. True when the result changed; the block gets
+    # nil before the first result, and returning nil leaves it.
+    def update(key)
+      @mutex.synchronize do
+        old = @snapshots[key]&.result
+        result = yield old
+        return false if result.nil? || result == old
+
+        @snapshots[key] = Snapshot.new(result:, changed_at: Time.now)
+        true
+      end
+    end
+
     def [](key) = @mutex.synchronize { @snapshots[key] }
 
     def rows(key) = self[key]&.result&.rows || []

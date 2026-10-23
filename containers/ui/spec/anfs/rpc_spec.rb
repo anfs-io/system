@@ -124,46 +124,6 @@ RSpec.describe "the toolkit API client" do
     end
   end
 
-  describe Anfs::Watch do
-    it "yields the events and reconnects after the connection drops" do
-      count = 0
-      api do |_request, answer|
-        count += 1
-        answer.call({ event: "start", id: "1-#{count}", tool: "pcm", pid: 1, args: "up ui" })
-      end
-      events = Queue.new
-      thread = Thread.new { described_class.new(rpc, backoff: [0.05]).each { events << it } }
-
-      seen = Array.new(2) { events.pop(timeout: 5) }
-      thread.kill
-
-      expect(seen.map { it["id"] }).to eq(%w[1-1 1-2])
-      expect(@api.connections(2)).to all(eq([{ "watch" => true }]))
-    end
-  end
-
-  describe Anfs::Poller do
-    let(:cli) { instance_double(Anfs::CLI, run: Anfs::Result.new(rows: [], error: nil, exit_code: 0)) }
-
-    it "refreshes a tool's kinds when a watch event shows it changing something, and when it ends" do
-      api do |_request, answer|
-        answer.call({ event: "start", id: "1-1", tool: "ppm", pid: 1, args: "list" })
-        answer.call({ event: "start", id: "1-2", tool: "ppm", pid: 2, args: "install -y stack/ruby" })
-        answer.call({ event: "end", id: "1-1", tool: "ppm", pid: 1, exit: 0 })
-        answer.call({ event: "end", id: "1-2", tool: "ppm", pid: 2, exit: 0 })
-        sleep 5
-      end
-      poller = Anfs::Poller.new(store: Anfs::Store.new, hub:, cli:, kinds: [packages], events: Anfs.events(rpc))
-      nudged = Queue.new
-      allow(poller).to receive(:nudge) { nudged << it }
-
-      poller.start
-      2.times { nudged.pop(timeout: 5) }
-
-      expect(poller).to have_received(:nudge).with("ppm").twice
-    end
-  end
-
   describe Views::Panel do
     it "shows a 77 as a command to run in a terminal, not as a failure" do
       result = Anfs::Result.new(rows: nil, error: "needs sudo", exit_code: 77, command: %w[pmm list --json])
@@ -174,10 +134,5 @@ RSpec.describe "the toolkit API client" do
       expect(html).to include("Run this in a terminal:", "pmm list --json", "needs sudo")
       expect(html).not_to include("failed")
     end
-  end
-
-  it "hands the client from ANFS_RPC_URL to the poller's events" do
-    expect(Anfs.events(Anfs::RPC.new("tcp://127.0.0.1:1"))).to be_a(Anfs::Watch)
-    expect(Anfs.events(nil)).to be_a(Anfs::LogFollower)
   end
 end

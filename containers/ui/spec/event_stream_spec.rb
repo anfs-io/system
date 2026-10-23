@@ -31,7 +31,7 @@ RSpec.describe EventStream do
     socket = fake_socket.new(limit)
     target, keys, content =
       if show == "overview"
-        ["overview", nil, -> { Views::Overview.new(store:) }]
+        ["overview", [*Anfs::KINDS.keys, "bus"], -> { Views::Overview.new(store:, bus: Anfs::BusStatus.new.current) }]
       else
         ["panel-#{show}", [show], -> { Views::Panel.new(kind: Anfs::KINDS.fetch(show), snapshot: store[show]) }]
       end
@@ -59,9 +59,11 @@ RSpec.describe EventStream do
     expect(socket.writes[2]).to eq(": keepalive\n\n")
   end
 
-  it "ignores other kinds on a kind's page, and follows all of them on the overview" do
+  it "ignores other kinds on a kind's page, and follows every kind and the bus on the overview" do
     expect(run("containers", limit: 2, publish: %w[machines]).writes[1]).to eq(": keepalive\n\n")
     expect(run("overview", limit: 2, publish: %w[machines]).writes[1]).to include('target="overview"')
+    expect(run("overview", limit: 2, publish: %w[bus]).writes[1]).to include('target="overview"')
+    expect(run("overview", limit: 2, publish: %w[events job:1]).writes[1]).to eq(": keepalive\n\n")
   end
 
   it "unsubscribes and closes when the browser goes away" do

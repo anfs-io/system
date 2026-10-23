@@ -6,7 +6,13 @@
 # Ruby and the gems only, with this directory mounted read-only at /app, so an edit on the host
 # shows on the next request (views/; for the rest: pcm down ui && pcm up ui). It reaches the tools
 # through the toolkit API: container.yml's toolkit: write has pcm add ANFS_RPC_URL (and on macOS
-# ANFS_RPC_TOKEN, or on Linux the socket's mount).
+# ANFS_RPC_TOKEN, or on Linux the socket's mount). It hears what changes from the bus (core/nats,
+# anfsd) as its reader user: the address is ANFS_UI_BUS_URL, the password core/nats's own file,
+# mounted read-only (never in the environment, the image or a log).
+
+x-pcm:
+  allow_mounts:
+    - ${HOME}/.local/state/nats/users/reader
 
 services:
   ui:
@@ -22,7 +28,10 @@ services:
       ANFS_UI_BIND: "${ANFS_UI_BIND}"
       ANFS_UI_HOSTS: "${ANFS_UI_HOSTS}"
       ANFS_UI_REMOTE_ACTIONS: "${ANFS_UI_REMOTE_ACTIONS}"
+      ANFS_BUS_URL: "${ANFS_UI_BUS_URL}"
+      ANFS_BUS_PASSWORD_FILE: /run/secrets/anfs-bus-reader
     ports:
       - "${ANFS_UI_BIND}:${ANFS_UI_PORT}:9292"
     volumes:
       - .:/app:ro
+      - ${HOME}/.local/state/nats/users/reader:/run/secrets/anfs-bus-reader:ro

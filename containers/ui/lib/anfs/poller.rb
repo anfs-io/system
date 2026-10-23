@@ -1,99 +1,92 @@
 # frozen_string_literal: true
 
 module Anfs
-  # Keeps the store current. Each kind is re-read on its own interval, and
-  # sooner when somebody runs that tool: the toolkit API's watch events, or on
-  # the host the shared anfs log.
+  # Keeps the store current. Every kind is listed at start and then every `every` seconds (a slow
+  # reconcile), and again when a command run from here ends. In between the bus's events update
+  # the kind they name, and only it: container.* from the event's data (no command), the others
+  # with one read of their kind. No event re-reads another kind, or everything.
   #
-  # Nudges coalesce: a kind refreshes at once on the first nudge after a quiet spell, and at most
-  # once per COALESCE seconds however many follow. An event that a refresh itself causes can then
-  # never spin the poller faster than that.
+  # Both coalesce (COALESCE): a kind's read runs at once on the first nudge after a quiet spell,
+  # then at most once per window however many follow, and so does the re-render an event causes.
+  # Nothing an event does can spin the poller (toolkit-api/06).
   class Poller
-    # 2026-10-11T16:58:17-0400 pmm[52089] start: up debian-13
-    START_LINE = /\s(?<tool>\w+)\[(?<pid>\d+)\] start: (?<command>.*)$/
-    READ_ONLY = /\b(list|ls|show|path|ps|builds|docs|status|validate|deps|help|completion|log|callbacks)\b/
-    # An API connection (anfs rpc, maybe after options), with the log line's id before it or not.
-    # Not a change: every refresh through the API is one, so it would wake the poller forever.
-    # (The API no longer sends it as an event; an older one, and the host's log, still have it.)
-    CONNECTION = /\A(?:\d+-\d+\s+)?(?:-\S+\s+)*rpc(?:\s|\z)/
-    MAX_RUN = 600
     COALESCE = 2
+    # Which kind an event re-reads, when its data does not say the row's new state.
+    READS = { "podman.connected" => "containers", "podman.disconnected" => "containers",
+              "source.updated" => "sources" }.freeze
 
-    # events: Anfs.events, a Watch or a LogFollower; nil for none.
-    def initialize(store:, hub:, cli: CLI.new, kinds: KINDS.values, events: Anfs.events)
+    # What the bus delivered lately, for the events page.
+    attr_reader :events
+
+    # bus: an Anfs::Bus (its run yields events), or nil for none.
+    def initialize(store:, hub:, cli: CLI.new, kinds: KINDS.values, bus: nil)
       @store = store
       @hub = hub
       @cli = cli
       @kinds = kinds
-      @events = events
+      @bus = bus
+      @events = EventLog.new
       @wake = kinds.to_h { [it.key, Queue.new] }
-      @writes = Set.new
+      @containers = ContainerRows.new(store:)
+      @renders = Coalescer.new(window: COALESCE)
     end
 
+    # Each kind is listed at once, then its reconciles are spread over the interval (the first
+    # after its share of it), so the API sees one list every ~33 s, not nine at a time.
     def start
-      @kinds.each { |kind| Thread.new { poll(kind) } }
-      Thread.new { @events.each { it.is_a?(Hash) ? event(it) : log_line(it) } } if @events
+      @kinds.each_with_index { |kind, i| Thread.new { poll(kind, kind.every * (i + 1) / @kinds.size) } }
+      Thread.new { @bus.run { apply(it) } } if @bus
       self
     end
 
     def refresh(kind)
-      @hub.publish(kind.key) if @store.put(kind.key, @cli.run(kind.tool, *kind.args))
+      since = @containers.now
+      changed = @store.put(kind.key, @cli.run(kind.tool, *kind.args))
+      changed = @containers.listed(since).positive? || changed if kind.key == ContainerRows::KEY
+      @hub.publish(kind.key) if changed
     end
 
-    # anfs itself changes sources, which every tool reads.
+    # A command run from here has ended: re-read the kinds its tool lists.
     def nudge(tool)
-      @kinds.each { |kind| @wake[kind.key] << true if tool == "anfs" || kind.tool == tool }
+      @kinds.each { |kind| wake(kind.key) if kind.tool == tool }
     end
 
-    # Whether a command (its args, or a log line's command) can change what a kind lists.
-    def change?(tool, args)
-      !(READ_ONLY.match?(args) || (tool == "anfs" && CONNECTION.match?(args)))
-    end
-
-    # A start line only says a command began. Refresh now, and again once its
-    # process is gone, which is when the change it made is complete.
-    def log_line(line)
-      match = START_LINE.match(line)
-      return if match.nil? || !change?(match[:tool], match[:command])
-
-      nudge(match[:tool])
-      Thread.new do
-        wait_for_exit(Integer(match[:pid]))
-        nudge(match[:tool])
-      end
-    end
-
-    # A watch event: refresh when a command that changes something starts, and again when it ends.
-    def event(event)
-      tool = event["tool"]
-      case event["event"]
-      when "start"
-        return unless change?(tool, event["args"].to_s)
-
-        @writes << event["id"]
-        nudge(tool)
-      when "end"
-        nudge(tool) if @writes.delete?(event["id"])
+    # One event from the bus.
+    def apply(event)
+      @events.add(event)
+      publish("events")
+      type = event["type"].to_s.delete_prefix("io.anfs.")
+      noun, verb = type.split(".", 2)
+      if noun == "container"
+        publish(ContainerRows::KEY) if @containers.apply(verb, event)
+      elsif (key = READS[type])
+        wake(key)
       end
     end
 
     private
 
+    def wake(key) = @wake[key]&.<<(true)
+
+    def publish(key) = @renders.call(key) { @hub.publish(key) }
+
     # A nudge within COALESCE of the last refresh waits out the rest of it, and every nudge that
     # comes meanwhile rides along.
-    def poll(kind)
+    def poll(kind, first)
+      timeout = first
       loop do
         last = now
         refresh(kind)
-        wait(kind, last)
+        wait(kind, last, timeout)
+        timeout = kind.every
       rescue StandardError => e
         warn "anfs-ui: #{kind.key}: #{e.class}: #{e.message}"
         sleep kind.every
       end
     end
 
-    def wait(kind, last)
-      return unless @wake[kind.key].pop(timeout: kind.every)
+    def wait(kind, last, timeout)
+      return unless @wake[kind.key].pop(timeout:)
 
       rest = last + COALESCE - now
       sleep rest if rest.positive?
@@ -101,15 +94,5 @@ module Anfs
     end
 
     def now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-
-    def wait_for_exit(pid)
-      deadline = Time.now + MAX_RUN
-      while Time.now < deadline
-        Process.kill(0, pid)
-        sleep 0.25
-      end
-    rescue Errno::ESRCH, Errno::EPERM
-      nil
-    end
   end
 end

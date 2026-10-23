@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 module Views
-  # The page shell. `show` names what this page displays ("overview" or a
-  # kind key); the event stream sends updates for that and nothing else.
+  # The page shell. `show` names what this page displays ("overview", "events" or
+  # a kind key); the event stream sends updates for that and nothing else.
   class Layout < Phlex::HTML
     register_element :turbo_stream_source
 
@@ -42,7 +42,8 @@ module Views
         Anfs::KINDS.each_value do |kind|
           a(href: "/#{kind.key}", **current(kind.key)) { kind.label }
         end
-        a(href: "/jobs", class: "activity", **current("jobs")) { "Activity" }
+        a(href: "/events", class: "activity", **current("events")) { "Events" }
+        a(href: "/jobs", **current("jobs")) { "Activity" }
       end
     end
 

@@ -12,7 +12,10 @@ end
 
 require_relative "app"
 
-poller = Anfs::Poller.new(store: App.opts[:store], hub: App.opts[:hub]).start
+# The bus is required: unreachable, the page says so and the lists are only reconciled.
+bus = Anfs::Bus.new(config: Anfs::Bus::Config.from_env, status: App.opts[:bus_status])
+poller = Anfs::Poller.new(store: App.opts[:store], hub: App.opts[:hub], bus:).start
+App.opts[:events] = poller.events
 # Re-read a tool's lists as soon as a command run from here has finished.
 App.opts[:jobs] = Anfs::Jobs.new(hub: App.opts[:hub], on_finish: ->(kind) { poller.nudge(kind.tool) })
 

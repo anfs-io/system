@@ -11,6 +11,7 @@ require_relative "views/layout"
 require_relative "views/overview"
 require_relative "views/panel"
 require_relative "views/jobs"
+require_relative "views/events"
 require_relative "event_stream"
 
 class App < Roda
@@ -31,6 +32,9 @@ class App < Roda
   opts[:store] = Anfs::Store.new
   opts[:hub] = Anfs::Hub.new
   opts[:jobs] = Anfs::Jobs.new(hub: opts[:hub])
+  # What the bus delivered lately (the poller's, from config.ru), and whether it is reachable.
+  opts[:events] = Anfs::EventLog.new
+  opts[:bus_status] = Anfs::BusStatus.new(hub: opts[:hub])
   # There is no login. Running commands is for whoever is sitting at this
   # machine, unless this says other machines may too.
   opts[:remote_actions] = ENV["ANFS_UI_REMOTE_ACTIONS"] == "1"
@@ -69,6 +73,8 @@ class App < Roda
               EventStream.new(hub: opts[:hub], target: watch.target, keys: watch.keys, &watch.content)]
     end
 
+    r.get("events") { page("Events", "events") }
+
     r.on "jobs" do
       r.get(true) { page("Activity", "jobs") }
       r.get(String) { |id| page("Activity", "job:#{id}") }
@@ -86,15 +92,22 @@ class App < Roda
 
   def store = opts[:store]
   def jobs = opts[:jobs]
+  def bus = opts[:bus_status].current
 
   def watch(show)
     case show
-    when "overview" then Watch.new("overview", nil, -> { Views::Overview.new(store:) })
+    when "overview" then watch_overview
+    when "events" then watch_events
     when "jobs" then Watch.new("jobs", ["jobs"], -> { Views::JobList.new(jobs: jobs.all) })
     when /\Ajob:(\h+)\z/ then watch_job(show, Regexp.last_match(1))
     else watch_kind(Anfs::KINDS[show])
     end
   end
+
+  # Every kind and the bus; not the events or the jobs' output, which change far more often.
+  def watch_overview = Watch.new("overview", [*Anfs::KINDS.keys, "bus"], -> { Views::Overview.new(store:, bus:) })
+
+  def watch_events = Watch.new("events", %w[events bus], -> { Views::Events.new(events: opts[:events].all, bus:) })
 
   def watch_job(show, id)
     Watch.new("job-#{id}", [show], -> { Views::JobPanel.new(job: jobs[id]) }) if jobs[id]

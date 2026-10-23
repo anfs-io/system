@@ -133,6 +133,9 @@ button:hover { border-color: var(--muted); }
   border-radius: 8px;
 }
 nav .activity { margin-left: auto; }
+.bus { margin: 0 0 16px; font-size: 12px; }
+#overview > a { display: block; }
+#overview > a:hover { text-decoration: none; }
 
 @media (max-width: 700px) {
   nav { flex-wrap: nowrap; overflow-x: auto; padding: 10px 12px; white-space: nowrap; }
