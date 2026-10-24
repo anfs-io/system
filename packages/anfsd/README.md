@@ -5,12 +5,16 @@ agents`. anfsd ships every line of the event log (`~/.local/state/anfs/events/`)
 `ANFS`, exactly once per event id; runs the dispatch rules of the installed spaces (`dispatch:` in
 `space.yml`), each run an agent CLI in its own job, supervised; and renders the report records into
 the report file (BACKLOG.md as a view); and follows `podman events`, writing what containers and
-pods do as `container.*` and `pod.*` events in the host scope. AGENTS.md, "The bus" and "Dispatch"; the code and its own
+pods do as `container.*` and `pod.*` events in the host scope; and records what other layers
+publish to NATS directly (its consumer `anfsd-recorder`) into `<scope>/<YYYY-MM>.bus.jsonl` beside
+the spool's month file, so the files stay the complete record. Every event follows the event
+spec, https://github.com/anfs-io/events (`anfs events validate` runs `anfsd validate` over the
+log). AGENTS.md, "The bus" and "Dispatch"; the code and its own
 docs are in anfs-io/runtime.
 
 ```bash
 ppm install core/nats core/anfsd
-anfs bus status                     # nats, jetstream, anfsd, the shipper's lag, dispatch, podman
+anfs bus status                     # nats, jetstream, anfsd, the shipper's lag, the recorder, dispatch, podman
 anfs bus logs anfsd -f
 anfs bus restart anfsd
 anfs bus reload                     # the dispatch rules again (SIGHUP)
@@ -20,6 +24,7 @@ anfs agents match --type report.filed --space anfs-dev --subject r-1 --data to=f
 anfs agents ls                      # the runs: RUN STATUS RULE ROLE SPACE HARNESS JOB AGE
 anfs agents show <run>; anfs agents logs <run> -f; anfs agents stop <run>
 anfs events ls --type 'container.*' -f   # containers as podman reports them
+anfs events validate                # the log against the event spec (anfsd validate)
 ```
 
 ## The binary: a release, or built from source

@@ -22,9 +22,9 @@ setup() {
   cp -R "$REPO/packages/anfsd" "$T/core/packages/anfsd"
   ln -s "$REPO/packages/anfs" "$T/core/packages/anfs"
   PKG="$T/core/packages/anfsd"
-  printf '#!/bin/sh\necho v0.3.0\n' > "$T/fx/anfsd"
+  printf '#!/bin/sh\necho v0.4.0\n' > "$T/fx/anfsd"
   chmod +x "$T/fx/anfsd"
-  tar -czf "$STUB/assets/anfsd-v0.3.0-linux-amd64.tar.gz" -C "$T/fx" anfsd
+  tar -czf "$STUB/assets/anfsd-v0.4.0-linux-amd64.tar.gz" -C "$T/fx" anfsd
   cat > "$T/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 out="" url=""
@@ -40,14 +40,14 @@ STUB
   export PATH="$T/bin:$PATH"
   PLIST="$HOME/Library/LaunchAgents/io.anfs.anfsd.plist"
   UNIT="$HOME/.config/systemd/user/anfsd.service"
-  REL="$HOME/.local/share/anfsd/v0.3.0/anfsd"
+  REL="$HOME/.local/share/anfsd/v0.4.0/anfsd"
 }
 
 sha() { if command -v sha256sum >/dev/null; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
 # pins.yml with the fixture release's sum
 pinned() {
-  S="$(sha "$STUB/assets/anfsd-v0.3.0-linux-amd64.tar.gz")" yq -i '.anfsd.sha256 = {"linux-amd64": strenv(S)}' "$PKG/pins.yml"
+  S="$(sha "$STUB/assets/anfsd-v0.4.0-linux-amd64.tar.gz")" yq -i '.anfsd.sha256 = {"linux-amd64": strenv(S)}' "$PKG/pins.yml"
 }
 
 hook() {
@@ -60,9 +60,9 @@ hook() {
   ANFS_SERVICE_OS=macos run hook post_install
   [[ "$output" != *FAIL* ]] || { echo "$output"; false; }
   [[ "$output" == *"msg: anfsd ships the event log to NATS (release)"* ]]
-  [ "$(cat "$STUB/curl.log")" = "https://github.com/anfs-io/runtime/releases/download/v0.3.0/anfsd-v0.3.0-linux-amd64.tar.gz" ]
+  [ "$(cat "$STUB/curl.log")" = "https://github.com/anfs-io/runtime/releases/download/v0.4.0/anfsd-v0.4.0-linux-amd64.tar.gz" ]
   [ "$(readlink "$HOME/.local/bin/anfsd")" = "$REL" ]
-  [ "$("$HOME/.local/bin/anfsd")" = v0.3.0 ]
+  [ "$("$HOME/.local/bin/anfsd")" = v0.4.0 ]
   grep -q '<key>Label</key><string>io.anfs.anfsd</string>' "$PLIST"
   tr -d ' \n' < "$PLIST" | grep -q "<array><string>$REL</string><string>run</string></array>"
   grep -q "<key>StandardErrorPath</key><string>$HOME/.local/state/anfsd/anfsd.log</string>" "$PLIST"
@@ -97,7 +97,7 @@ hook() {
 
 @test "no release pinned: ANFSD_BIN is enough; without it the install fails saying how" {
   ANFS_SERVICE_OS=linux run hook post_install
-  [[ "$output" == *"FAIL: anfsd v0.3.0 has no sha256 for linux-amd64"*"set ANFSD_BIN in ~/.config/anfsd/anfsd.local.env"* ]]
+  [[ "$output" == *"FAIL: anfsd v0.4.0 has no sha256 for linux-amd64"*"set ANFSD_BIN in ~/.config/anfsd/anfsd.local.env"* ]]
   [ ! -e "$UNIT" ] && [ ! -s "$STUB/curl.log" ]
   printf 'ANFSD_BIN=%s\n' "$T/fx/anfsd" > "$HOME/.config/anfsd/anfsd.local.env"
   ANFS_SERVICE_OS=linux run hook post_install
@@ -122,10 +122,10 @@ hook() {
   [ -f "$HOME/.local/state/anfsd/cursors.json" ] && [ -x "$REL" ]
 }
 
-@test "the real pins: anfs-io/runtime v0.3.0, an archive per platform with anfsd at its root" {
+@test "the real pins: anfs-io/runtime v0.4.0, an archive per platform with anfsd at its root" {
   local p="$REPO/packages/anfsd/pins.yml"
   [ "$(yq -r '.anfsd.repo + " " + .anfsd.version + " " + .anfsd.asset + " " + .anfsd.bin' "$p")" = \
-    "anfs-io/runtime v0.3.0 anfsd-{version}-{os}-{arch}.tar.gz anfsd" ]
+    "anfs-io/runtime v0.4.0 anfsd-{version}-{os}-{arch}.tar.gz anfsd" ]
   yq -r '.anfsd.sha256[]' "$p" | while read -r s; do [[ "$s" =~ ^[0-9a-f]{64}$ ]]; done
 }
 

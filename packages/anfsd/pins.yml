@@ -7,7 +7,7 @@
 # Until then no platform is pinned, and the install needs ANFSD_BIN (a build from source; README).
 anfsd:
   repo: anfs-io/runtime
-  version: v0.3.0
+  version: v0.4.0
   asset: anfsd-{version}-{os}-{arch}.tar.gz
   bin: anfsd
   sha256: {}

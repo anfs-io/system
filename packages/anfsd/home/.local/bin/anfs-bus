@@ -8,7 +8,9 @@
 #   status                         SERVICE STATUS DETAIL: nats (its health on the monitoring
 #                                  port), jetstream (the stream ANFS), anfsd (the service, its
 #                                  pid, its version: release or from source), shipper (what is
-#                                  not shipped yet, per scope), dispatch (the rules loaded, the
+#                                  not shipped yet, per scope), recorder (anfsd's consumer
+#                                  anfsd-recorder: what was published to NATS directly, into
+#                                  <scope>/<YYYY-MM>.bus.jsonl), dispatch (the rules loaded, the
 #                                  runs working and queued), a harness row per harness a rule
 #                                  uses (found, its version), podman (anfsd following podman
 #                                  events: connected, or away with the error and the next try;
@@ -49,7 +51,7 @@ CLI_TOOL="anfs bus"
 anfs_bus_paths
 
 cli_cmd status "Each part of the bus: nats, jetstream (the stream ANFS), anfsd, the
-shipper's lag, dispatch (rules, runs), the harnesses the rules use, podman
+shipper's lag, the recorder (direct publishes into the log), dispatch (rules, runs), the harnesses the rules use, podman
 (its events followed) and linger on Linux; exit 1 when one is not ok
 (podman off or away is not a failure)"
 cli_cmd start "Start NATS and anfsd, or the one named" --arg "[service]"
@@ -112,7 +114,8 @@ _bus_status_nats() {
     NATS_UP=true
     varz=$(_bus_http varz) || varz="{}"
     version=$(yq -p json -oy -r '.version // ""' <<< "$varz" 2>/dev/null) || version=""
-    _bus_row nats ok "${version:+v$version, }127.0.0.1:$ANFS_NATS_PORT (monitoring $ANFS_NATS_HTTP_PORT)${state:+; $state}"
+    anfs_bus_layers
+    _bus_row nats ok "${version:+v$version, }127.0.0.1:$ANFS_NATS_PORT (monitoring $ANFS_NATS_HTTP_PORT)${state:+; $state}${ANFS_BUS_LAYER_USERS[*]:+; layer users ${ANFS_BUS_LAYER_USERS[*]}}"
     return
   fi
   case "$state" in
@@ -122,10 +125,13 @@ _bus_status_nats() {
   esac
 }
 
+_BUS_JSZ=""
 _bus_status_jetstream() {
   local jsz line name subjects msgs bytes first last found=false foreign=""
+  _BUS_JSZ=""
   if ! $NATS_UP; then _bus_row jetstream fail "NATS is not answering"; return; fi
-  jsz=$(_bus_http 'jsz?streams=true&config=true') || { _bus_row jetstream fail "no JetStream answer (/jsz)"; return; }
+  jsz=$(_bus_http 'jsz?streams=true&config=true&consumers=true') || { _bus_row jetstream fail "no JetStream answer (/jsz)"; return; }
+  _BUS_JSZ="$jsz"
   while IFS=$'\t' read -r name subjects msgs bytes first last; do
     [[ -n "$name" ]] || continue
     if [[ "$name" == ANFS ]]; then
@@ -141,6 +147,28 @@ _bus_status_jetstream() {
        (.state.first_ts // "" | sub("0001-01-01T00:00:00Z", "")), (.state.last_ts // "" | sub("0001-01-01T00:00:00Z", ""))] | @tsv' <<< "$jsz" 2>/dev/null)
   [[ -z "$foreign" ]] || _bus_row jetstream fail "another stream holds anfs.>: $foreign (anfsd cannot make ANFS)"
   $found || [[ -n "$foreign" ]] || _bus_row jetstream fail "no stream ANFS yet (anfsd makes it when it starts)"
+  $found || _BUS_JSZ=""
+}
+
+# The recorder (anfsd's durable consumer anfsd-recorder on ANFS): the events published to NATS
+# directly, written into <scope>/<YYYY-MM>.bus.jsonl; from the /jsz the jetstream row read
+_bus_status_recorder() {
+  local pid="" pending ack
+  if ! $NATS_UP; then _bus_row recorder fail "NATS is not answering"; return; fi
+  if [[ -z "$_BUS_JSZ" ]]; then _bus_row recorder fail "no stream ANFS"; return; fi
+  read -r pending ack < <(yq -p json -oy -r '[(.account_details // [])[] | (.stream_detail // [])[] | select(.name == "ANFS") |
+      (.consumer_detail // [])[] | select(.name == "anfsd-recorder")] | .[0] // {} |
+      [(.num_pending // ""), (.num_ack_pending // "")] | join(" ")' <<< "$_BUS_JSZ" 2>/dev/null) || pending=""
+  if [[ -n "$pending" ]]; then
+    _bus_row recorder ok "consumer anfsd-recorder: ${pending} pending, ${ack:-0} awaiting ack (direct publishes into <scope>/<YYYY-MM>.bus.jsonl)"
+    return
+  fi
+  [[ ! -f "$ANFSD_STATE_HOME/anfsd.pid" ]] || pid=$(< "$ANFSD_STATE_HOME/anfsd.pid")
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    _bus_row recorder fail "no consumer anfsd-recorder on ANFS (an anfsd before v0.4.0: anfs bus restart anfsd)"
+  else
+    _bus_row recorder stopped "anfsd is not running"
+  fi
 }
 
 _bus_status_anfsd() {
@@ -175,7 +203,8 @@ _bus_status_shipper() {
     done < <(yq -p json -oy -r 'to_entries[] | [.key, .value] | @tsv' "$cur" 2>/dev/null)
   fi
   for f in "$ev"/*/*.jsonl; do
-    [[ -f "$f" ]] || continue
+    # the recorder's <YYYY-MM>.bus.jsonl is never shipped
+    [[ -f "$f" && "$f" != *.bus.jsonl ]] || continue
     key="${f#"$ev"/}" scope="${key%%/*}"
     size=$(wc -c < "$f") size="${size//[!0-9]/}"
     off="${cursor[$key]:-0}"
@@ -270,6 +299,7 @@ cmd_status() {
   _bus_status_jetstream
   _bus_status_anfsd
   _bus_status_shipper
+  _bus_status_recorder
   _bus_status_dispatch
   _bus_status_podman
   _bus_status_linger
