@@ -29,11 +29,21 @@
 # with O_APPEND (cat): bash's printf writes through a 1 KB stdio buffer on macOS and would split it.
 # Emitting never fails the caller: an error is a warning. ANFS_EVENTS=off writes nothing.
 #
+# A RUN'S SPOOL: inside a run anfsd started (agents/02d), ANFS_EVENTS_SPOOL is the run's own
+# directory (~/.local/state/anfsd/runs/<run id>/events): emits go to
+# $ANFS_EVENTS_SPOOL/<space id>|host/<YYYY-MM>.jsonl instead of the log, and anfsd moves them into
+# the log under the run's identity (it stamps actor, actorspace, actorrole, actorrun, and keeps a
+# differing claim in actorclaimed). The line may then be at most 4096 - 512 bytes, the room the
+# stamp needs. Reading (events ls, report wait) still reads the log: a run sees its own events
+# there once anfsd has ingested them, a second or so later.
+#
 # Functions only, the bash floor (5.2: EPOCHREALTIME, SRANDOM), no tool's code. Needs paths.sh,
 # log.sh, and for events ls cli.sh and table.sh.
 
 ANFS_EVENTS_HOME="$ANFS_STATE_HOME/events"
 ANFS_EVENT_MAX=4096
+# What a line written into a run's spool (ANFS_EVENTS_SPOOL) leaves for anfsd's stamp
+ANFS_EVENT_STAMP_RESERVE=512
 # The types toolkit code emits, anfsd's run.*, container.*, pod.* and podman.* included (completion; a glob of each noun is offered too)
 ANFS_EVENT_TYPES="report.filed report.closed source.updated run.submitted run.working run.completed run.failed run.canceled run.rejected container.created container.started container.stopped container.died container.removed container.paused container.unpaused container.health pod.created pod.started pod.stopped pod.removed podman.connected podman.disconnected"
 
@@ -318,12 +328,16 @@ _anfs_emit() {
   _anfs_ev_envelope "$id" "$t" "$sid" "$spath" "$type" "$subject" "$actor" "$as" "$data"
   line="$REPLY"
 
+  local max=$ANFS_EVENT_MAX root="$ANFS_EVENTS_HOME"
+  if [[ -n "${ANFS_EVENTS_SPOOL:-}" ]]; then
+    root="${ANFS_EVENTS_SPOOL%/}" max=$(( ANFS_EVENT_MAX - ANFS_EVENT_STAMP_RESERVE ))
+  fi
   n=$(LC_ALL=C; printf '%s' "${#line}")
-  if (( n + 1 > ANFS_EVENT_MAX )); then
-    _ANFS_EV_WHY="$(( n + 1 )) bytes, over $ANFS_EVENT_MAX: keep data small"
+  if (( n + 1 > max )); then
+    _ANFS_EV_WHY="$(( n + 1 )) bytes, over $max: keep data small"
     return 1
   fi
-  dir="$ANFS_EVENTS_HOME/${sid:-host}"
+  dir="$root/${sid:-host}"
   file="$dir/${t:0:7}.jsonl"
   if [[ ! -d "$dir" ]]; then
     mkdir -p -- "$dir" 2>/dev/null || { _ANFS_EV_WHY="cannot make $(anfs_display "$dir")"; return 1; }

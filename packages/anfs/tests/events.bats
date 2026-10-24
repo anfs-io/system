@@ -199,6 +199,40 @@ ev() {
   [[ "$output" == *"event a.b not recorded: cannot make"* ]]
 }
 
+@test "emit: ANFS_EVENTS_SPOOL (a run's spool) gets the line, both scopes and --host; the log gets nothing" {
+  SP="$T/run/events"
+  cd "$SRC/spaces/tech"
+  run emit ANFS_EVENTS_SPOOL="$SP" ANFS_ACTOR=claude:89abcdef report.closed r-1 to=file
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  run emit ANFS_EVENTS_SPOOL="$SP/" --host source.updated core
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  cd "$T/out"
+  run emit ANFS_EVENTS_SPOOL="$SP" a.b x
+  [ "$status" -eq 0 ]
+  [ ! -d "$EV" ]
+  [ "$(cat "$SP"/acmetech22/*.jsonl | wc -l | tr -d ' ')" = 1 ]
+  [ "$(cat "$SP"/host/*.jsonl | wc -l | tr -d ' ')" = 2 ]
+  f=$(ls "$SP"/acmetech22/*.jsonl)
+  [ "${f##*/}" = "$(yq -p json -oy -r .time "$f" | cut -c1-7).jsonl" ]
+  [ "$(yq -p json -oy -r '.actor + " " + .source + " " + .type' "$f")" = "claude:89abcdef /anfs/spaces/acmetech22 io.anfs.report.closed" ]
+  # off still wins
+  run emit ANFS_EVENTS=off ANFS_EVENTS_SPOOL="$SP" a.b y
+  [ "$(cat "$SP"/host/*.jsonl | wc -l | tr -d ' ')" = 2 ]
+}
+
+@test "emit: in a run's spool the line keeps 512 bytes for anfsd's stamp: 3700 bytes refused there, accepted in the log" {
+  cd "$T/out"
+  big=$(printf '%03500d' 0)
+  run emit ANFS_EVENTS_SPOOL="$T/sp" a.b x "data=$big"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"event a.b not recorded: "*" bytes, over 3584: keep data small"* ]]
+  [ ! -e "$T/sp/host" ] || [ -z "$(cat "$T"/sp/host/*.jsonl 2>/dev/null)" ]
+  run emit a.b x "data=$big"
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  n=$(wc -c < "$(ls "$EV"/host/*.jsonl)" | tr -d ' ')
+  (( n > 3584 && n <= 4096 ))
+}
+
 @test "emit: 20 at once, each near 4 KB, give 20 whole lines" {
   cd "$T/out"
   big=$(printf '%03800d' 0)

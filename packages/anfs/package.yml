@@ -1,4 +1,4 @@
-version: 0.2.17
+version: 0.2.18
 author: rjayroach
 # core/anfs is the anfs command and the libraries every tool shares. It depends on what the anfs
 # command itself runs and nothing else: ppm, for `anfs src install` and the stacks. The toolkit
