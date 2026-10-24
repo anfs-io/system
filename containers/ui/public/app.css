@@ -188,7 +188,7 @@ nav .activity { margin-left: auto; }
   /* A listing row becomes a card: its first cell as the title, the rest
      beneath it, status and button down the right-hand side. */
   .panel thead { display: none; }
-  caption.sort-control { display: table-caption; }
+  .panel caption.sort-control { display: table-caption; }
   .panel tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 9px 12px; }
   .panel tr[hidden] { display: none; }
   .panel tr:not(:last-child) { border-bottom: 1px solid var(--line); }
