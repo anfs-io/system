@@ -1,7 +1,7 @@
 // public/sort.js under node's own runner: node --test spec/js (sort_spec.rb runs it when node is on PATH).
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { ariaSort, compare, detect, order, next } from "../../public/sort.js"
+import { ariaSort, compare, detect, order, next, pick, reversed } from "../../public/sort.js"
 
 const sorted = (values, type, direction) => order(values, type, direction).map((i) => values[i])
 
@@ -52,4 +52,12 @@ test("a click sorts ascending, again descending, another column ascending; aria-
   assert.equal(ariaSort(choice, "Package"), null)
   assert.equal(ariaSort(null, "Package"), null)
   assert.deepEqual(next(choice, "Package"), { column: "Package", direction: "ascending" })
+})
+
+test("the phone control: a column picked sorts ascending, the button turns it, none is the server's order", () => {
+  assert.deepEqual(pick("Version"), { column: "Version", direction: "ascending" })
+  assert.equal(pick(""), null)
+  assert.deepEqual(reversed(pick("Version")), { column: "Version", direction: "descending" })
+  assert.deepEqual(reversed(reversed(pick("Version"))), pick("Version"))
+  assert.equal(reversed(null), null)
 })

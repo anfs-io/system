@@ -40,14 +40,43 @@ module Views
   module Sortable
     TYPES = %w[number version time text].freeze
 
-    def sortable_table(key, **, &) = table(**, data: { controller: "sort", sort_key_value: key }, &)
+    # The table's rows are written first, so its sort_headers name the columns of the control that
+    # goes before them: a caption (inside the table, so it is re-rendered with it) with a select of
+    # those columns and a direction button, shown only where the headers are not (app.css).
+    def sortable_table(key, **, &)
+      @sort_columns = []
+      rows = capture(&)
+      table(**, data: { controller: "sort", sort_key_value: key }) do
+        sort_control(@sort_columns)
+        raw(safe(rows))
+      end
+    end
 
     # type is one of TYPES; nil leaves it to the column's values.
     def sort_header(label, type: nil)
       raise ArgumentError, "sort type #{type}" unless type.nil? || TYPES.include?(type)
 
+      @sort_columns&.push(label)
       th(data: { sort_column: label, sort_type: type }.compact) do
         button(type: "button", class: "sort", data: { action: "sort#by" }) { label }
+      end
+    end
+
+    # Nothing chosen until the browser says otherwise: the server's order, "—" selected, the button
+    # off; the controller sets the select, the arrow and the label from the stored choice.
+    def sort_control(columns)
+      caption(class: "sort-control") do
+        div do
+          label do
+            span { "Sort" }
+            select(data: { sort_target: "select", action: "sort#choose" }) do
+              option(value: "", selected: true) { "—" }
+              columns.each { |column| option(value: column) { column } }
+            end
+          end
+          button(type: "button", disabled: true, aria_label: "Order", data: { sort_target: "direction",
+                                                                              action: "sort#reverse" }) { "▲" }
+        end
       end
     end
 

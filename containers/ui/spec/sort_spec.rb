@@ -75,6 +75,44 @@ RSpec.describe "sortable tables" do
                                      '<td data-sort-value="ppm install -y stack/node">')
   end
 
+  def sort_control(*columns)
+    options = columns.map { %(<option value="#{it}">#{it}</option>) }.join
+    none = %(<option value="" selected>—</option>)
+    select = %(<select data-sort-target="select" data-action="sort#choose">#{none}#{options}</select>)
+    button = %(<button type="button" disabled aria-label="Order" data-sort-target="direction" ) +
+             %(data-action="sort#reverse">▲</button>)
+    %(<caption class="sort-control"><div><label><span>Sort</span>#{select}</label>#{button}</div></caption>)
+  end
+
+  it "puts a phone's sort control (select and direction) first in every table, its columns the headers'" do
+    packages = sort_control("Package", "Version", "Status")
+    expect(body("/packages")).to include(%(data-sort-key-value="packages">#{packages}<thead>))
+    overview = body("/")
+    kinds = Anfs::KINDS.values.select { it.sourced == true }.map(&:label)
+    expect(overview).to include(%(data-sort-key-value="overview">#{sort_control("Source", *kinds)}))
+    expect(overview.scan('<caption class="sort-control">').size).to eq(overview.scan("<table").size)
+    expect(body("/events")).to include(sort_control("Time", "Type", "Subject", "Space", "By"))
+    expect(body("/jobs")).to include(sort_control("Started", "Command", "Status"))
+  end
+
+  it "writes each table's control with its own columns" do
+    view = Class.new(Phlex::HTML) do
+      include Views::Sortable
+
+      def view_template
+        2.times do |n|
+          sortable_table("t#{n}") do
+            thead { tr { sort_header("A#{n}") } }
+            tbody { tr { td { "<x>" } } }
+          end
+        end
+      end
+    end
+    html = view.new.call
+    expect(html.scan(/<option value="A\d">/)).to eq(['<option value="A0">', '<option value="A1">'])
+    expect(html).to include("<td>&lt;x&gt;</td>") # the rows are escaped once, not twice
+  end
+
   it "leaves aria-sort to the browser: the server's order is no column's" do
     expect(%w[/ /packages /events /jobs].map { body(it) }.join).not_to include("aria-sort")
   end

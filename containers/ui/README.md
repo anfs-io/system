@@ -2,7 +2,7 @@
 
 A local dashboard over the anfs tools. It runs each tool's list command with `--json`, shows the results, and updates open pages as they change. Packages can be installed and removed, and containers and machines brought up and down, from their rows.
 
-Every table sorts by the header clicked (again: the other way), with ▲/▼ and `aria-sort` on that column. Versions sort by version (0.10.0 after 0.9.0), times by time, numbers by number, text without case and naturally (item2 before item10), blanks last. The choice is kept per table in the browser (`localStorage`), and applied again each time the table is re-rendered by an update and on every page; nothing chosen, the server's order stands.
+Every table sorts by the header clicked (again: the other way), with ▲/▼ and `aria-sort` on that column. Versions sort by version (0.10.0 after 0.9.0), times by time, numbers by number, text without case and naturally (item2 before item10), blanks last. The choice is kept per table in the browser (`localStorage`), and applied again each time the table is re-rendered by an update and on every page; nothing chosen, the server's order stands. On a phone, where the headers are hidden, a Sort select and a ▲/▼ button above the table make the same choice.
 
 It ships as a pcm service of core (`containers/ui`, in the `system` stack, running). In the container it reaches the tools through the toolkit API (`anfs rpc`, core AGENTS.md "The toolkit API"), and hears what changes from the bus (core/nats and anfsd, core AGENTS.md "The bus"). The bus is required: install core/nats and core/anfsd first.
 

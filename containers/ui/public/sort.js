@@ -85,5 +85,11 @@ export function next(choice, column) {
   return { column, direction }
 }
 
+// The phone control's choices: a column picked from the select sorts ascending ("" is none, the
+// server's order); the direction button turns the choice the other way.
+export const pick = (column) => (column ? { column, direction: "ascending" } : null)
+export const reversed = (choice) =>
+  choice && { ...choice, direction: choice.direction === "ascending" ? "descending" : "ascending" }
+
 // A header's aria-sort under choice: its direction for the chosen column, nothing for the others.
 export const ariaSort = (choice, column) => (choice && choice.column === column ? choice.direction : null)

@@ -97,6 +97,25 @@ th[aria-sort] { color: var(--text); }
 th[aria-sort="ascending"] > button.sort::after { content: " ▲"; }
 th[aria-sort="descending"] > button.sort::after { content: " ▼"; }
 
+/* The phone's sort control (Views::Sortable#sort_control): a caption, shown only on a phone (below),
+   where a panel's headers are hidden. */
+caption.sort-control { display: none; caption-side: top; text-align: left; }
+.sort-control > div { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.sort-control label { display: flex; flex: 1; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.sort-control select {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.sort-control select:focus-visible, .sort-control button:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+.sort-control button:disabled { cursor: default; opacity: .5; }
+.sort-control button { min-width: 44px; }
+
 .matrix th:first-child { position: sticky; left: 0; background: var(--surface); }
 .matrix th[scope="row"] { font-weight: 600; white-space: nowrap; }
 .matrix th[scope="row"] span { font-weight: 400; font-size: 12px; margin-left: 6px; }
@@ -169,6 +188,7 @@ nav .activity { margin-left: auto; }
   /* A listing row becomes a card: its first cell as the title, the rest
      beneath it, status and button down the right-hand side. */
   .panel thead { display: none; }
+  caption.sort-control { display: table-caption; }
   .panel tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 9px 12px; }
   .panel tr[hidden] { display: none; }
   .panel tr:not(:last-child) { border-bottom: 1px solid var(--line); }
