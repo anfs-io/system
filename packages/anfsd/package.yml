@@ -1,4 +1,4 @@
-version: 0.3.0
+version: 0.3.1
 author: rjayroach
 # anfsd, the anfs daemon (anfs-io/runtime): the pinned release binary (pins.yml) or one built from
 # source (ANFSD_BIN), run as a launchd agent or a systemd user unit after NATS; and anfs bus.

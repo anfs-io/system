@@ -132,5 +132,5 @@ hook() {
 @test "anfsd.env names the settings anfsd and anfs bus read" {
   local f="$REPO/packages/anfsd/home/.config/anfsd/anfsd.env"
   [ "$(sed -nE 's/^#?(ANFSD_[A-Z_]+)=.*/\1/p' "$f" | sort | tr '\n' ' ')" = \
-    "ANFSD_BIN ANFSD_DUP_WINDOW ANFSD_MAX_RUNS ANFSD_PODMAN ANFSD_SHIP_BURST ANFSD_SHIP_RATE ANFSD_STREAM_MAX_AGE ANFSD_STREAM_MAX_BYTES " ]
+    "ANFSD_BIN ANFSD_CLAUDE_BARE ANFSD_DUP_WINDOW ANFSD_MAX_RUNS ANFSD_PODMAN ANFSD_RUN_EVENTS_MAX ANFSD_SHIP_BURST ANFSD_SHIP_RATE ANFSD_STREAM_MAX_AGE ANFSD_STREAM_MAX_BYTES " ]
 }

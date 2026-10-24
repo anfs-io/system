@@ -44,13 +44,17 @@ pinned (`sha256: {}`), `ppm install core/anfsd` needs `ANFSD_BIN`.
   `anfs-nats.service`, `KillMode=process`), running `<anfsd> run`.
 - `~/.local/state/anfsd/`: `cursors.json` (how far each month file is shipped), `anfsd.pid`,
   `anfsd.log` (macOS), `runs/<run id>/` (`run.json`, `event.json`, `prompt.md`, the harness's
-  settings file, `out.log`, `exit`, a `cancel` marker), `podman.json` (podman's state for `anfs
+  settings file, `out.log`, `exit`, a `cancel` marker, `events/` the run's own spool and
+  `cursors.json` how far anfsd moved it into the log), `redispatch/` (`anfs agents redispatch`'s
+  requests, removed once handled), `podman.json` (podman's state for `anfs
   bus status`: connected, away with the error and the next try, or off). Kept by `ppm remove core/anfsd`.
 - Settings: `~/.config/anfsd/anfsd.env` (linked; `anfsd.local.env` for this machine):
   `ANFSD_BIN`, the stream's `ANFSD_STREAM_MAX_AGE` (90d) and `ANFSD_STREAM_MAX_BYTES` (1GiB), the
   duplicate window `ANFSD_DUP_WINDOW` (24h), the shipper's `ANFSD_SHIP_RATE` (100/s per space)
-  and `ANFSD_SHIP_BURST` (1000), `ANFSD_MAX_RUNS` (2: runs at once on this host), and
-  `ANFSD_PODMAN` (on; `off` never runs podman).
+  and `ANFSD_SHIP_BURST` (1000), `ANFSD_MAX_RUNS` (2: runs at once on this host),
+  `ANFSD_PODMAN` (on; `off` never runs podman), `ANFSD_RUN_EVENTS_MAX` (1000: lines a run's spool
+  may put in the log) and `ANFSD_CLAUDE_BARE` (off; `on` runs claude with `--bare`, for an API-key
+  host only).
 
 ## Podman
 

@@ -61,7 +61,7 @@ fixture() {
  "job":"fix-r-1","repos":["core"],"cwd":"/w/fix-r-1","concurrency":1,"timeout":"2h0m0s","retries":0,"attempt":1,
  "argv":["claude","-p","--","Fix it.\n\n---\nfooter $(printf 'x%.0s' $(seq 200))"],
  "pid":$pid,"pgid":$pgid,"ps_start":"$pss","state":"$state","reason":"$reason","submitted":"$sub","ended":"$ended",
- "summary":"$( [[ "$state" == completed ]] && echo "Fixed it." )"}
+ "summary":"$( [[ "$state" == completed ]] && echo "Fixed it." )"${EXTRA:+,$EXTRA}}
 JSON
   printf '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000001","type":"io.anfs.report.filed"}\n' > "$RUNS/$id/event.json"
 }
@@ -228,4 +228,100 @@ JSON
   run --separate-stderr "$HOME/.local/bin/anfs" agents ls </dev/null
   [ "$status" -eq 0 ]
   [[ "$output" == "0000aaa1	working	"* ]]
+}
+
+@test "ls: a held run is held:rate or held:queue; --unhandled lists the events rejected for queue or rate and never run" {
+  EXTRA='"held":"rate","held_since":"'"$NOW"'"' fixture "$ID1" submitted
+  EXTRA='"held":"queue"' fixture "$ID2" submitted
+  # event e1: rejected for its queue only (unhandled); e2: rejected for the rate, then redispatched (handled);
+  # e3: rejected stale (handled: final)
+  EXTRA='"event":"01a169de-e9bb-7000-8000-0000000000e1","subject":"r-e1"' fixture "$ID3" rejected queue "$NOW" "$NOW"
+  EXTRA='"event":"01a169de-e9bb-7000-8000-0000000000e2","subject":"r-e2"' fixture "$ID4" rejected rate "$NOW" "$NOW"
+  EXTRA='"event":"01a169de-e9bb-7000-8000-0000000000e2","subject":"r-e2","redispatch_by":"shell:t"' fixture 01a16a00-0000-7000-8000-00000000eee5 completed "" "$NOW" "$NOW"
+  EXTRA='"event":"01a169de-e9bb-7000-8000-0000000000e3","subject":"r-e3"' fixture 01a16a00-0000-7000-8000-00000000fff6 rejected stale "$NOW" "$NOW"
+  ag ls
+  [[ "${lines[0]}" == "0000aaa1	held:rate	fix-core-report	"* ]]
+  [[ "${lines[1]}" == "0000bbb2	held:queue	"* ]]
+  [[ "${lines[2]}" == "0000ccc3	rejected (queue)	"* ]]
+  ag ls --unhandled
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "01a169de-e9bb-7000-8000-0000000000e1	r-e1	anfs-dev/fix-core-report	queue	"[0-9]s ]]
+  ag ls -u lgat/
+  [ -z "$output" ]
+  ANFS_TABLE= ag --json ls --unhandled
+  [ "$(yq -p json -r '.[0].event + " " + .[0].reason' <<< "$output")" = "01a169de-e9bb-7000-8000-0000000000e1 queue" ]
+}
+
+@test "show: held since, redispatched by, its events ingested and refused, and the bytes of its spool not ingested" {
+  EXTRA='"held":"queue","held_since":"'"$NOW"'","redispatch_by":"shell:person","events_ingested":3,"events_refused":1' fixture "$ID1" submitted
+  mkdir -p "$RUNS/$ID1/events/abcde23456" "$RUNS/$ID1/events/host"
+  printf '%s\n' '{"a":1}' '{"b":2}' > "$RUNS/$ID1/events/abcde23456/2026-10.jsonl"
+  printf '%s\n' '{"c":3}' > "$RUNS/$ID1/events/host/2026-10.jsonl"
+  printf '{"abcde23456/2026-10.jsonl":8,"host/2026-10.jsonl":8,"#ingested":3}\n' > "$RUNS/$ID1/cursors.json"
+  ag show 0000aaa1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"held:      queue since $NOW"* ]]
+  [[ "$output" == *"redispatch: by shell:person"* ]]
+  [[ "$output" == *"its events: 3 ingested, 1 refused, 8 bytes not ingested"* ]]
+  printf '{"abcde23456/2026-10.jsonl":16,"host/2026-10.jsonl":8}\n' > "$RUNS/$ID1/cursors.json"
+  ag show 0000aaa1
+  [[ "$output" == *"its events: 3 ingested, 1 refused"$'\n'* ]]
+}
+
+@test "rules: a space whose dispatcher is none shows off" {
+  printf '%s\n' '[{"rule":"r","status":"off","space":"lgat","on":"report.filed","as":"m","harness":"claude","reason":"dispatcher: none","job":"","space_id":"lgatlgat22","overflow":"delay","hold":20}]' > "$STUB/rules.json"
+  ag rules
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "r	off	lgat	report.filed	m	claude" ]
+}
+
+# a log of two months with the event in the second, in one of two scopes
+redispatch_log() {
+  EV="$HOME/.local/state/anfs/events"
+  mkdir -p "$EV/abcde23456" "$EV/host"
+  # 01a0a402-8258 is 2026-09-15; 01a169de-e9bb is 2026-10-23
+  printf '%s\n' '{"specversion":"1.0","id":"01a0a402-8258-7000-8000-000000000001","source":"/anfs/spaces/abcde23456","type":"io.anfs.report.filed","subject":"r-old","time":"2026-09-01T00:00:00.000Z","actor":"shell:t","anfsv":1,"data":{}}' > "$EV/abcde23456/2026-09.jsonl"
+  printf '%s\n' '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000002","source":"/anfs/host","type":"io.anfs.source.updated","subject":"core","time":"2026-10-23T17:46:18.939Z","actor":"shell:t","anfsv":1,"data":{}}' > "$EV/host/2026-10.jsonl"
+  printf '%s\n' '{"specversion":"1.0","id":"01a169de-e9bb-7000-8000-000000000003","source":"/anfs/spaces/abcde23456","type":"io.anfs.report.filed","subject":"r-9","time":"2026-10-23T17:46:18.939Z","actor":"shell:t","anfsv":1,"data":{"to":"file"}}' > "$EV/abcde23456/2026-10.jsonl"
+}
+
+@test "redispatch: the line found by its id, what the rules would do, a request for anfsd and SIGHUP to its pid" {
+  redispatch_log
+  # anfsd: a process that notes each SIGHUP
+  bash -c 'trap "echo hup >> \"$1\"" HUP; while :; do sleep 0.1; done' _ "$T/hups" &
+  local pid=$!
+  mkdir -p "$HOME/.local/state/anfsd"
+  echo "$pid" > "$HOME/.local/state/anfsd/anfsd.pid"
+  ANFS_ACTOR=shell:person ag redispatch 01a169de-e9bb-7000-8000-000000000003 fix-core-report -y --again
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"match: --event -"* ]]
+  [[ "$stderr$output" == *"asked anfsd (pid $pid)"* ]]
+  local req
+  req=$(ls "$HOME/.local/state/anfsd/redispatch"/*.json)
+  [ "$(yq -p json -r '.rule + " " + .by + " " + (.again | tostring)' "$req")" = "fix-core-report shell:person true" ]
+  [ "$(yq -p json -r '.event' "$req")" = "$(cat "$EV/abcde23456/2026-10.jsonl")" ]
+  [[ "$(basename "$req")" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7 ]]
+  for i in $(seq 20); do [[ -s "$T/hups" ]] && break; sleep 0.1; done
+  kill "$pid" 2>/dev/null || true
+  [ "$(cat "$T/hups")" = hup ]
+}
+
+@test "redispatch: asks without -y; no anfsd waits for its start; an id not in the log, a bad id, a bad rule" {
+  redispatch_log
+  ag redispatch 01a0a402-8258-7000-8000-000000000001
+  [ "$status" -ne 0 ]
+  [[ "$stderr" == *"pass -y to confirm without a terminal"* ]]
+  [ ! -d "$HOME/.local/state/anfsd/redispatch" ] || [ -z "$(ls "$HOME/.local/state/anfsd/redispatch")" ]
+  ag redispatch 01a0a402-8258-7000-8000-000000000001 -y
+  [ "$status" -eq 0 ]
+  [[ "$stderr$output" == *"anfsd is not running: the request waits for anfsd's start"* ]]
+  [ "$(yq -p json -r '.event' "$HOME/.local/state/anfsd/redispatch"/*.json)" = "$(cat "$EV/abcde23456/2026-09.jsonl")" ]
+  ag redispatch 01a169de-e9bb-7000-8000-00000000dead -y
+  [ "$status" -eq 1 ]
+  [[ "$stderr" == *"no event 01a169de-e9bb-7000-8000-00000000dead in the log"* ]]
+  ag redispatch not-an-id -y
+  [ "$status" -eq 64 ]
+  ag redispatch 01a169de-e9bb-7000-8000-000000000003 'Bad;rule' -y
+  [ "$status" -eq 64 ]
 }

@@ -123,20 +123,21 @@ spool() {
   [ "${lines[1]}" = "jetstream	ok	stream ANFS: 42 messages, 5.0 KiB, first 2026-10-01T10:00:00Z, last 2026-10-23T17:00:00Z" ]
   [ "${lines[2]}" = "anfsd	ok	pid $p, v0.1.0 (release)" ]
   [ "${lines[3]}" = "shipper	ok	nothing to ship" ]
-  [ "${lines[4]}" = "dispatch	ok	0 rules loaded, 0 disabled, 0 invalid; 0 working, 0 queued" ]
+  [ "${lines[4]}" = "dispatch	ok	0 rules loaded, 0 disabled, 0 invalid; 0 working, 0 queued, 0 held" ]
   [ "${lines[5]}" = "podman	ok	connected since 2026-10-23T18:00:00Z: container.* and pod.* into the host scope" ]
   [ "${#lines[@]}" -eq 6 ]
   grep -q '^http://127.0.0.1:47223/jsz?streams=true&config=true$' "$STUB/curl.log"
 }
 
-@test "status: dispatch (the rules, the runs) and a row per harness the rules use" {
+@test "status: dispatch (the rules, the runs, held ones and off rules) and a row per harness the rules use" {
   installed
   nats_up
   cat > "$STUB/rules.json" <<'JSON'
 [{"rule":"a","status":"ok","space":"anfs-dev","harness":"claude"},
  {"rule":"b","status":"disabled","space":"anfs-dev","harness":"pi"},
  {"rule":"c","status":"partial","space":"anfs-dev","harness":"antigravity"},
- {"rule":"d","status":"invalid","space":"anfs-dev","harness":"opencode","reason":"x"}]
+ {"rule":"d","status":"invalid","space":"anfs-dev","harness":"opencode","reason":"x"},
+ {"rule":"e","status":"off","space":"lgat","harness":"claude","reason":"dispatcher: none"}]
 JSON
   local n=0
   for s in working submitted submitted completed; do
@@ -144,12 +145,15 @@ JSON
     mkdir -p "$AS/runs/r-$n"
     printf '{"state":"%s"}\n' "$s" > "$AS/runs/r-$n/run.json"
   done
+  mkdir -p "$AS/runs/r-held1" "$AS/runs/r-held2"
+  printf '{"state":"submitted","held":"rate"}\n' > "$AS/runs/r-held1/run.json"
+  printf '{"state":"submitted","held":"queue"}\n' > "$AS/runs/r-held2/run.json"
   printf '#!/bin/sh\necho "2.1.296 (Claude Code)"\n' > "$T/bin/claude"
   printf '#!/bin/sh\nsleep 600\n' > "$T/bin/agy"
   chmod +x "$T/bin/claude" "$T/bin/agy"
   ANFS_SERVICE_OS=macos bus status
   [ "$status" -eq 1 ]
-  [ "${lines[4]}" = "dispatch	fail	2 rules loaded, 1 disabled, 1 invalid (anfs agents rules); 1 working, 2 queued" ]
+  [ "${lines[4]}" = "dispatch	fail	2 rules loaded, 1 disabled, 1 off (dispatcher: none), 1 invalid (anfs agents rules); 1 working, 2 queued, 2 held" ]
   [ "${lines[5]}" = "harness claude	ok	$T/bin/claude, 2.1.296 (Claude Code)" ]
   [ "${lines[6]}" = "harness pi	fail	pi is not on PATH (a rule uses it)" ]
   [ "${lines[7]}" = "harness antigravity	ok	$T/bin/agy, version not asked: agy --version hangs" ]

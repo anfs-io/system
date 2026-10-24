@@ -195,19 +195,25 @@ _bus_status_shipper() {
 # dispatch: the rules anfsd would load (anfsd rules --json, its one parser) and the runs, from
 # their records; then one row per harness the rules use: found on PATH, and its version
 _bus_status_dispatch() {
-  local json loaded disabled invalid working=0 queued=0 st f h bin v
+  local json loaded disabled off invalid working=0 queued=0 held=0 st f h bin v
   if ! anfs_bus_anfsd_bin; then _bus_row dispatch fail "no anfsd to read the rules"; return; fi
   if ! json=$("$REPLY" rules --json 2>/dev/null); then _bus_row dispatch fail "anfsd rules failed (anfs agents rules)"; return; fi
-  read -r loaded disabled invalid < <(yq -p json -r '[([.[] | select(.status == "ok" or .status == "unenforced" or .status == "partial")] | length),
-    ([.[] | select(.status == "disabled")] | length), ([.[] | select(.status == "invalid")] | length)] | join(" ")' <<< "$json")
+  read -r loaded disabled off invalid < <(yq -p json -r '[([.[] | select(.status == "ok" or .status == "unenforced" or .status == "partial")] | length),
+    ([.[] | select(.status == "disabled")] | length), ([.[] | select(.status == "off")] | length),
+    ([.[] | select(.status == "invalid")] | length)] | join(" ")' <<< "$json")
+  # a submitted run is queued, or held (02d: waiting for its rule's rate or its role's queue)
   for f in "$ANFSD_STATE_HOME"/runs/*/run.json; do
     [[ -f "$f" ]] || continue
-    st=$(yq -p json -r '.state' "$f" 2>/dev/null) || continue
-    case "$st" in working) working=$(( working + 1 )) ;; submitted) queued=$(( queued + 1 )) ;; esac
+    st=$(yq -p json -r '.state + "/" + (.held // "")' "$f" 2>/dev/null) || continue
+    case "$st" in
+      working/*) working=$(( working + 1 )) ;;
+      submitted/) queued=$(( queued + 1 )) ;;
+      submitted/*) held=$(( held + 1 )) ;;
+    esac
   done
   st=ok
   (( invalid == 0 )) || st=fail
-  _bus_row dispatch "$st" "$loaded rules loaded, $disabled disabled, $invalid invalid$( (( invalid == 0 )) || echo ' (anfs agents rules)'); $working working, $queued queued"
+  _bus_row dispatch "$st" "$loaded rules loaded, $disabled disabled, $( (( off == 0 )) || echo "$off off (dispatcher: none), ")$invalid invalid$( (( invalid == 0 )) || echo ' (anfs agents rules)'); $working working, $queued queued, $held held"
   while IFS= read -r h; do
     [[ -n "$h" ]] || continue
     bin="$h"

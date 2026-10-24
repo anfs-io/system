@@ -7,9 +7,15 @@
 # anfsd down; the rules come from `anfsd rules --json` (one parser: anfsd's).
 #
 #   ls [SPEC] [--all]          RUN STATUS RULE ROLE SPACE HARNESS JOB AGE: the runs not ended, and
-#                              those that ended in the last day (--all: every one)
+#                              those that ended in the last day (--all: every one); a held run's
+#                              STATUS is held:rate or held:queue
+#   ls --unhandled [SPEC]      EVENT SUBJECT RULE REASON AGE: the events a rule rejected for its
+#                              queue or rate and never ran (what redispatch takes)
 #   show <run>                 the record, the trigger event, the command line (the prompt cut),
-#                              the job
+#                              the job, its events (ingested, refused, bytes not ingested)
+#   redispatch <event> [rule]  a run for an event after all (stale, rate and loop skipped): what
+#                              would happen, then a request to anfsd and SIGHUP. Asks first
+#                              (-y does not); --again also when the rule handled it
 #   logs <run> [-f]            out.log as text (claude's stream rendered; --json as it is)
 #   stop <run>|--all [-y]      the cancel marker, then SIGTERM to the run's process group,
 #                              SIGKILL 30 s later; anfsd says run.canceled. Asks first
@@ -37,7 +43,7 @@ if [[ ! -f "$ANFS_LIB_DIR/bus.sh" ]]; then
   echo "anfs agents: $ANFS_LIB_DIR has no bus.sh; install core/anfs again" >&2
   exit 69
 fi
-for _lib in log cli table service bus; do
+for _lib in log cli table service bus events; do
   # shellcheck source=/dev/null
   source "$ANFS_LIB_DIR/$_lib.sh"
 done
@@ -50,8 +56,10 @@ RUNS="$ANFSD_STATE_HOME/runs"
 : "${ANFS_AGENTS_GRACE:=30}"
 
 cli_cmd list "The runs: RUN STATUS RULE ROLE SPACE HARNESS JOB AGE. Without --all, the
-runs not ended and those that ended in the last day" --alias ls \
-  --opt "-a --all: Every run" --arg "[spec]"
+runs not ended and those that ended in the last day; a held run is held:rate or
+held:queue. --unhandled: the events a rule rejected for its queue or its rate and
+never ran, EVENT SUBJECT RULE REASON AGE (anfs agents redispatch takes them)" --alias ls \
+  --opt "-a --all: Every run" --opt "-u --unhandled: The unhandled events instead" --arg "[spec]"
 cli_cmd show "A run: its record, the event that started it, its command line, its job" --arg "run"
 cli_cmd logs "A run's output as text (claude's stream rendered; --json: as written)" \
   --opt "-f --follow: Keep printing" --arg "run"
@@ -59,7 +67,16 @@ cli_cmd stop "Stop a run: the cancel marker, SIGTERM to its process group, SIGKI
 later; anfsd says run.canceled. A run that has not started is canceled before it starts" \
   --opt "-a --all: Every run not ended" --opt "-y --yes: Do not ask" --arg "[run]"
 cli_cmd rules "The dispatch rules of the installed spaces: RULE STATUS SPACE ON AS HARNESS
-(ok, invalid, disabled, unenforced, partial; the reason in --json)" --arg "[spec]"
+(ok, invalid, disabled, unenforced, partial, off: the space's dispatcher is none;
+the reason, overflow and hold in --json)" --arg "[spec]"
+cli_cmd redispatch "A run for an event after all: the event found by its id in the log,
+what the rules would do shown, then a request left for anfsd and SIGHUP. The run
+skips stale, rate and loop (it may still wait for its role's queue). Refused by
+anfsd: a disabled rule, a space whose dispatcher is none, an event the rule handled
+(unless --again) or has a run of not ended. With anfsd down the request waits for
+its start" \
+  --opt "--again: Also when the rule already handled the event (a failed run's second try)" \
+  --opt "-y --yes: Do not ask" --arg "event" --arg "[rule]"
 cli_cmd match "What each rule would do with an event, starting and writing nothing: an event
 line (--event FILE, - for stdin) or one built from --type, --subject, --data K=V
 (again for more) and --space; the space.yml files to read instead of the installed
@@ -97,12 +114,14 @@ _ag_run() {
 }
 
 # Every record as tab-separated fields, oldest first (ids sort by time): id state reason rule role
-# space harness job submitted ended; an empty one is - (read splits on tabs and would merge two)
+# space harness job submitted ended held event subject space_id; an empty one is - (read splits on
+# tabs and would merge two)
 _ag_records() {
   local -a files=("$RUNS"/*/run.json)
   [[ -f "${files[0]}" ]] || return 0
   yq -p json -o tsv '[.id, .state, (.reason // "" | sub("^$"; "-")), .rule, .role, .space, .harness,
-    (.job // "" | sub("^$"; "-")), .submitted, (.ended // "" | sub("^$"; "-"))]' "${files[@]}" | LC_ALL=C sort
+    (.job // "" | sub("^$"; "-")), .submitted, (.ended // "" | sub("^$"; "-")), (.held // "" | sub("^$"; "-")),
+    (.event // "" | sub("^$"; "-")), (.subject // "" | sub("^$"; "-")), (.space_id // "" | sub("^$"; "-"))]' "${files[@]}" | LC_ALL=C sort
 }
 
 _ag_v() { [[ "$1" == - ]] && REPLY="" || REPLY="$1"; }
@@ -135,14 +154,16 @@ _ag_spec_ok() {
 }
 
 cmd_list() {
-  local spec="${1:-}" all="${CLI_OPT[all]:-false}" id state reason rule role space h job sub ended now st
+  local spec="${1:-}" all="${CLI_OPT[all]:-false}" id state reason rule role space h job sub ended held ev subj sid now st
+  ! ${CLI_OPT[unhandled]:-false} || { _ag_unhandled "$spec"; return; }
   now=$EPOCHSECONDS
   {
-    while IFS=$'\t' read -r id state reason rule role space h job sub ended; do
+    while IFS=$'\t' read -r id state reason rule role space h job sub ended held ev subj sid; do
       [[ -n "$id" ]] || continue
       _ag_v "$reason"; reason="$REPLY"
       _ag_v "$job"; job="$REPLY"
       _ag_v "$ended"; ended="$REPLY"
+      _ag_v "$held"; held="$REPLY"
       _ag_spec_ok "$spec" "$space" || continue
       if ! $all && _ag_ended "$state"; then
         _ag_epoch "${ended:-$sub}"
@@ -150,9 +171,38 @@ cmd_list() {
       fi
       _ag_epoch "$sub"; _ag_age $(( now - REPLY ))
       st="$state${reason:+ ($reason)}"
+      [[ "$state" != submitted || -z "$held" ]] || st="held:$held"
       anfs_row "${id: -8}" "$st" "$rule" "$role" "$space" "$h" "$job" "$REPLY" "$id" "$state" "$reason"
     done < <(_ag_records)
   } | anfs_table "RUN STATUS RULE ROLE SPACE HARNESS JOB AGE" "run status rule role space harness job age id state reason"
+}
+
+# ls --unhandled: per rule and event, the records are only rejections for queue or rate (02d)
+_ag_unhandled() {
+  local spec="$1" id state reason rule role space h job sub ended held ev subj sid k now
+  local -A handled=() why=() subject=() rulename=() spaceof=() first=() order=()
+  local -a keys=()
+  now=$EPOCHSECONDS
+  while IFS=$'\t' read -r id state reason rule role space h job sub ended held ev subj sid; do
+    [[ -n "$id" && "$ev" != - ]] || continue
+    _ag_spec_ok "$spec" "$space" || continue
+    k="$sid/$rule|$ev"
+    if [[ -z "${order[$k]:-}" ]]; then order[$k]=1; keys+=("$k"); first[$k]="$sub"; fi
+    if [[ "$state" == rejected && ( "$reason" == queue || "$reason" == rate ) ]]; then
+      why[$k]="$reason"
+    else
+      handled[$k]=1
+    fi
+    _ag_v "$subj"; subject[$k]="$REPLY"
+    rulename[$k]="$rule" spaceof[$k]="$space"
+  done < <(_ag_records)
+  {
+    for k in ${keys[@]+"${keys[@]}"}; do
+      [[ -z "${handled[$k]:-}" && -n "${why[$k]:-}" ]] || continue
+      _ag_epoch "${first[$k]}"; _ag_age $(( now - REPLY ))
+      anfs_row "${k#*|}" "${subject[$k]}" "${spaceof[$k]}/${rulename[$k]}" "${why[$k]}" "$REPLY"
+    done
+  } | anfs_table "EVENT SUBJECT RULE REASON AGE" "event subject rule reason age"
 }
 
 cmd_show() {
@@ -178,6 +228,10 @@ cmd_show() {
   printf 'cwd:       %s\n' "$cwd"
   printf 'submitted: %s\nstarted:   %s\nended:     %s%s\n' "$sub" "$st" "$en" "$([[ "$ex" == - ]] || printf ' (exit %s)' "$ex")"
   printf 'pid:       %s, group %s\nattempt:   %s of %s\n' "$pid" "$pgid" "$att" "$(( ret + 1 ))"
+  local held hs rd
+  IFS=$'\t' read -r held hs rd < <(yq -p json -o tsv '[.held, .held_since, .redispatch_by] | map(. // "" | sub("^$"; "-"))' "$rec")
+  [[ "$held" == - || "$state" != submitted ]] || printf 'held:      %s since %s\n' "$held" "$hs"
+  [[ "$rd" == - ]] || printf 'redispatch: by %s\n' "$rd"
   if [[ -n "$(yq -p json -r '.summary // ""' "$rec")" ]]; then
     printf '\nsummary:\n%s\n' "$(yq -p json -r '.summary' "$rec")"
   fi
@@ -185,7 +239,25 @@ cmd_show() {
   yq -p json -r '(.argv // [])[] | sub("\n"; " ")' "$rec" |
     awk '{ if (length($0) > 120) print "  " substr($0, 1, 117) "..."; else print "  " $0 }'
   printf '\nevent:\n  %s\n' "$(cat "$d/event.json" 2>/dev/null || echo -)"
+  _ag_pending "$d"
+  printf '\nits events: %s ingested, %s refused%s\n' "$(yq -p json -oy -r '.events_ingested // 0' "$rec")" \
+    "$(yq -p json -oy -r '.events_refused // 0' "$rec")" "$( (( REPLY == 0 )) || printf ', %s bytes not ingested' "$REPLY")"
   printf '\nfiles: %s\n' "$(anfs_display "$d")"
+}
+
+# The bytes of a run's spool (events/<scope>/<month>.jsonl) past its cursors (cursors.json), into
+# REPLY: what anfsd has not moved into the log (yet, or ever: written after the run's last drain)
+_ag_pending() {
+  local d="$1" f key size cur
+  REPLY=0
+  for f in "$d"/events/*/*.jsonl; do
+    [[ -f "$f" && ! -L "$f" ]] || continue
+    key="${f#"$d/events/"}"
+    size=$(wc -c < "$f" | tr -d ' ')
+    cur=0
+    [[ ! -f "$d/cursors.json" ]] || cur=$(K="$key" yq -p json -oy -r '.[strenv(K)] // 0' "$d/cursors.json")
+    (( size <= cur )) || REPLY=$(( REPLY + size - cur ))
+  done
 }
 
 cmd_logs() {
@@ -268,6 +340,67 @@ cmd_rules() {
   done < <(yq -p json -o tsv '.[] | [.rule, .status, .space, (.on | sub("^$"; "-")), (.as | sub("^$"; "-")), (.harness | sub("^$"; "-")),
       (.reason | sub("^$"; "-")), (.job | sub("^$"; "-")), (.space_id | sub("^$"; "-"))]' <<< "$json") |
     anfs_table "RULE STATUS SPACE ON AS HARNESS" "rule status space on as harness reason job space_id"
+}
+
+# The event's line in the log, by its id, into REPLY: its UUIDv7 milliseconds give the month, then
+# grep -F in each scope's file of that month (and the next, for a clock at a month's edge)
+_ag_event_line() {
+  local id="$1" ms m1 m2 f l
+  [[ "$id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] || anfs_fail 64 "'$id' is not an event id (a UUIDv7: anfs events ls --json)"
+  ms=$(( 16#${id:0:8}${id:9:4} ))
+  TZ=UTC printf -v m1 '%(%Y-%m)T' $(( ms / 1000 ))
+  TZ=UTC printf -v m2 '%(%Y-%m)T' $(( ms / 1000 + 86400 ))
+  for f in "$ANFS_EVENTS_HOME"/*/"$m1".jsonl "$ANFS_EVENTS_HOME"/*/"$m2".jsonl; do
+    [[ -f "$f" ]] || continue
+    l=$(grep -F -m 1 -- "\"id\":\"$id\"" "$f") || continue
+    REPLY="$l"
+    return 0
+  done
+  anfs_die "no event $id in the log (anfs events ls --json)"
+}
+
+# anfsd's pid when it is running, into REPLY; 1 when it is not
+_ag_anfsd_pid() {
+  local p
+  REPLY=""
+  [[ -f "$ANFSD_STATE_HOME/anfsd.pid" ]] || return 1
+  p=$(tr -dc '0-9' < "$ANFSD_STATE_HOME/anfsd.pid")
+  [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null || return 1
+  REPLY="$p"
+}
+
+cmd_redispatch() {
+  local id="$1" rule="${2:-}" again="${CLI_OPT[again]:-false}" line by dir req tmp ms us
+  [[ -z "$rule" || "$rule" =~ ^[a-z0-9][a-z0-9-]*$ ]] || anfs_fail 64 "'$rule' is not a rule's name"
+  _ag_event_line "$id"; line="$REPLY"
+  _ag_anfsd
+  # what the rules would do with it (the guards as for a new event: redispatch skips stale, rate
+  # and loop)
+  if ! anfs_json_on; then
+    printf '%s\n' "$line" | "$REPLY" match --event - || true
+    echo
+  fi
+  anfs_confirm "redispatch asks anfsd for a run of ${rule:-each rule that matches} for event ${id: -8} (stale, rate and loop skipped)" \
+    "Ask anfsd for a run of this event?"
+  by="${ANFS_ACTOR:-shell:${USER:-$(id -un)}}"
+  dir="$ANFSD_STATE_HOME/redispatch"
+  mkdir -p -- "$dir" && chmod 700 "$dir"
+  us="${EPOCHREALTIME//[!0-9]/}"; ms=$(( 10#$us / 1000 ))
+  anfs_uuid7 "$ms"; req="$dir/$REPLY.json"
+  tmp="$dir/.$REPLY.json"
+  L="$line" R="$rule" B="$by" A="$again" yq -n -o json -I0 \
+    '.event = strenv(L) | .rule = strenv(R) | .by = strenv(B) | .again = (strenv(A) == "true")' > "$tmp"
+  mv -f -- "$tmp" "$req"
+  if _ag_anfsd_pid; then
+    kill -HUP "$REPLY"
+    if anfs_json_on; then anfs_result event "$id" request "$req" status sent
+    else anfs_info "asked anfsd (pid $REPLY): its log says what it did (anfs bus logs anfsd; anfs agents ls)"
+    fi
+  else
+    if anfs_json_on; then anfs_result event "$id" request "$req" status waiting
+    else anfs_info "anfsd is not running: the request waits for anfsd's start ($(anfs_display "$req"))"
+    fi
+  fi
 }
 
 cmd_match() {

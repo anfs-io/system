@@ -662,9 +662,10 @@ help` documents the commands.
   in <source>`), before the first line that is not a comment. `wsm ls` says `no id`, `invalid id`
   or `duplicate id (also <space>)` in NOTE, after the counts, and leaves STATUS alone. `wsm events
   ls [SPEC...]` is the event log of the space around `.` or of the spaces SPEC names.
-- **`space.yml`'s `access:`, `agents:` and `dispatch:`** are anfsd's ("Dispatch" below): what the
-  space's dispatched agents may reach beyond their job, the roles it runs, and which event starts
-  which. wsm links the file (and a rule's `prompt_file:`, as any file) and neither reads nor checks
+- **`space.yml`'s `access:`, `agents:`, `dispatch:` and `dispatcher:`** are anfsd's ("Dispatch"
+  below): what the space's dispatched agents may reach beyond their job, the roles it runs, which
+  event starts which, and whether anfsd dispatches the space at all (`dispatcher: anfsd`, the
+  default, or `none`, for a space another tool dispatches). wsm links the file (and a rule's `prompt_file:`, as any file) and neither reads nor checks
   them: `anfs agents rules` does, through anfsd.
 - **The tree mirrors the source, both ways.**
   - `wsm new [SOURCE/]PATH` creates a space in the source: a qualified id anywhere, a bare path
@@ -1563,8 +1564,22 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   scope. A space with no id: a warning, and the host scope with its `spacepath`.
 - **Who**: `actor` is `ANFS_ACTOR`; else detected: Claude Code (`CLAUDECODE=1`) is `claude:<the
   first 8 of CLAUDE_CODE_SESSION_ID>`, a harness that sets `AI_AGENT` its part before the first
-  `_`; else `shell:$USER`. Other harnesses set `ANFS_ACTOR` (dispatch will). `ANFS_AS=<space
-  path>/<role>` gives `actorspace` (that space's id) and `actorrole`.
+  `_`; else `shell:$USER`. Other harnesses set `ANFS_ACTOR` (dispatch does). `ANFS_AS=<space
+  path>/<role>` gives `actorspace` (that space's id) and `actorrole`. These are what the writer
+  says: a claim. Only for a dispatched run does anyone attest them (next).
+- **A dispatched run's events** (02d): anfsd sets `ANFS_EVENTS_SPOOL` to the run's own spool
+  (`~/.local/state/anfsd/runs/<run id>/events/`), and `anfs_emit` appends there instead of the log
+  (same layout, `<scope>/<YYYY-MM>.jsonl`; a line may then be at most 4096 − 512 bytes, the room
+  for the stamp). anfsd moves each line into the log with the run's identity **stamped**: `actor`
+  `<harness>:<last 8 of the run id>`, `actorspace` the rule's space, `actorrole` the role, and two
+  extensions: **`actorrun`**, the full run id, and **`actorclaimed`**, set only when the line said
+  another actor or role: what it said (`shell:roberto as tkj76y3nfx/person`). `actorclaimed` is a
+  claim, never an identity; the actor is the stamp. Every other attribute keeps its bytes, `data`
+  last. Refused (counted in the run's `run.json`, `events_refused`): `run.*` (anfsd's own), a line
+  whose scope directory is not its `source`, more than `ANFSD_RUN_EVENTS_MAX` (1000) lines, and a
+  line over 4096 bytes once stamped. A run reads its own events in the log (`events ls`, `report
+  wait` read the log, not the spool) a second or so after it wrote them. Cross-space emits are open
+  (until `accepts:`): the stamp says who.
 - **Atomic, no locks**: a line is at most 4096 bytes (more is refused with a warning) and goes out
   in one `write(2)` with `O_APPEND` (`cat >>`): bash's own `printf` writes through stdio, 1 KB at a
   time on macOS, and parallel writers would interleave.
@@ -1580,7 +1595,9 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   source whose HEAD moved (subject the alias; `from`, `to` the commits; a clone's `from` empty).
   (02b) anfsd: `run.submitted`, `run.working`, `run.completed`, `run.failed`, `run.canceled`,
   `run.rejected` into the rule's space, subject the run id, actor `anfsd` ("Dispatch"), written by
-  its Go writer of the same profile into the same files. (02c) anfsd, following `podman events`:
+  its Go writer of the same profile into the same files; (02d) `run.submitted`'s data has `held`
+  (`rate` or `queue`) and `detail` for a held run, `redispatch` (who asked) for a redispatched one;
+  `run.rejected`'s has `detail`. (02c) anfsd, following `podman events`:
   into the host scope, actor `podman`, subject the container's (or pod's) name:
   `container.created|started|stopped|died|removed|paused|unpaused`, `container.health` (only
   when a container's health changes), `pod.created|started|stopped|removed`; data `id` (12),
@@ -1655,7 +1672,7 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
 
 | Command | Does |
 | --- | --- |
-| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled and invalid, from `anfsd rules --json`; the runs working and queued, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `podman` (from `~/.local/state/anfsd/podman.json`, while anfsd runs: `ok` connected, `away` with podman's error and the next try, `off` for `ANFSD_PODMAN=off`; neither `away` nor `off` fails the exit: on macOS a stopped podman machine is normal), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
+| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled, `off` (`dispatcher: none`, said only when there are some) and invalid, from `anfsd rules --json`; the runs working, queued and held, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `podman` (from `~/.local/state/anfsd/podman.json`, while anfsd runs: `ok` connected, `away` with podman's error and the next try, `off` for `ANFSD_PODMAN=off`; neither `away` nor `off` fails the exit: on macOS a stopped podman machine is normal), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
 | `anfs bus start\|stop\|restart [nats\|anfsd]` | load, unload (it starts again at the next login), or write again and load; both when none is named, NATS first up and last down. `restart nats` renders `server.conf` from nats.env first; `restart anfsd` writes `ANFSD_BIN` or the release into the unit |
 | `anfs bus reload` | SIGHUP to anfsd: it reads the dispatch rules again (a `source.updated` does too) |
 | `anfs bus logs [nats\|anfsd] [-f]` | the log files (macOS) or `journalctl --user` (Linux) |
@@ -1669,9 +1686,12 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
 ## Dispatch (anfsd, `anfs agents`)
 
 A space's `space.yml` says which event starts which agent; anfsd (anfs-io/runtime) starts it, in a
-job of its own, and watches it. The plan is anfs-io/docs `units/agents/02-daemon/02b-dispatch.md`.
+job of its own, and watches it. The plans are anfs-io/docs `units/agents/02-daemon/02b-dispatch.md`
+and `02d-safe.md` (a run's spool and stamp, the environment, what a harness loads, backpressure,
+`dispatcher:`).
 
 ```yaml
+dispatcher: anfsd                # optional: anfsd (default) | none (another tool dispatches this space)
 access:                          # beyond the job, what this space's dispatched agents may reach
   - {path: ~/.local/share/anfs/sources, mode: read}   # ~ and $VAR expanded; relative: from the space
 agents:                          # the roles; a role's address is <space path>/<role>
@@ -1689,6 +1709,8 @@ dispatch:
     rate: 20/h                   # starts per rule (N/s, N/m, N/h, N/d)
     stale: 24h                   # an older event is not acted on
     retries: 0                   # 0 to 2, after a failed exit only (30 s, then 2 min apart)
+    overflow: delay              # delay (default) | reject: what a full queue or a spent rate does
+    hold: 20                     # most runs of this rule held at once (default 20, 0 to 200)
 ```
 
 - **One parser, anfsd's**: `anfsd rules [--json] [space.yml...]`, read by `anfs agents rules`. The
@@ -1698,25 +1720,26 @@ dispatch:
   name, `on.type` matching `run.*` (a run would start runs), a harness not on anfsd's PATH, `job:`
   without `anfs work` (anfs-dev/dev), `access:` at `/` or `$HOME` itself, and in `args:` anything
   that skips permissions or overrides what anfsd hands the harness (`--dangerously-skip-permissions`,
-  `--auto`, `--permission-mode`, `--settings`, `--add-dir`, `--sandbox`, `--tools`, ...). Statuses:
-  `ok`, `invalid`, `disabled`, `unenforced` (pi: no permission system), `partial` (opencode,
-  antigravity: no read/write split).
+  `--auto`, `--permission-mode`, `--settings`, `--add-dir`, `--sandbox`, `--tools`, `--mcp-config`,
+  `--plugin-dir`, `--bare`, ...). Statuses: `ok`, `invalid`, `disabled`, `unenforced` (pi: no
+  permission system), `partial` (opencode, antigravity: no read/write split), `off` (valid, but the
+  space says `dispatcher: none`).
 - **Templates** in `job.name` and the prompt: `{{id}}`, `{{type}}`, `{{subject}}`, `{{time}}`,
   `{{space}}`, `{{actor}}`, `{{data.<key>}}`, `{{run}}`, `{{job}}` (the last two not in
   `job.name`); in `job.name` a value is lowered and anything outside `[a-z0-9-]` becomes `-`.
 - **A run**: the durable consumer `anfsd-dispatch` (filters: each rule's `anfs.<space id>.<the
   type's literal tokens>`, and `anfs.host.source.updated`) gets the event; one run per rule and
-  event id (a redelivery finds the record). The guards, each a `run.rejected` with its reason:
-  `stale`, `rate`, `queue` (no free slot and `queue:` runs waiting), `loop` (the event's actor is
-  a run of this rule). Then the record `~/.local/state/anfsd/runs/<run id>/run.json` (UUIDv7), the
+  event id (a redelivery finds the record, a rejection included, and is acked). The guards, in
+  order: `stale` and `loop` (the event's `actorrun`, else its actor, is a run of this rule), each
+  a final `run.rejected`; then `rate` and `queue` (no free slot and `queue:` runs waiting), which
+  **hold** the run under `overflow: delay` (below) and reject it under `overflow: reject`. Then the
+  record `~/.local/state/anfsd/runs/<run id>/run.json` (UUIDv7), the
   event's line `event.json` and the prompt are written, `run.submitted`, and the message acked.
   It starts when its role has a free slot and the host has one (`ANFSD_MAX_RUNS`, anfsd.env,
   default 2): `anfs work new <job> <repos>` (a job this run made on an earlier try is reused; any
   other existing job is `run.failed reason=job`), then the harness in its own session (setsid),
   cwd the job (`job: none`: the space's directory, read-only, a TMPDIR in the run's directory),
-  stdin `/dev/null`, output `out.log`, with `anfs work env <job>`'s variables, `ANFS_ACTOR=<harness>:<the
-  run id's last 8>`, `ANFS_AS=<space path>/<role>`, `ANFS_RUN`, `ANFS_EVENT` (event.json), and no
-  `ANFS_WORK`: `run.working` (job, branch). The prompt is the rule's, then anfsd's footer (who it
+  stdin `/dev/null`, output `out.log`, with the environment below: `run.working` (job, branch). The prompt is the rule's, then anfsd's footer (who it
   is, the rule, the event, the job, what it may not do, "end with a summary").
 - **Ends**: `run.completed` (exit 0; `commits` per repo ahead of main, `summary`: the final
   answer's last 1500 bytes), `run.failed` (`reason`: `exit`, `timeout`, `job`, `spawn`,
@@ -1726,14 +1749,67 @@ dispatch:
   `KillMode=process`): at start it adopts every `working` run whose pid is alive with the start
   time it recorded (checked every 10 s while there are any), and ends the rest from the exit status
   their wrapper left, else `orphaned`.
+- **The environment is an allow-list** (02d): from anfsd's own only `PATH`, `HOME`, `USER`,
+  `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `LC_*`, `TZ`, `TERM`, `__CF_USER_TEXT_ENCODING`, the
+  `XDG_*` paths, `ANFS_*` (not `ANFS_WORK`, `ANFS_WORK_SAID` or the per-run names; `ANFSD_*` are
+  the daemon's) and, for claude only, its credential (`ANTHROPIC_API_KEY`,
+  `CLAUDE_CODE_OAUTH_TOKEN`). anfsd sets `TMPDIR`, `anfs work env <job>`'s variables,
+  `ANFS_ACTOR=<harness>:<the run id's last 8>`, `ANFS_AS=<space path>/<role>`, `ANFS_RUN`,
+  `ANFS_EVENT` (event.json), `ANFS_EVENTS_SPOOL` (the run's spool, "Events"),
+  `GIT_TERMINAL_PROMPT=0` and an empty `credential.helper` through `GIT_CONFIG_COUNT`/`KEY`/`VALUE`
+  (after any the job sets: every helper of the system and global config is reset, macOS's
+  `osxkeychain` included), claude's `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`, and the harness's own.
+  So `SSH_AUTH_SOCK`, `GH_TOKEN`, `GITHUB_TOKEN`, `GIT_ASKPASS`, `AWS_*` and the rest never reach a
+  run. anfsd's own `anfs work new|path|env` get the same list.
 - **The harnesses** (anfs-io/runtime `internal/harness`; access per plan 02's decision 5):
 
 | Harness | Command | Access |
 | --- | --- | --- |
-| claude | `claude -p --output-format stream-json --verbose --permission-mode dontAsk --settings <run>/claude.json --add-dir <path>... [--model M] [--max-budget-usd N] --name <rule>:<run> -- <prompt>` | `claude.json`: `permissions.allow` (`Read` of every path, `Edit`/`Write` of the write ones, `Bash`), `permissions.deny` (`Bash(<cmd>)` and `Bash(<cmd>:*)` for each denial), `sandbox` (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`, `filesystem.allowWrite`) |
-| opencode | `opencode run --format json --dir <cwd> [--model M] <prompt>` | `OPENCODE_CONFIG_CONTENT`: `permission.external_directory` (each path allow, `*` deny), `permission.bash` (the denials deny) |
-| pi | `pi -p --mode json [--model M] [--tools read,grep,find,ls,bash] -- <prompt>` | none (the read tools only when the rule writes nothing) |
-| antigravity | `agy -p <prompt> --sandbox --add-dir <path>... --print-timeout <s>` | its sandbox; no read/write split |
+| claude | `claude -p --output-format stream-json --verbose --permission-mode dontAsk --settings <run>/claude.json --setting-sources= --strict-mcp-config [--bare] --add-dir <path>... [--model M] [--max-budget-usd N] --name <rule>:<run> -- <prompt>` | `claude.json`: `permissions.allow` (`Read` of every path, `Edit`/`Write` of the write ones, `Bash`), `permissions.deny` (`Bash(<cmd>)` and `Bash(<cmd>:*)` for each denial), `sandbox` (`enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`, `filesystem.allowWrite` the write paths and the run's spool, `filesystem.denyRead` the credential files, `credentials.envVars` its own key denied), `claudeMdExcludes` |
+| opencode | `opencode run --format json --dir <cwd> [--model M] <prompt>` | `OPENCODE_CONFIG_CONTENT`: `permission.external_directory` (each path and the spool allow, `*` deny), `permission.bash` (the denials deny); `OPENCODE_DISABLE_PROJECT_CONFIG`, `OPENCODE_DISABLE_CLAUDE_CODE`, `OPENCODE_DISABLE_EXTERNAL_SKILLS`, `OPENCODE_PURE` |
+| pi | `pi -p --mode json --no-extensions --no-mcp --no-skills --no-prompt-templates --no-approve [--model M] [--tools read,grep,find,ls,bash] -- <prompt>` | none (the read tools only when the rule writes nothing) |
+| antigravity | `agy -p <prompt> --sandbox --add-dir <path>... --print-timeout <s>` | its sandbox (the spool one of its directories); no read/write split |
+
+- **What is enforced, and what is only documented.** An environment variable is a convenience the
+  agent could undo; the real stops are claude's:
+
+| Path to a credential | claude (sandboxed Bash) | opencode, pi, antigravity |
+| --- | --- | --- |
+| `SSH_AUTH_SOCK`, tokens in the environment | **enforced**: not in the environment; its own key also unset in Bash (`sandbox.credentials.envVars`) | removed from the environment |
+| key and token files: `~/.ssh`, `~/.config/gh`, `~/.git-credentials`, `~/.netrc`, `~/.claude/.credentials.json`, `~/.local/state/nats` (the bus's passwords) | **enforced**: `sandbox.filesystem.denyRead` | readable: **documented** |
+| macOS keychain (`osxkeychain`, `gh`, `security`) | the helper reset (a hint), and **no network** out of the sandbox (under `dontAsk` every host outside the empty `allowedDomains` is refused), so a token taken from it cannot be used | reachable: **documented** |
+| `git push`, `gh` over the network | **enforced** by the sandbox's network (and denied by rule) | denied by rule (opencode), or not at all (pi, antigravity): **documented** |
+
+  This is why anfs-dev's rules use claude. A side effect: claude's sandboxed Bash has no network,
+  so a fix that needs a module download fails (a per-space `network:` list is later work).
+- **What a dispatched harness loads**: claude only `--settings` (and managed policy):
+  `--setting-sources=` loads no user, project or local settings file (no hooks, `env`, plugins or
+  permissions from them), `--strict-mcp-config` connects no MCP server, `claudeMdExcludes` leaves out
+  `~/.claude/CLAUDE.md` and `~/.claude/rules/`; the repos' `CLAUDE.md` and `AGENTS.md` still load,
+  and so do user skills (`~/.claude/skills`) and subagents (`~/.claude/agents`): definitions the
+  agent may use, not code that runs by itself. Hooks a role needs would come from the run's
+  `--settings` only. `ANFSD_CLAUDE_BARE=on` (anfsd.env) adds `--bare` (no skills, agents or auto
+  memory either), which reads no OAuth login or keychain: only for a host whose claude
+  authenticates with `ANTHROPIC_API_KEY` or an `apiKeyHelper`. pi loads no extensions, MCP, skills
+  or prompt templates; opencode no project config, nothing of `~/.claude`, no external skills or
+  plugins, but its global `~/.config/opencode` (its MCP servers) has no switch: documented;
+  antigravity: none known, not isolated.
+- **Backpressure delays, with bounds** (02d): under `overflow: delay` a full queue or a spent
+  `rate:` **holds** the run: it is `submitted` with `held: rate|queue` and `held_since`, and
+  `run.submitted` says `held` and `detail`; nothing is emitted when it leaves hold (the next is
+  `run.working`, or a final state). At most `hold:` runs per rule are held; one more is
+  `run.rejected` with detail `hold: 20 full`. A rule that holds runs holds every new one too (first
+  in, first out). They enter the queue, oldest first, when the role's queue has room and the
+  rule's window frees a start (one timer per rule while it holds runs, no polling); `rate:` counts
+  runs as they enter the queue (`queued`). Held runs are records: a restart holds them again, in
+  order. **Stale is checked again when a run would start**: one that waited past `stale` ends
+  `run.rejected reason=stale`. An event a rule rejected for `queue` or `rate` is **unhandled**
+  (every other record handles it): `anfs agents ls --unhandled` lists them and `anfs agents
+  redispatch` takes them.
+- **`dispatcher: none`**: the space's rules are parsed and shown (`off`), never loaded nor in the
+  consumer's filters; at each reload its queued and held runs end `run.canceled by=dispatcher:none`
+  (working runs go on: `anfs agents stop`); `redispatch` refuses it. The shipper and the report
+  sink are unaffected: the space's events are still shipped and its BACKLOG rendered.
 
 - **What a dispatched agent may not do before 04's approvals** (denied to each harness that can
   deny, and said in every footer): `git push`; `ppm install|remove`; `anfs install|remove|implode|src
@@ -1746,15 +1822,17 @@ need not be up; a run is its id or the id's last 8 characters:
 
 | Command | Does |
 | --- | --- |
-| `anfs agents ls [SPEC] [--all]` | `RUN STATUS RULE ROLE SPACE HARNESS JOB AGE`: the runs not ended and the last day's (`--all`: all) |
-| `anfs agents show <run>` | the record, the trigger event, the command line (the prompt cut), the job; `--json` the record and the event |
+| `anfs agents ls [SPEC] [--all]` | `RUN STATUS RULE ROLE SPACE HARNESS JOB AGE`: the runs not ended and the last day's (`--all`: all); a held run's STATUS is `held:rate` or `held:queue` |
+| `anfs agents ls --unhandled [SPEC]` | `EVENT SUBJECT RULE REASON AGE`: per rule, the events it rejected for `queue` or `rate` and never ran |
+| `anfs agents show <run>` | the record, the trigger event, the command line (the prompt cut), the job, held since, redispatched by, its events (ingested, refused, the bytes of its spool not ingested); `--json` the record and the event |
+| `anfs agents redispatch <event> [rule] [--again] [-y]` | the event's line found in the log by its id (the UUIDv7's month, `grep -F` in each scope), `anfsd match` on it, then (asked without `-y`) a request `~/.local/state/anfsd/redispatch/<uuid>.json` (`event`, `rule`, `by`, `again`) and SIGHUP to anfsd's pid; anfsd reads the directory at start and on SIGHUP and submits, per matching rule (or the one named), a run that skips stale, rate and loop (it may wait for the queue: `redispatch_by` in the record, `redispatch` in `run.submitted`). Refused by anfsd, in its log: a disabled rule, `dispatcher: none`, a run of it not ended, an event it handled unless `--again`. With anfsd down the request waits for its start |
 | `anfs agents logs <run> [-f]` | `out.log` through `anfsd render <harness>` (claude's stream as text); `--json` as written |
 | `anfs agents stop <run>\|--all [-y]` | the `cancel` marker (who), then SIGTERM to the run's group (the recorded process only: its start time is checked), SIGKILL 30 s later; anfsd says `run.canceled`. A run not started yet is canceled before it starts. Asks first |
 | `anfs agents rules [SPEC]` | `RULE STATUS SPACE ON AS HARNESS`, through `anfsd rules --json` |
 | `anfs agents match [--event FILE\|-] [--type T --subject S --data K=V... --space SPACE] [space.yml...]` | the dry check: what each rule would do with that event (no match and why; submit: the job, cwd, environment, the harness's command line; reject and why; `disabled`: what it would do), through `anfsd match`. Starts and writes nothing |
 
 - Under the toolkit API (`agents` is a group), `ls`, `show`, `rules`, `match` and `logs` without
-  `-f` are reads; `stop` a write.
+  `-f` are reads; `stop` and `redispatch` writes.
 - Tests: anfs-io/runtime's Go tests run fake harnesses and a fake `anfs` (`internal/testfake`)
   against an embedded nats-server; core's bats (`packages/anfsd/tests/agents.bats`, `bus.bats`)
   read fixture run directories and a stub `anfsd`, with a PATH of stubs and the system's only: no
