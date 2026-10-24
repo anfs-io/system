@@ -202,7 +202,8 @@ is `id:` in its `space.yml` (`wsm id`).
 ## The bus
 
 `ppm install core/nats core/anfsd` puts every event on NATS JetStream as well (the stream `ANFS`,
-subjects `anfs.<space id|host>.<type>`, 90 days or 1 GiB; the files keep everything), for programs
+subjects `anfs.<space id|host>.<type without io.>`, e.g. `anfs.<id>.anfs.report.filed`, 90 days or
+1 GiB; the files keep everything; the event spec is https://github.com/anfs-io/events), for programs
 to subscribe to: NATS on `127.0.0.1:47222` and anfsd, which ships the files, each a service of
 yours. `anfs bus status` says how each part is; `anfs bus start|stop|restart|logs`; `anfs bus nats
 -- stream info ANFS` runs the nats CLI as the admin user.

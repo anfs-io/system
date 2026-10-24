@@ -1515,7 +1515,7 @@ to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
   in one space never share an id (ten `new` at once: ten ids). `close` rewrites the record's
   `Status:` line only (`fixed in <source> <sha> (<date>)`); `status`, `show` and `wait` read the
   record.
-- **The file is a view of the records**: anfsd's consumer `anfsd-sink-report` (`anfs.*.report.>`)
+- **The file is a view of the records**: anfsd's consumer `anfsd-sink-report` (`anfs.*.anfs.report.>`)
   runs `anfs report __sink` (plumbing) with each event on stdin, one at a time (a failure delivered
   again, 5 tries in all, then logged): on `report.filed` it appends the record unless a `## <id> `
   heading is there; on `report.closed` it rewrites that section's `Status:` line from the record
@@ -1541,9 +1541,12 @@ to use it is `skills/anfs-bug-report` (it only runs `anfs report`, never `gh`).
 
 The toolkit's event log: what happened, in which space, by whom. One CloudEvent (1.0, structured
 JSON) per line, appended, never rewritten, so `cat`, `grep` and `jq` read it, and from agents/02 a
-shipper sends each line as it is to NATS JetStream (the files are its spool). The profile (the
-attributes, the rules; language-neutral, for other implementations) is in anfs-io/docs,
-`units/agents/01-events/plan.md`.
+shipper sends each line as it is to NATS JetStream (the files are its spool). **The spec** (the
+event, every layer's types and sources, subjects, both ways in, delivery; language-neutral, with
+a JSON Schema and conformance examples) is **https://github.com/anfs-io/events** (`SPEC.md`,
+`REGISTRY.md`: the namespaces, the extensions, anfs's type catalog); its examples are vendored in
+`packages/anfs/tests/fixtures/events-spec/` (`VERSION` names the tag or commit; updating is
+copying a newer one), and the bats run them.
 
 ```
 {"specversion":"1.0","id":"<UUIDv7>","source":"/anfs/spaces/<space id>","type":"io.anfs.report.filed",
@@ -1553,7 +1556,16 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
 ```
 
 - **Where**: STATE, `$XDG_STATE_HOME/anfs/events/<space id>/<YYYY-MM>.jsonl` (the UTC month);
-  `events/host/` for the host scope (`source` `/anfs/host`).
+  `events/host/` for the host scope (`source` `/anfs/host`). Beside it,
+  **`<YYYY-MM>.bus.jsonl`** is anfsd's recorder's (below): never written by a tool, never shipped.
+- **Every layer's events** (the spec): a type is `io.<namespace>.…` (`io.anfs.report.filed`,
+  `io.cnfs.partitia.report.filed`), a source `/<layer>/spaces/<space id>[/…]` or `/<layer>/host[/…]`
+  (the scope is the space id or `host`, whatever the layer), `data` any JSON object for other
+  layers (anfs's own: flat strings). **The short type** drops `io.anfs.` from anfs's types and `io.`
+  from another layer's (`report.filed`, `cnfs.partitia.report.filed`): what `--type` and rules'
+  `on.type` take. **Two ways in**: append to the spool (any language, no NATS client; anfsd ships
+  it), or publish to NATS directly as the layer's publisher user ("The bus"), which anfsd's
+  **recorder** writes into `<scope>/<YYYY-MM>.bus.jsonl`, so the files stay the complete record.
 - **A space's id** is `id:` in its `space.yml`: 10 of `a-z0-9` (generated from `a-z2-7`), written
   once (`wsm new`, `wsm id --new`), never changed, moved with the file (`wsm move`). The log is
   filed by it; `spacepath` is only what wsm called the space when the event was written.
@@ -1581,6 +1593,12 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   wait` read the log, not the spool) a second or so after it wrote them. Cross-space emits are open
   (until `accepts:`): the stamp says who. `anfs work run`/`env` unset `ANFS_EVENTS_SPOOL` (anfsd
   reads only `env`'s export lines), so the tests a run starts never emit into its spool.
+- **What is refused** (a warning, exit 0): `ANFS_ACTOR` that is not `<kind>[:<name>]` (no space or
+  control character, at most 128 bytes) is warned about and the actor detected instead (a detected
+  one that is not valid falls to the next way; `shell` at the end); a control character in an
+  attribute (`subject`, `actor`, `spacepath`; data values keep theirs, escaped); DEL, a C1 control
+  or bytes that are not UTF-8 anywhere; a type whose first segment is another layer's namespace
+  (`cnfs`, `lgat`, `rws`, `roteoh`: `ANFS_EVENT_NAMESPACES`).
 - **Atomic, no locks**: a line is at most 4096 bytes (more is refused with a warning) and goes out
   in one `write(2)` with `O_APPEND` (`cat >>`): bash's own `printf` writes through stdio, 1 KB at a
   time on macOS, and parallel writers would interleave.
@@ -1588,7 +1606,8 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   `ANFS_EVENTS=off` (anfs.env) writes nothing; **the test helpers set it**, and a test about events
   turns it on for one command.
 - The envelope is built in one function (`_anfs_ev_envelope`) and read through one accessor
-  (`_anfs_ev_parse`): a change to the profile is one place.
+  (`_anfs_ev_parse`: any layer's event in the spec's canonical form, attributes before
+  `,"data":`): a change to the profile is one place.
 - **Who emits** (01): `anfs report` (`report.filed`: package, title, `to` (`file` or `github`),
   `repo`; `report.closed`: commit, source), into the report file's space, or the host scope for
   GitHub. `-n` emits nothing. (02a) `anfs src update`, and every source update through
@@ -1624,10 +1643,13 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
 | --- | --- |
 | `wsm events ls [SPEC...]` | the space around `.` when no SPEC; a SPEC as wsm resolves it (an id is that space, `x/` the subtree). A space with no id is a warning |
 | `anfs events ls [SPEC...] [--all]` | every scope, the host's included, when no SPEC (or `--all`); SPECs through `wsm __event_spaces` (plumbing) |
+| `anfs events validate [SPEC\|FILE...] [--all]` | the same files (both of each month), or FILEs (`-` stdin), checked against the spec by **`anfsd validate`** (the one validator; bash has none): `FILE:LINE RULE message` per problem, then a count; exit 1 when a line is invalid (`noncanonical` only flags one); no anfsd: 69, naming core/anfsd |
 
 - `--type GLOB` (short or full: `report.*`, `io.anfs.report.*`), `--subject S` (exact), `--since
   30s|10m|2h|7d|YYYY-MM-DD[THH:MM[:SS]]` (UTC), `--by GLOB` (the actor), `--after ID` (ids sort by
   time), `--json` (the lines as stored, one per line: not an array).
+- A month's two files (`<YYYY-MM>.jsonl`, `<YYYY-MM>.bus.jsonl`) are read together, merged in id
+  order; `-f` follows both of the newest month's, one that appears later from its start.
 - `EVENT SUBJECT SPACE BY` rows, oldest first: EVENT is `<UTC time>Z <short type>`, SPACE the path
   (or id; `host`), BY the actor and ` as <role>`.
 - **`-f`** keeps printing (tab-separated, or JSON lines), the backlog first; **`--once`** (with `-f`)
@@ -1651,10 +1673,10 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
 
 | | |
 | --- | --- |
-| Subjects | `anfs.<scope>.<noun>.<verb>`: the scope a space id or `host`, then the short type (`anfs.tkj76y3nfx.report.filed`, `anfs.host.source.updated`) |
-| Stream | `ANFS`, subjects `anfs.>`, file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env). A bounded window: the files keep everything |
-| NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; the ui's, consumer `ui`) |
-| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch"), `podman.json` (podman's state) |
+| Subjects | `anfs.<scope>.<type without io.>`, one shape for every layer (the spec, "Subjects on NATS"): `anfs.tkj76y3nfx.anfs.report.filed`, `anfs.host.anfs.source.updated`, `anfs.m2vq7cfr4k.cnfs.partitia.report.filed`. Filters: a space `anfs.<id>.>`, a layer `anfs.*.cnfs.>` (anfs's own `anfs.*.anfs.>`), a kind `anfs.*.anfs.report.>`. Structured mode only: the body is the event, `Content-Type: application/cloudevents+json`, `Nats-Msg-Id: <id>` |
+| Stream | `ANFS`, subjects `anfs.>` (every layer's), file storage, limits retention, discard old, `max_age` 90 days, `max_bytes` 1 GiB, duplicate window 24 h (anfsd.env), a max message size that refuses a body over 4095 bytes with the two standard headers (anfsd sets it: NATS counts headers in it; the recorder checks the body itself). A bounded window: the files keep everything |
+| NATS | `127.0.0.1:47222` (not 4222, which apps in containers publish), monitoring `47223` (nats.env). Users `anfsd` (publishes, manages the stream), `admin` (the person, through `anfs bus nats`), `reader` (subscribes `anfs.>`, its own consumers on `ANFS`; never publishes `anfs.>`; the ui's, consumer `ui`), and **a publisher per layer** in `ANFS_BUS_LAYERS` (nats.env; none by default: `cnfs`, `lgat`), named after its namespace: publishes `anfs.*.<layer>.>` only (never `anfs.*.anfs.>` or another layer's), reads as `reader` does, never manages a stream |
+| STATE | `~/.local/state/nats/` (0700): `server.conf` (0600, rendered: never edit), `users/<user>` (a password each, 64 hex, made once; a layer's too), `port`, `jetstream/`, `nats-server.log` (macOS). `~/.local/state/anfsd/`: `cursors.json` (`{"<scope>/<YYYY-MM>.jsonl": <byte offset>}`), `anfsd.pid`, `anfsd.log` (macOS), `runs/<run id>/` ("Dispatch"), `podman.json` (podman's state) |
 | DATA | `~/.local/share/nats/<version>/{nats-server,nats}`, `~/.local/share/anfsd/<version>/anfsd`, linked from `~/.local/bin`; the downloads in `~/.cache/{nats,anfsd}/<version>/` |
 | Services | `lib/anfs/service.sh`: launchd `io.anfs.nats`, `io.anfs.anfsd` (`KeepAlive`, `ThrottleInterval` 10); systemd user `anfs-nats.service`, `anfsd.service` (`Requires=`/`After=` NATS, `KillMode=process`; `Restart=on-failure`, `RestartSec=5`). Written by the packages' `post_install` (absolute paths, the install's PATH and HOME), removed by `post_remove`. On Debian, running without a login needs `loginctl enable-linger` (by hand; `anfs bus status` says so) |
 
@@ -1670,7 +1692,17 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
   acknowledged; `Nats-Msg-Id` the event id, so a resend after a crash is dropped; at most 256
   awaiting acks, 100 events/s per scope (burst 1000). A line that is not an event is logged once
   and stepped past. NATS down: backoff 1, 2, 5, 10, 30 s, one log line per change, emitting
-  unaffected.
+  unaffected. It reads only `<YYYY-MM>.jsonl`, never the recorder's `.bus.jsonl`.
+- **Publishing directly** (another layer, the spec's "The publish contract"): as its layer's user,
+  on `anfs.<scope>.<type without io.>` agreeing with the event's source and type, the event as the
+  body (at most 4095 bytes, the canonical form), `Content-Type: application/cloudevents+json` and
+  `Nats-Msg-Id: <id>`, a JetStream publish that waits for its ack.
+- **The recorder** (anfsd): its durable consumer `anfsd-recorder` on `ANFS` (`anfs.>`, deliver all
+  when first made, explicit ack). An event whose id is already in its month's files (the spool's
+  or the `.bus.jsonl`) is acked and not written: so everything the shipper published is skipped.
+  Otherwise its canonical form is appended to `<scope>/<YYYY-MM>.bus.jsonl` in one `O_APPEND`
+  write, then acked. An invalid event, or one on a subject its source and type do not give, is
+  logged once and terminated. Complete within the stream's retention (90 days).
 - **Podman** (anfsd, 02c): one child, `podman events --format json --filter type=container
   --filter type=pod`, from now; the events above ("Events"). Podman away (not installed; on macOS
   the machine stopped): the child ends and is started again after 5, 10, 30, then every 60 s, one
@@ -1681,7 +1713,7 @@ report file; it is not a broker. The plan is anfs-io/docs `units/agents/02-daemo
 
 | Command | Does |
 | --- | --- |
-| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `dispatch` (the rules loaded, disabled, `off` (`dispatcher: none`, said only when there are some) and invalid, from `anfsd rules --json`; the runs working, queued and held, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `podman` (from `~/.local/state/anfsd/podman.json`, while anfsd runs: `ok` connected, `away` with podman's error and the next try, `off` for `ANFSD_PODMAN=off`; neither `away` nor `off` fails the exit: on macOS a stopped podman machine is normal), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
+| `anfs bus status` | `SERVICE STATUS DETAIL`: `nats` (healthz, the version, the ports, the layer users), `jetstream` (the stream ANFS: messages, size, first and last; another stream on `anfs.>` is a fail), `anfsd` (the service, its pid, its version, `release` or `from source`), `shipper` (a `lag` row per scope with lines past the cursor), `recorder` (the consumer `anfsd-recorder`: pending and awaiting ack; missing while anfsd runs is a fail: an anfsd before v0.4.0), `dispatch` (the rules loaded, disabled, `off` (`dispatcher: none`, said only when there are some) and invalid, from `anfsd rules --json`; the runs working, queued and held, from their records; an invalid rule is a fail), `harness <name>` (one per harness a rule uses: found on PATH, its `--version`; agy's is never asked: it hangs), `podman` (from `~/.local/state/anfsd/podman.json`, while anfsd runs: `ok` connected, `away` with podman's error and the next try, `off` for `ANFSD_PODMAN=off`; neither `away` nor `off` fails the exit: on macOS a stopped podman machine is normal), `linger` (Linux). Exit 1 when one is not `ok`. `--json` |
 | `anfs bus start\|stop\|restart [nats\|anfsd]` | load, unload (it starts again at the next login), or write again and load; both when none is named, NATS first up and last down. `restart nats` renders `server.conf` from nats.env first; `restart anfsd` writes `ANFSD_BIN` or the release into the unit |
 | `anfs bus reload` | SIGHUP to anfsd: it reads the dispatch rules again (a `source.updated` does too) |
 | `anfs bus logs [nats\|anfsd] [-f]` | the log files (macOS) or `journalctl --user` (Linux) |
@@ -1736,8 +1768,14 @@ dispatch:
 - **Templates** in `job.name` and the prompt: `{{id}}`, `{{type}}`, `{{subject}}`, `{{time}}`,
   `{{space}}`, `{{actor}}`, `{{data.<key>}}`, `{{run}}`, `{{job}}` (the last two not in
   `job.name`); in `job.name` a value is lowered and anything outside `[a-z0-9-]` becomes `-`.
-- **A run**: the durable consumer `anfsd-dispatch` (filters: each rule's `anfs.<space id>.<the
-  type's literal tokens>`, and `anfs.host.source.updated`) gets the event; one run per rule and
+- **Another layer's events** (`on.type: cnfs.*`, the short type): `on.data` and `{{data.<key>}}`
+  read top-level string values only; a key whose value is not a string (another layer's data is
+  any JSON object) never matches and renders empty.
+- **A run**: the durable consumer `anfsd-dispatch` (filters: each rule's `anfs.<space id>.` plus
+  the layer (`anfs.` for an anfs short type; none for another layer's, whose short type starts
+  with it) and the type's literal tokens (`report.*`: `anfs.<id>.anfs.report.>`; `cnfs.*`:
+  `anfs.<id>.cnfs.>`; a glob starting with a wildcard: `anfs.<id>.>`), and
+  `anfs.host.anfs.source.updated`) gets the event; one run per rule and
   event id (a redelivery finds the record, a rejection included, and is acked). The guards, in
   order: `stale` and `loop` (the event's `actorrun`, else its actor, is a run of this rule), each
   a final `run.rejected`; then `rate` and `queue` (no free slot and `queue:` runs waiting), which
