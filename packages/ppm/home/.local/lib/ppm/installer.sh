@@ -144,7 +144,11 @@ install_single_package() {
   PPM_CURRENT_PACKAGE="$repo_name/$pkg_name"
   echo "Install $repo_name/$pkg_name"
   debug "Package dir: $pkg_dir"
+  # The version installed before, for package.installed's from (read only when it is emitted)
+  local ppm_ev_from=""
+  ! _ppm_events_on || ppm_ev_from=$(meta_installed_version "$repo_name" "$pkg_name")
   if ! _pkg_manifest "$pkg_dir"; then
+    _ppm_emit failed "$repo_name" "$pkg_name" step=manifest "error=invalid package.yml"
     ppm_fail "invalid package.yml, not installed:$(_pkg_manifest_errors)" || true
     return 0
   fi
@@ -159,7 +163,10 @@ install_single_package() {
   fi
 
   # something in the way stops the run (stow_package said what): no hook, no tracker
-  stow_package "$pkg_dir" read || exit 1
+  if ! stow_package "$pkg_dir" read; then
+    _ppm_emit failed "$repo_name" "$pkg_name" step=link "error=something is in the way"
+    exit 1
+  fi
   meta_cleanup_stale "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES" "$STOWED_SRCS"
   _reload_stowed_libs "$STOWED_FILES"
   _install_declared_resources "$repo_name" "$pkg_name" "$pkg_dir"
@@ -192,6 +199,7 @@ install_single_package() {
     [[ "$manager" == "brew" ]] && new_brew="$new" || new_cask="$new"
   done
   meta_mark_installed "$repo_name" "$pkg_name" "$pkg_dir" "$STOWED_FILES" "$new_brew" "$new_cask" "$STOWED_SRCS"
+  _ppm_emit_installed "$repo_name" "$pkg_name" "$ppm_ev_from"
 }
 
 # Remove packages by name; "pkg" removes every layer, "repo/pkg" only that one
@@ -218,6 +226,7 @@ remover() {
             echo "Warning: pre_remove failed for $repo_name/$pkg_name; continuing (-f)"
           else
             echo "Aborted: $repo_name/$pkg_name not removed (use -f to force)"
+            _ppm_emit failed "$repo_name" "$pkg_name" step=pre_remove "error=pre_remove refused"
             exit 1
           fi
         fi
@@ -242,12 +251,55 @@ remover() {
         _remove_declared_resources "$repo_name" "$pkg_name"
         _remove_installed_deps "$repo_name" "$pkg_name" "$pkg_dir"
         _backup_restore "$repo_name/$pkg_name"
-        meta_mark_removed "$repo_name" "$pkg_name"
+        _ppm_emit_removed "$repo_name" "$pkg_name" meta_mark_removed "$repo_name" "$pkg_name"
         _callback_unregister "$repo_name/$pkg_name"
         PPM_REMOVED+=("$repo_name/$pkg_name")
       fi
     done 3<<< "$matches"
   done
+}
+
+# --- Events (lib/anfs/events.sh's anfs_emit, when ppm sourced it; install.sh does not) ---
+#
+# Into the host scope, one per package layer (a tracker), subject <source>/<package>, data
+# package and source and:
+#   package.installed  version (as the tracker records it), from (the version before; "" when new).
+#                      A reinstall (-r) is one, from its own version
+#   package.removed    version (the one removed). Only a layer that was installed
+#   package.failed     step (manifest, link, pre_remove), error. The run stops after link and
+#                      pre_remove; a failing hook stops it with no event
+# Nothing for -n. Emitting never fails ppm: anfs_emit only warns.
+
+# True when an event would be recorded: events.sh is loaded and ANFS_EVENTS is not off
+_ppm_events_on() {
+  declare -F anfs_emit >/dev/null && [[ "${ANFS_EVENTS:-on}" != off ]]
+}
+
+# Usage: _ppm_emit <verb> <repo> <pkg> [key=value...]
+_ppm_emit() {
+  _ppm_events_on || return 0
+  local verb="$1" repo="$2" pkg="$3"
+  shift 3
+  anfs_emit --host "package.$verb" "$repo/$pkg" "package=$pkg" "source=$repo" "$@"
+}
+
+# package.installed, once the tracker is written
+# Usage: _ppm_emit_installed <repo> <pkg> <from>
+_ppm_emit_installed() {
+  _ppm_events_on || return 0
+  _ppm_emit installed "$1" "$2" "version=$(meta_installed_version "$1" "$2")" "from=$3"
+}
+
+# Run <cmd...> (what drops the tracker), then package.removed when the layer was installed
+# Usage: _ppm_emit_removed <repo> <pkg> <cmd...>
+_ppm_emit_removed() {
+  local repo="$1" pkg="$2" was=false version=""
+  shift 2
+  if _ppm_events_on && meta_is_installed "$repo" "$pkg"; then
+    was=true version=$(meta_installed_version "$repo" "$pkg")
+  fi
+  "$@"
+  ! $was || _ppm_emit removed "$repo" "$pkg" "version=$version"
 }
 
 # --- Post-run callbacks (registered with ppm_register_callback, see core.sh) ---

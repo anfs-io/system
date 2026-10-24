@@ -45,7 +45,7 @@ ANFS_EVENT_MAX=4096
 # What a line written into a run's spool (ANFS_EVENTS_SPOOL) leaves for anfsd's stamp
 ANFS_EVENT_STAMP_RESERVE=512
 # The types toolkit code emits, anfsd's run.*, container.*, pod.* and podman.* included (completion; a glob of each noun is offered too)
-ANFS_EVENT_TYPES="report.filed report.closed source.updated run.submitted run.working run.completed run.failed run.canceled run.rejected container.created container.started container.stopped container.died container.removed container.paused container.unpaused container.health pod.created pod.started pod.stopped pod.removed podman.connected podman.disconnected"
+ANFS_EVENT_TYPES="report.filed report.closed source.updated package.installed package.removed package.failed run.submitted run.working run.completed run.failed run.canceled run.rejected container.created container.started container.stopped container.died container.removed container.paused container.unpaused container.health pod.created pod.started pod.stopped pod.removed podman.connected podman.disconnected"
 
 # --- space ids ------------------------------------------------------------------------------
 

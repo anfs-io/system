@@ -1579,7 +1579,8 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   whose scope directory is not its `source`, more than `ANFSD_RUN_EVENTS_MAX` (1000) lines, and a
   line over 4096 bytes once stamped. A run reads its own events in the log (`events ls`, `report
   wait` read the log, not the spool) a second or so after it wrote them. Cross-space emits are open
-  (until `accepts:`): the stamp says who.
+  (until `accepts:`): the stamp says who. `anfs work run`/`env` unset `ANFS_EVENTS_SPOOL` (anfsd
+  reads only `env`'s export lines), so the tests a run starts never emit into its spool.
 - **Atomic, no locks**: a line is at most 4096 bytes (more is refused with a warning) and goes out
   in one `write(2)` with `O_APPEND` (`cat >>`): bash's own `printf` writes through stdio, 1 KB at a
   time on macOS, and parallel writers would interleave.
@@ -1608,6 +1609,14 @@ attributes, the rules; language-neutral, for other implementations) is in anfs-i
   `podman ps`) and `podman.disconnected` (data `error`) when it goes: on macOS when the podman
   machine stops. `pcm down` of a service is `container.died` then `container.removed` (podman
   reports no `stop` for it); `pcm up` is `container.created`, `container.started`.
+  ppm (`lib/ppm/installer.sh`; bin/ppm sources events.sh, install.sh does not): into the host
+  scope, one per package layer (a tracker), never per file, subject `<source>/<package>`, data
+  `package` and `source` and: `package.installed` (`version` as the tracker records it, `from` the
+  one before, empty when new; `install -r` is one) after the tracker is written;
+  `package.removed` (`version`) when an installed layer's tracker goes (`remove`, `implode`, a gone
+  package's tracker undone by `implode`); `package.failed` (`step` `manifest`, `link` or
+  `pre_remove`; `error`). Nothing for `-n` or a layer that was not installed; a failing hook stops
+  the run with no event. `ppm move` and `ppm file` emit nothing.
 
 **`events ls`**, one helper (`anfs_events_cli`, `anfs_events_ls`), two commands, as `repo push`:
 

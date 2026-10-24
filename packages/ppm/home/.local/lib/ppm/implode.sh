@@ -120,7 +120,7 @@ _implode_orphan() {
   while IFS= read -r rel; do
     [[ -n "$rel" && -L "$HOME/$rel" ]] && rm -f "$HOME/$rel"
   done < <(meta_installed_files "$repo" "$pkg")
-  meta_mark_removed "$repo" "$pkg"
+  _ppm_emit_removed "$repo" "$pkg" meta_mark_removed "$repo" "$pkg"
 }
 
 # Remove the directories linking created that are now empty, deepest first, up to $HOME

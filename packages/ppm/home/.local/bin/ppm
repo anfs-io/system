@@ -11,7 +11,7 @@
 # packages/ppm/home/.local/lib/ppm/):
 #   sources.sh     the sources holding packages/ (collect_repos)
 #   packages.sh    list, show, path, deps
-#   installer.sh   install, remove
+#   installer.sh   install, remove (and the package.* events, lib/anfs/events.sh)
 #   file.sh        file (add, claim, reset, protect, unprotect)
 #   move.sh        move (a package to another source, with its history: lib/anfs/move.sh)
 #   completion.sh  completion
@@ -28,9 +28,10 @@ if [[ -f "$HOME/.local/lib/anfs/bash.sh" ]]; then source "$HOME/.local/lib/anfs/
 source "$HOME/.local/lib/anfs/paths.sh"
 # The installed lib/ppm, where package extensions are linked and look for their siblings
 PPM_LIB_DIR="$ANFS_LIB_ROOT/ppm"
-# Messages, the log and callbacks (debug and ppm_register_callback are over these). Optional for
-# the same reason as bash.sh; core.sh and installer.sh cope without them, as they do in install.sh
-for lib_file in log.sh callbacks.sh table.sh; do
+# Messages, the log and callbacks (debug and ppm_register_callback are over these), and the event
+# log (events.sh: package.installed, package.removed, package.failed). Optional for the same reason
+# as bash.sh; core.sh and installer.sh cope without them, as they do in install.sh
+for lib_file in log.sh callbacks.sh table.sh events.sh; do
   if [[ -f "$ANFS_LIB_DIR/$lib_file" ]]; then source "$ANFS_LIB_DIR/$lib_file"; fi
 done
 anfs_tool_paths ppm

@@ -45,6 +45,6 @@ trips are in the anfs-dev source.
 
 **Events** (`lib/anfs/events.sh`): `anfs_emit` appends one CloudEvent per line to
 `~/.local/state/anfs/events/<space id>/<YYYY-MM>.jsonl` (`host/` outside any space); `anfs report`
-emits `report.filed` and `report.closed`, `anfs src update` `source.updated`. `anfs events ls [SPEC...] [--all]` reads every space and
+emits `report.filed` and `report.closed`, `anfs src update` `source.updated`, ppm `package.*`. `anfs events ls [SPEC...] [--all]` reads every space and
 the host scope (SPECs resolved by wsm), with `--type`, `--subject`, `--since`, `--by`, `--after`,
 `--json`, and `-f [--once]` to follow or wait. `ANFS_EVENTS=off` turns it off. AGENTS.md "Events".

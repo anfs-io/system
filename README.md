@@ -194,7 +194,8 @@ follow it until the fix is here. Agents use the `anfs-bug-report` skill, which r
 
 The tools write what happened to an event log per space (`~/.local/state/anfs/events/`, one
 CloudEvent per line): `anfs report` files `report.filed` and `report.closed`, `anfs src update`
-`source.updated`. `wsm events ls` reads the space you are in, `anfs events ls` every space; `-f
+`source.updated`, `ppm install` and `remove` `package.installed`, `package.removed` and
+`package.failed`. `wsm events ls` reads the space you are in, `anfs events ls` every space; `-f
 --once` waits for one (`wsm events ls -f --once --type report.closed --subject <id>`). A space's id
 is `id:` in its `space.yml` (`wsm id`).
 

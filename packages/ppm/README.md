@@ -114,6 +114,17 @@ retried next time.
 `ppm install` updates repos on its own, but only those older than `ANFS_UPDATE_CACHE_DURATION`
 (24 hours by default), so an install is not a network round trip for every repo every time.
 
+## Events
+
+Each package layer ppm installs or removes is one event in anfs's event log, in the host scope
+(`anfs events ls --type 'package.*'`; anfs-ui's events page): `package.installed` (subject
+`<source>/<package>`; data `package`, `source`, `version`, and `from`, the version before, empty
+when it is new; a reinstall is one too), `package.removed` (`version`, the one removed; `implode`
+emits one per package) and `package.failed` (`step`: `manifest`, an invalid `package.yml`; `link`,
+something in the way; `pre_remove`, a hook refused; and `error`). Not per file, and nothing for
+`-n`, `list`, `show` or a layer that was not installed. Emitting never fails ppm, and
+`ANFS_EVENTS=off` turns it off. core's AGENTS.md, "Events".
+
 ## Declared Software, Not Installed Software
 
 A package declares what it needs — Homebrew formulas, casks, distro packages, mise tools — in
