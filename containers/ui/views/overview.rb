@@ -3,6 +3,8 @@
 module Views
   # Everything at a glance: a tile per kind, then sources against kinds.
   class Overview < Phlex::HTML
+    include Sortable
+
     def initialize(store:, bus:)
       @store = store
       @bus = bus
@@ -55,11 +57,11 @@ module Views
       aliases = sources.keys | by_source.values.flat_map(&:keys).compact.sort
 
       div(class: "scroll") do
-        table(class: "matrix") do
+        sortable_table("overview", class: "matrix") do
           thead do
             tr do
-              th { "Source" }
-              kinds.each { |kind| th { a(href: "/#{kind.key}") { kind.label } } }
+              sort_header("Source")
+              kinds.each { sort_header(it.label, type: "number") }
             end
           end
           tbody do
@@ -71,14 +73,14 @@ module Views
 
     def matrix_row(name, source, kinds, by_source)
       tr do
-        th(scope: "row") do
+        th(scope: "row", data: { sort_value: name }) do
           plain name
           whitespace
           source ? render(Badge.new(source["status"])) : span(class: "muted") { "not a source" }
         end
         kinds.each do |kind|
           rows = by_source.dig(kind.key, name)
-          td { rows ? cell(kind, name, rows) : span(class: "muted") { "·" } }
+          td(data: { sort_value: rows&.size.to_s }) { rows ? cell(kind, name, rows) : span(class: "muted") { "·" } }
         end
       end
     end

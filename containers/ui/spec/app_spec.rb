@@ -206,11 +206,11 @@ RSpec.describe App do
 
       get "/packages"
       expect(last_response.body).to include('<a href="/jobs/ab12" class="busy">install…</a>')
-      expect(last_response.body).not_to include('value="stack/node"')
+      expect(last_response.body).not_to include('name="subject" value="stack/node"')
 
       job.status = "failed"
       get "/packages"
-      expect(last_response.body).to include("install failed", 'value="stack/node"')
+      expect(last_response.body).to include("install failed", 'name="subject" value="stack/node"')
       expect(last_response.body).to include('<a href="/jobs/ab12" class="reason">ppm: boom</a>')
     end
 

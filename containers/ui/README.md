@@ -2,6 +2,8 @@
 
 A local dashboard over the anfs tools. It runs each tool's list command with `--json`, shows the results, and updates open pages as they change. Packages can be installed and removed, and containers and machines brought up and down, from their rows.
 
+Every table sorts by the header clicked (again: the other way), with ▲/▼ and `aria-sort` on that column. Versions sort by version (0.10.0 after 0.9.0), times by time, numbers by number, text without case and naturally (item2 before item10), blanks last. The choice is kept per table in the browser (`localStorage`), and applied again each time the table is re-rendered by an update and on every page; nothing chosen, the server's order stands.
+
 It ships as a pcm service of core (`containers/ui`, in the `system` stack, running). In the container it reaches the tools through the toolkit API (`anfs rpc`, core AGENTS.md "The toolkit API"), and hears what changes from the bus (core/nats and anfsd, core AGENTS.md "The bus"). The bus is required: install core/nats and core/anfsd first.
 
 ## Run
@@ -79,7 +81,8 @@ Gems are in the image (`/usr/local/bundle`) and puma writes only under `/tmp`, s
 ## Test
 
 ```sh
-bundle exec rspec       # the bus's specs also run against a throwaway nats-server when one is on PATH
+bundle exec rspec       # the bus's specs also run against a throwaway nats-server when one is on PATH,
+                        # and sort_spec runs node --test spec/js when node is
 bundle exec rubocop
 ```
 
@@ -98,7 +101,7 @@ bundle exec rubocop
 | `lib/anfs/container_rows.rb` | Containers kept current from container.* events |
 | `lib/anfs/coalescer.rb`, `event_log.rb` | The 2 s guard for re-renders; the latest events for `/events` |
 | `lib/anfs/jobs.rb` | Commands that change something, run in the background |
-| `views/` | Phlex components |
-| `public/` | CSS, the one Stimulus controller, vendored Turbo 8.0.23 and Stimulus 3.2.2 |
+| `views/` | Phlex components; `Views::Sortable` (components.rb) makes a table sortable: `sortable_table(key)`, `sort_header(label, type:)`, cells' `data-sort-value` |
+| `public/` | CSS, the Stimulus controllers (filter, sort), `sort.js` (how values compare), vendored Turbo 8.0.23 and Stimulus 3.2.2 |
 
 To add a kind of asset, add an entry to `KINDS`. To give its rows a button, give the entry an `action`. Nothing else needs to change.

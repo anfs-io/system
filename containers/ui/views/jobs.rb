@@ -3,6 +3,8 @@
 module Views
   # Every command run from the dashboard since it started, newest first.
   class JobList < Phlex::HTML
+    include Sortable
+
     def initialize(jobs:)
       @jobs = jobs
     end
@@ -12,8 +14,14 @@ module Views
         next p(class: "muted") { "Nothing has been run from here yet." } if @jobs.empty?
 
         div(class: "scroll") do
-          table do
-            thead { tr { %w[Started Command Status].each { |header| th { header } } } }
+          sortable_table("jobs") do
+            thead do
+              tr do
+                sort_header("Started", type: "time")
+                sort_header("Command")
+                sort_header("Status")
+              end
+            end
             tbody do
               @jobs.each { |job| job_row(job) }
             end
@@ -31,8 +39,8 @@ module Views
     def job_row(job)
       href = "/jobs/#{job.id}"
       tr do
-        td { a(href:) { job.started_at.strftime("%H:%M:%S") } }
-        td do
+        td(data: { sort_value: sort_value(job.started_at) }) { a(href:) { job.started_at.strftime("%H:%M:%S") } }
+        td(data: { sort_value: job.title }) do
           a(href:) { code { job.title } }
           a(href:, class: "reason") { job.output.last } if job.status != "ok" && !job.running? && job.output.any?
         end

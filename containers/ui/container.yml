@@ -1,4 +1,4 @@
-version: 0.2.0
+version: 0.3.0
 description: anfs-ui, the toolkit's dashboard (Roda, Phlex, Puma)
 upstream: docker.io/library/ruby:4.0.7-slim
 toolkit: write

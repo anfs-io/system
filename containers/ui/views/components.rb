@@ -35,6 +35,33 @@ module Views
     end
   end
 
+  # A table that sorts by the header clicked (public/controllers/sort_controller.js, public/sort.js).
+  # The browser keeps the choice per key and applies it again whenever the table is re-rendered.
+  module Sortable
+    TYPES = %w[number version time text].freeze
+
+    def sortable_table(key, **, &) = table(**, data: { controller: "sort", sort_key_value: key }, &)
+
+    # type is one of TYPES; nil leaves it to the column's values.
+    def sort_header(label, type: nil)
+      raise ArgumentError, "sort type #{type}" unless type.nil? || TYPES.include?(type)
+
+      th(data: { sort_column: label, sort_type: type }.compact) do
+        button(type: "button", class: "sort", data: { action: "sort#by" }) { label }
+      end
+    end
+
+    # What a cell sorts by, when it shows more or other than its value.
+    def sort_value(value)
+      case value
+      when nil then ""
+      when Array then value.join(", ")
+      when Time then value.utc.iso8601(3)
+      else value.to_s
+      end
+    end
+  end
+
   # Wraps a component in the Turbo Stream that swaps it into the page.
   class Stream < Phlex::HTML
     register_element :turbo_stream

@@ -30,6 +30,8 @@ module Views
 
   # The latest events from the bus, newest first: the bus made visible.
   class Events < Phlex::HTML
+    include Sortable
+
     def initialize(events:, bus:)
       @events = events
       @bus = bus
@@ -41,8 +43,13 @@ module Views
         next p(class: "muted") { "No events since the dashboard started." } if @events.empty?
 
         div(class: "scroll") do
-          table do
-            thead { tr { %w[Time Type Subject Space By].each { |header| th { header } } } }
+          sortable_table("events") do
+            thead do
+              tr do
+                sort_header("Time", type: "time")
+                %w[Type Subject Space By].each { sort_header(it) }
+              end
+            end
             tbody { @events.each { |entry| event_row(entry) } }
           end
         end
@@ -54,7 +61,7 @@ module Views
 
     def event_row(entry)
       tr do
-        td { entry.time&.strftime("%H:%M:%S") || "–" }
+        td(data: { sort_value: sort_value(entry.time) }) { entry.time&.strftime("%H:%M:%S") || "–" }
         td { code { entry.type } }
         td { entry.subject || span(class: "muted") { "–" } }
         td { entry.space }

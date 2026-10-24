@@ -3,6 +3,8 @@
 module Views
   # One kind as a table. This is the unit the event stream replaces.
   class Panel < Phlex::HTML
+    include Sortable
+
     HOME = Dir.home
 
     # jobs is the latest job per subject, or nil for a viewer who may not act.
@@ -28,11 +30,11 @@ module Views
 
     def listing
       div(class: "scroll") do
-        table do
+        sortable_table(@kind.key) do
           thead do
             tr do
-              @kind.columns.each_key { |header| th { header } }
-              th { "Status" }
+              @kind.columns.each { |header, key| sort_header(header, type: ("version" if key == "version")) }
+              sort_header("Status")
               th if @jobs
             end
           end
@@ -51,7 +53,7 @@ module Views
       tokens = "source:#{@kind.source[row]} status:#{status.tr(" ", "-")}"
       tr(data: { filter_target: "row", tokens: }) do
         @kind.columns.each_value.with_index do |key, index|
-          td do
+          td(data: { sort_value: home(sort_value(row[key])) }) do
             cell(row[key])
             reason(@kind.action[row]&.last) if index.zero? && @jobs
           end
@@ -93,9 +95,11 @@ module Views
       case value
       when nil, "" then span(class: "muted") { "–" }
       when Array then plain value.join(", ")
-      else breakable(value.to_s.sub(/\A#{Regexp.escape(HOME)}/o, "~"))
+      else breakable(home(value.to_s))
       end
     end
+
+    def home(text) = text.sub(/\A#{Regexp.escape(HOME)}/o, "~")
 
     # Paths and URLs wrap after a slash on a narrow screen, not mid-word.
     def breakable(text)

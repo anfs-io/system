@@ -80,6 +80,23 @@ thead th { color: var(--muted); font-weight: 500; font-size: 12px; }
 tbody tr:last-child > * { border-bottom: 0; }
 td { overflow-wrap: break-word; }
 
+/* Sortable headers (sort_controller.js): the whole label is the button; the arrow is aria-sort's. */
+th > button.sort {
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: inherit;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+th > button.sort:hover { color: var(--text); }
+th > button.sort:focus-visible { outline: 2px solid var(--muted); outline-offset: 2px; }
+th[aria-sort] { color: var(--text); }
+th[aria-sort="ascending"] > button.sort::after { content: " ▲"; }
+th[aria-sort="descending"] > button.sort::after { content: " ▼"; }
+
 .matrix th:first-child { position: sticky; left: 0; background: var(--surface); }
 .matrix th[scope="row"] { font-weight: 600; white-space: nowrap; }
 .matrix th[scope="row"] span { font-weight: 400; font-size: 12px; margin-left: 6px; }
