@@ -3,6 +3,9 @@
 # STATE) and `anfs events ls` (filters, specs through wsm, -f and --once). A temp HOME with core's
 # lib/anfs, anfs and wsm linked in; one source, acme, a local directory with three spaces (acme,
 # acme/tech with ids, acme/bare without), and the tree ~/spaces/acme with acme's space.yml linked.
+# The spec's conformance examples are vendored in fixtures/events-spec (anfs-io/events; VERSION
+# names the commit): the reader takes every valid one, and what the emitter writes is the spec's
+# canonical form.
 # Run: bats packages/anfs/tests/events.bats
 
 bats_require_minimum_version 1.5.0
@@ -187,6 +190,86 @@ ev() {
   [ -z "$(all_lines)" ]
 }
 
+@test "emit: a bad ANFS_ACTOR warns and the actor is detected; detection never gives a bad one" {
+  cd "$T/out"
+  run emit 'ANFS_ACTOR=has space' a.b 1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ANFS_ACTOR=has\ space is not <kind>[:<name>]: the actor is detected instead"* ]]
+  [ "$(attr host .actor)" = shell:tester ]
+  emit ANFS_ACTOR=Bot:1 CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=2e9431a0 a.b 2
+  [ "$(attr host .actor)" = claude:2e9431a0 ]
+  emit "ANFS_ACTOR=x:$(printf 'y%.0s' {1..130})" a.b 3
+  [ "$(attr host .actor)" = shell:tester ]
+  # detected, but not valid: the next way, and shell at the end
+  emit AI_AGENT=OpenCode a.b 4
+  [ "$(attr host .actor)" = shell:tester ]
+  emit 'USER=a b' a.b 5
+  [ "$(attr host .actor)" = shell ]
+  emit ANFS_ACTOR=podman a.b 6
+  [ "$(attr host .actor)" = podman ]
+}
+
+@test "emit: an attribute with a control character, DEL or C1 anywhere, and bytes that are not UTF-8 are refused, exit 0" {
+  cd "$T/out"
+  run emit a.b $'tab\there'
+  [ "$status" -eq 0 ] && [[ "$output" == *"event a.b not recorded: subject has a control character"* ]]
+  run emit a.b x $'v=del\x7f'
+  [ "$status" -eq 0 ] && [[ "$output" == *"not recorded: data.v: has a DEL or C1 control character"* ]]
+  run emit a.b $'nel\xc2\x85'
+  [[ "$output" == *"not recorded: subject has a DEL or C1 control character"* ]]
+  run emit a.b x $'v=\xff\xfe'
+  [[ "$output" == *"not recorded: data.v: is not UTF-8"* ]]
+  run emit a.b $'trunc\xc3'
+  [[ "$output" == *"not recorded: subject is not UTF-8"* ]]
+  run emit cnfs.report.filed x
+  [[ "$output" == *"'cnfs.report.filed' starts with cnfs, another layer's namespace"* ]]
+  [ -z "$(all_lines)" ]
+  # data keeps C0 controls, escaped; UTF-8 passes everywhere
+  emit 'a.b' 'héllo ✓' $'v=a\tb\x01c' 'w=😀'
+  [ "$(attr host .subject)" = 'héllo ✓' ]
+  [ "$(attr host .data.v)" = $'a\tb\x01c' ]
+  grep -qF '"v":"a\tb\u0001c","w":"😀"}}' "$EV"/host/*.jsonl
+}
+
+# The spec's canonical form, and its patterns, for one line: compact (no whitespace outside
+# strings), data last, "anfsv":1, and the attributes the bash emitter writes
+canonical() {
+  local l="$1" rest head
+  local q='"([^"\\]|\\.)*"'
+  rest="$l"
+  while [[ "$rest" =~ $q ]]; do rest="${rest/"${BASH_REMATCH[0]}"/S}"; done
+  [[ "$rest" != *[[:space:]]* ]] || { echo "not compact: $l"; return 1; }
+  head="${l%%,\"data\":*}"
+  [[ "$head" != "$l" && "$head" != *'"data"'* && "$l" == *'"anfsv":1,"data":{'*'}}' ]] || { echo "data not last: $l"; return 1; }
+  [[ "$l" =~ ^\{\"specversion\":\"1\.0\",\"id\":\"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\",\"source\":\"/[a-z][a-z0-9-]*/(host|spaces/[a-z0-9]{10})\",\"type\":\"io\.[a-z][a-z0-9-]*(\.[a-z][a-z0-9-]*)+\" ]] ||
+    { echo "attributes: $l"; return 1; }
+  [[ "$l" =~ \"time\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z\",\"datacontenttype\":\"application/json\",\"actor\":\"[a-z][a-z0-9-]*(:[^\"[:space:]]+)?\" ]] ||
+    { echo "time, actor: $l"; return 1; }
+}
+
+@test "emit: every line is the spec's canonical form and matches its patterns; the id's milliseconds are its time's" {
+  cd "$SRC/spaces/tech"
+  emit report.filed r-1 package=core/pcm 'title=it "broke" \ here' to=file
+  emit ANFS_AS=acme/tech/maintainer report.closed r-1 commit=abc $'why=two\nlines'
+  emit ANFS_AS=acme/bare/person a.b 'with space'
+  cd "$T/out"
+  emit --host source.updated core from= to=bbb
+  emit a.b ''
+  run all_lines
+  [ "${#lines[@]}" -eq 5 ]
+  for l in "${lines[@]}"; do
+    canonical "$l"
+    id=$(yq -p json -r .id <<< "$l") t=$(yq -p json -r .time <<< "$l")
+    hex="${id//-/}"
+    [ "$(TZ=UTC date -r $(( 16#${hex:0:12} / 1000 )) +%Y-%m-%dT%H:%M:%S 2>/dev/null || TZ=UTC date -d @$(( 16#${hex:0:12} / 1000 )) +%Y-%m-%dT%H:%M:%S)" = "${t:0:19}" ]
+    [ "$(printf '%03d' $(( 16#${hex:0:12} % 1000 )))" = "${t:20:3}" ]
+  done
+  # the role without a space has no actorspace; the empty subject is left out
+  all_lines | grep -q '"actorrole":"person"'
+  ! all_lines | grep '"actorrole":"person"' | grep -q actorspace
+  [ "$(tail -n 1 "$EV"/host/*.jsonl | yq -p json -r 'has("subject")')" = false ]
+}
+
 @test "emit: ANFS_EVENTS=off writes nothing; a state it cannot write warns and exits 0" {
   cd "$T/out"
   run emit ANFS_EVENTS=off a.b x
@@ -320,6 +403,78 @@ some_events() {
   [ "$status" -eq 1 ]
   run ev ls acme --all
   [ "$status" -eq 64 ]
+}
+
+# The vendored examples (fixtures/events-spec): one line each
+SPEC_EX="$BATS_TEST_DIRNAME/fixtures/events-spec/examples"
+
+@test "the spec's examples: the reader takes every canonical valid one, any layer's (its scope, short type, subject, actor)" {
+  local f n=0
+  while IFS=$'\t' read -r f subject rule; do
+    line=$(< "$SPEC_EX/$f")
+    if [[ "$rule" == noncanonical ]]; then
+      # not the canonical form: the bash reader is not required to read it
+      continue
+    fi
+    run clean bash -c 'source "$HOME/.local/lib/anfs/paths.sh"; source "$ANFS_LIB_DIR/events.sh"
+      _anfs_ev_parse "$1" || { echo "not read"; exit 1; }
+      printf "%s|%s|%s|%s|%s|%s\n" "$EV_ID" "$EV_SID" "$EV_TYPE" "$EV_FULLTYPE" "$EV_SUBJECT" "$EV_ACTOR"' _ "$line"
+    [ "$status" -eq 0 ] || { echo "$f: $output"; false; }
+    # the manifest's subject is anfs.<scope>.<type without io.>
+    scope=$(cut -d. -f2 <<< "$subject")
+    full=$(yq -p json -r .type <<< "$line")
+    short="${full#io.}"; [[ "$full" != io.anfs.* ]] || short="${full#io.anfs.}"
+    want="$(yq -p json -r '.id + "|"' <<< "$line")$( [[ "$scope" == host ]] || echo "$scope")|$short|$full|$(yq -p json -r '(.subject // "") + "|" + .actor' <<< "$line")"
+    [ "$output" = "$want" ] || { echo "$f: $output, not $want"; false; }
+    n=$(( n + 1 ))
+  done < <(yq -p json -r '.examples[] | select(.valid) | [.file, .subject, (.rule // "")] | @tsv' "$SPEC_EX/index.json")
+  [ "$n" -eq 19 ]
+  [ "$(cat "$BATS_TEST_DIRNAME/fixtures/events-spec/VERSION")" = "anfs-io/events 1.0.0 (not tagged yet: commit 9037124 of branch agents-05a)" ]
+}
+
+# Another layer's events in the log: cnfs's, published to NATS and recorded by anfsd into
+# <scope>/<month>.bus.jsonl, beside anfs's own in <month>.jsonl
+layers() {
+  mkdir -p "$EV/m2vq7cfr4k" "$EV/host"
+  cat "$SPEC_EX/valid/cnfs-partitia-report-filed.jsonl" "$SPEC_EX/valid/traceparent.jsonl" > "$EV/m2vq7cfr4k/2026-10.bus.jsonl"
+  cat "$SPEC_EX/valid/cnfs-chatter-message-posted.jsonl" "$SPEC_EX/valid/data-null-value.jsonl" > "$EV/m2vq7cfr4k/2026-10.jsonl"
+  cat "$SPEC_EX/valid/cnfs-host.jsonl" > "$EV/host/2026-10.bus.jsonl"
+  cat "$SPEC_EX/valid/source-updated.jsonl" > "$EV/host/2026-10.jsonl"
+}
+
+@test "anfs events ls: another layer's events (--type 'cnfs.*', its space from /cnfs/spaces/<id>/...); a month's two files in id order" {
+  layers
+  run --separate-stderr ev ls --json
+  [ "$status" -eq 0 ]
+  [ "${#lines[@]}" -eq 6 ]
+  # every line once, sorted by id across both files of a month and the scopes
+  [ "$(printf '%s\n' "${lines[@]}" | yqj -r .id | tr '\n' ' ')" = "$(cat "$EV"/*/*.jsonl | yqj -r .id | LC_ALL=C sort | tr '\n' ' ')" ]
+  run --separate-stderr ev ls --type 'cnfs.*'
+  [ "${#lines[@]}" -eq 5 ]
+  [[ "$output" == *$'cnfs.partitia.report.filed\t4182\tm2vq7cfr4k\tuser:u7f3a as accountant'* ]]
+  [[ "$output" == *$'cnfs.appwork.worker.started\t'*$'\thost\t'* ]]
+  run ev ls --type 'io.cnfs.partitia.*'
+  [ "${#lines[@]}" -eq 3 ]
+  run ev ls --type 'source.*'
+  [ "${#lines[@]}" -eq 1 ]
+  # --since's month: the .bus file of an earlier month is left out too
+  mkdir -p "$EV/m2vq7cfr4k"
+  sed 's/2026-10-24T/2026-09-24T/' "$SPEC_EX/valid/cnfs-host.jsonl" > "$EV/m2vq7cfr4k/2026-09.bus.jsonl"
+  run ev ls --since 2026-10-01 --json
+  [ "${#lines[@]}" -eq 6 ]
+}
+
+@test "follow: the recorder's .bus.jsonl of the month is followed beside the spool's, a new one read from its start" {
+  layers
+  rm "$EV/host/2026-10.bus.jsonl"
+  bg -f --json --type 'cnfs.*'
+  sleep 1.5
+  cat "$SPEC_EX/valid/cnfs-host.jsonl" > "$EV/host/2026-10.bus.jsonl"
+  for _ in $(seq 40); do [[ "$(wc -l < "$T/bg")" -ge 5 ]] && break; sleep 0.1; done
+  kill "$BG"; wait "$BG" 2>/dev/null || true
+  run yqj -r .type "$T/bg"
+  [ "${#lines[@]}" -eq 5 ]
+  [ "${lines[4]}" = io.cnfs.appwork.worker.started ]
 }
 
 @test "completion: --type offers the toolkit's types and their globs; a spec comes from wsm" {
