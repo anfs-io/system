@@ -25,7 +25,7 @@ RSpec.describe Anfs::Bus do
       attr_reader :consumers, :batches, :logins
 
       def initialize(batches, consumer: nil)
-        @batches = batches.map { |batch| batch.map { FakeMsg.new(it, "anfs.host.x.y", false) } }
+        @batches = batches.map { |batch| batch.map { FakeMsg.new(it, "anfs.host.anfs.x.y", false) } }
         @consumers = [consumer].compact
         @logins = []
       end
@@ -103,7 +103,7 @@ RSpec.describe Anfs::Bus do
       end
     rescue StopIteration
       nil
-    end.to output(/anfs-ui: event anfs.host.x.y: RuntimeError: boom/).to_stderr
+    end.to output(/anfs-ui: event anfs.host.anfs.x.y: RuntimeError: boom/).to_stderr
 
     expect(seen).to eq([{ "n" => 1 }, { "n" => 2 }])
     expect(nats.consumers.size).to eq(1)
@@ -252,12 +252,12 @@ RSpec.describe Anfs::Bus do
     it "matches the reader's permissions in core/nats" do
       skip "core is not beside the ui" unless File.exist?(bus_sh)
 
-      permissions.each { expect(File.read(bus_sh)).to include(%("\\#{it}")) }
+      permissions.each { expect(File.read(bus_sh)).to include(%("#{it}")) }
     end
 
     it "yields what anfsd publishes, as it comes, and acks it" do
       events = start_bus
-      admin.jetstream.publish("anfs.host.container.started", '{"type":"io.anfs.container.started"}')
+      admin.jetstream.publish("anfs.host.anfs.container.started", '{"type":"io.anfs.container.started"}')
 
       expect(events.pop(timeout: 5)).to eq("type" => "io.anfs.container.started")
       until_true { admin.jetstream.consumer_info("ANFS", "ui").num_ack_pending.zero? }
@@ -265,10 +265,10 @@ RSpec.describe Anfs::Bus do
     end
 
     it "takes up after a restart of the ui where it left off, and never sees history from before it existed" do
-      admin.jetstream.publish("anfs.host.old.event", '{"n":0}')
+      admin.jetstream.publish("anfs.host.anfs.old.event", '{"n":0}')
       start_bus
       stop_bus
-      admin.jetstream.publish("anfs.host.x.y", '{"n":1}')
+      admin.jetstream.publish("anfs.host.anfs.x.y", '{"n":1}')
 
       events = start_bus
 
@@ -287,18 +287,35 @@ RSpec.describe Anfs::Bus do
       start_server(@port)
       until_true { status.current.connected? }
       @admin = nil
-      admin.jetstream.publish("anfs.host.x.y", '{"n":2}')
+      admin.jetstream.publish("anfs.host.anfs.x.y", '{"n":2}')
 
       expect(cpu).to be < 0.1
       expect(events.pop(timeout: 5)).to eq("n" => 2)
       expect(lines.grep(/unreachable/).size).to eq(1)
     end
 
+    # The person's by-hand step after the subjects changed (agents/05b): anfsd stopped, the stream
+    # removed with its consumers (ui's too), anfsd started (it makes ANFS again). The pull on the
+    # deleted consumer ends with an error, and the loop makes ui again (new events only) once the
+    # stream is back, after its backoff; no restart of the ui.
+    it "makes its consumer again when the stream is removed and made again" do
+      events = start_bus(backoff: [0.2])
+      admin.jetstream.delete_stream("ANFS")
+      until_true { status.current.state == :unreachable }
+      expect(status.current.state).to eq(:unreachable)
+      admin.jetstream.add_stream(name: "ANFS", subjects: ["anfs.>"])
+      until_true { status.current.connected? }
+      admin.jetstream.publish("anfs.host.anfs.container.started", '{"n":3}')
+
+      expect(events.pop(timeout: 5)).to eq("n" => 3)
+      expect(admin.jetstream.consumer_info("ANFS", "ui").config.deliver_policy).to eq("new")
+    end
+
     it "is refused a publish to the stream's subjects as the reader" do
       reader = NATS.connect(url, user: "reader", pass: password)
       errors = Queue.new
       reader.on_error { errors << it }
-      reader.publish("anfs.host.x.y", "{}")
+      reader.publish("anfs.host.anfs.x.y", "{}")
 
       expect(errors.pop(timeout: 2)&.message).to match(/Permissions Violation/)
     ensure

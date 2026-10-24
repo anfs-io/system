@@ -74,13 +74,17 @@ RSpec.describe App do
       events.add({ "type" => "io.anfs.report.filed", "subject" => "r-20261023-1", "spacepath" => "anfs-dev",
                    "source" => "/anfs/spaces/tkj76y3nfx", "time" => "2026-10-23T19:23:00Z",
                    "actor" => "claude:2e9431a0", "actorrole" => "maintainer" })
+      events.add({ "type" => "io.cnfs.partitia.report.filed", "subject" => "4182",
+                   "source" => "/cnfs/spaces/m2vq7cfr4k/partitia", "time" => "2026-10-23T19:24:00Z",
+                   "actor" => "user:u7f3a" })
 
       get "/events"
 
       body = last_response.body
       expect(body).to include('id="events"', "report.filed", "r-20261023-1", "anfs-dev",
                               "claude:2e9431a0 as maintainer", "container.died", "valkey_valkey_1", "host", "podman",
-                              'src="/stream?show=events"')
+                              'src="/stream?show=events"', "cnfs.partitia.report.filed", "m2vq7cfr4k")
+      expect(body).not_to include("io.cnfs", ">partitia<")
       expect(body.index("report.filed")).to be < body.index("container.died")
       expect(body).to include("Bus: connecting")
     end

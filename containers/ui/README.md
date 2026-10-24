@@ -43,16 +43,16 @@ bundle exec puma        # http://localhost:9292, on the host's bus (its port fil
 
 **The tools, two modes, one switch** (`Anfs::RPC.from_env`): with `ANFS_RPC_URL` set (`tcp://host:port` or `unix:///path`; pcm sets it from `container.yml`'s `toolkit: write`) every list and command goes through the toolkit API: lists as `{"run":[...]}`, commands as a stream with `yes`. The token line goes first when `ANFS_RPC_TOKEN` is set. Without it the tools run from `ANFS_BIN` (on the host). With neither, every panel says the tools are not reachable. A command that needs a terminal (exit 77) shows "Run this in a terminal: <command>"; a write refused under a read grant says so.
 
-**What changes, from the bus** (`lib/anfs/bus.rb`, `poller.rb`): the ui is NATS's `reader` user, with the durable consumer `ui` on stream `ANFS` (every `anfs.>` subject; made once, new events only), and each event updates the kind it names and nothing else:
+**What changes, from the bus** (`lib/anfs/bus.rb`, `poller.rb`): the ui is NATS's `reader` user, with the durable consumer `ui` on stream `ANFS` (every `anfs.>` subject, `anfs.<scope>.<type without io.>` for every layer, e.g. `anfs.host.anfs.container.started`; made once, new events only; the type is read from the event, never the subject), and each event updates the kind it names and nothing else:
 
 | Event | Updates |
 |---|---|
 | `container.started`, `.created`, `.died`, `.stopped`, `.paused`, `.unpaused`, `.removed` | the service's row in Containers (`data.pcm`), from the event's data: no command |
 | `podman.connected`, `podman.disconnected` | Containers: one `pcm list` |
 | `source.updated` | Sources: one `anfs src list` |
-| the rest (`report.*`, `run.*`, `pod.*`, `container.health`) | only the Events page |
+| the rest (`report.*`, `run.*`, `pod.*`, `container.health`), and every other layer's (`io.cnfs.*`: shown by its short type, `cnfs.partitia.report.filed`, its space from `/cnfs/spaces/<id>/...`) | only the Events page |
 
-Reads and re-renders an event causes are coalesced: the first at once, then at most one per kind every 2 s. Every kind is also listed every 5 minutes (`Anfs::RECONCILE`), and when a command run from here ends. Stacks, packages, images, machines, spaces, repositories and skills have no events yet, so a change made in a terminal shows at the next of those. The bus unreachable (or the password unreadable): the overview and the Events page say so, with why and the next try (1, 2, 5, 10, 30, then every 60 s), and the 5-minute lists go on. The password is never logged.
+Reads and re-renders an event causes are coalesced: the first at once, then at most one per kind every 2 s. Every kind is also listed every 5 minutes (`Anfs::RECONCILE`), and when a command run from here ends. Stacks, packages, images, machines, spaces, repositories and skills have no events yet, so a change made in a terminal shows at the next of those. The bus unreachable (or the password unreadable): the overview and the Events page say so, with why and the next try (1, 2, 5, 10, 30, then every 60 s), and the 5-minute lists go on. The stream removed and made again (by hand, with anfsd stopped): the pull on the deleted consumer fails, the ui is unreachable until anfsd makes `ANFS` again, then makes `ui` again (new events only) at its next try; no restart. The password is never logged.
 
 ## The image
 
