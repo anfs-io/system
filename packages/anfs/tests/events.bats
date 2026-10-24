@@ -477,6 +477,47 @@ layers() {
   [ "${lines[4]}" = io.cnfs.appwork.worker.started ]
 }
 
+# anfs events validate runs ANFSD_BIN (the stub prints its arguments, exits STUB_RC)
+stub_anfsd() {
+  printf '#!/bin/sh
+for a; do echo "arg: $a"; done
+[ "$1" = validate ] && [ "$2" = - ] && sed "s/^/stdin: /"
+exit ${STUB_RC:-0}
+' > "$T/anfsd"
+  chmod +x "$T/anfsd"
+}
+
+@test "anfs events validate: every scope's month files (both of a month), specs, files and - through anfsd validate; its exit status" {
+  layers
+  some_events
+  stub_anfsd
+  run --separate-stderr ev ANFSD_BIN="$T/anfsd" validate
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "arg: validate" ]
+  [ "$(printf '%s\n' "${lines[@]:1}" | sed 's/^arg: //' | sort | tr '\n' ' ')" = "$(ls "$EV"/*/*.jsonl | sort | tr '\n' ' ')" ]
+  [ "${#lines[@]}" -eq $(( 1 + $(ls "$EV"/*/*.jsonl | wc -l) )) ]
+  run --separate-stderr ev ANFSD_BIN="$T/anfsd" STUB_RC=1 validate acme/tech "$SPEC_EX/invalid/time-not-id.jsonl"
+  [ "$status" -eq 1 ]
+  [ "$output" = "arg: validate
+arg: $(ls "$EV"/acmetech22/*.jsonl | head -1)
+arg: $(ls "$EV"/acmetech22/*.jsonl | tail -1)
+arg: $SPEC_EX/invalid/time-not-id.jsonl" ]
+  run --separate-stderr bash -c 'printf "{}\n" | env -i HOME="$1" PATH="$1/.local/bin:$2" USER=tester ANFS_LOG=off ANFSD_BIN="$3" anfs events validate -' _ "$HOME" "$SYSPATH" "$T/anfsd"
+  [ "$status" -eq 0 ] && [ "$output" = "arg: validate
+arg: -
+stdin: {}" ]
+  run ev ANFSD_BIN="$T/anfsd" validate acme --all
+  [ "$status" -eq 64 ]
+  # no anfsd: the error names core/anfsd; bash validates nothing itself
+  run --separate-stderr ev validate
+  [ "$status" -eq 69 ]
+  [[ "$stderr" == *"events validate runs anfsd validate (ppm install core/anfsd)"* ]]
+  # nothing in the log: said, exit 0
+  rm -rf "$EV"
+  run --separate-stderr ev ANFSD_BIN="$T/anfsd" validate
+  [ "$status" -eq 0 ] && [ "$output" = "no event files" ] || { echo "$status $output $stderr"; false; }
+}
+
 @test "completion: --type offers the toolkit's types and their globs; a spec comes from wsm" {
   run clean anfs __complete events ls --type ""
   [[ "$output" == *report.filed* && "$output" == *report.closed* && "$output" == *"report.*"* ]]

@@ -603,6 +603,43 @@ anfs_events_ls() {
   anfs_events_follow _anfs_ev_ls_line
 }
 
+# --- events validate ---------------------------------------------------------------------------
+
+# Declare `<tool> events validate`
+anfs_events_validate_cli() {
+  cli_cmd "events validate" "Check $1 against the event spec (anfs-io/events:
+SPEC.md), every month file, the recorder's .bus.jsonl included, or the FILEs
+given (- is stdin): FILE:LINE RULE message per problem, then a count. Exit 1
+when a line is invalid (noncanonical only flags one). Runs anfsd validate:
+the validator is anfsd's (core/anfsd)" "${@:2}" --arg "[spec|file...]"
+}
+
+# `events validate`: the month files of the scopes the caller set (ANFS_EVENTS_DIRS, or
+# ANFS_EVENTS_EVERY), and the FILEs given, through `anfsd validate` (the one validator, anfs-io's
+# runtime: bash has none of its own). anfsd's exit status is the command's.
+anfs_events_validate() {
+  local d bin
+  local -a files=()
+  _anfs_ev_scopes
+  for d in ${_EV_SCOPES[@]+"${_EV_SCOPES[@]}"}; do
+    _anfs_ev_files "$d"
+    files+=(${_EV_FILES[@]+"${_EV_FILES[@]}"})
+  done
+  files+=("$@")
+  if (( ${#files[@]} == 0 )); then
+    anfs_info "no event files"
+    return 0
+  fi
+  if ! declare -F anfs_bus_anfsd_bin >/dev/null; then
+    # shellcheck source=/dev/null
+    source "$ANFS_LIB_DIR/bus.sh"
+  fi
+  declare -p ANFS_BUS_SVC_ANFSD >/dev/null 2>&1 || anfs_bus_paths
+  anfs_bus_anfsd_bin || anfs_fail 69 "no anfsd${ANFSD_BIN:+ at ANFSD_BIN=$ANFSD_BIN}: events validate runs anfsd validate (ppm install core/anfsd)"
+  bin="$REPLY"
+  "$bin" validate "${files[@]}"
+}
+
 # A followed line, for events ls: printed when it matches; 0 (stop) with --once
 _anfs_ev_ls_line() {
   _anfs_ev_match "$1" || return 1

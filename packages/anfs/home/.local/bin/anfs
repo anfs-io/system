@@ -28,6 +28,9 @@
 #   events ls [spec...] [--all] [-f [--once]] [--type G] [--subject S] [--since D] [--by A] [--after ID]
 #                                      the event log of every space and the host scope, or of
 #                                      the spaces named (lib/anfs/events.sh; wsm events ls too)
+#   events validate [spec|file...] [--all]
+#                                      the log (or files) against the event spec, through
+#                                      anfsd validate (core/anfsd)
 #   implode [-y] [--all]               the other stacks, the tools' implodes, the system stack,
 #                                      then anfs itself; --all also what
 #                                      install.sh added (Homebrew when it installed it)
@@ -161,6 +164,10 @@ the toolkit's tools, never a shell; a write needs --grant write" \
   anfs_events_cli "every space and the host scope (no SPEC, or --all), or the
 spaces SPEC names (resolved by wsm: an id is that space, x/ the subtree)" \
     --opt "--all: Every space and the host scope (what no SPEC means)"
+! declare -F anfs_events_validate_cli >/dev/null ||
+  anfs_events_validate_cli "the event log of every space and the host scope (no
+argument, or --all), of the spaces SPEC names," \
+    --opt "--all: Every space and the host scope (what no argument means)"
 ! declare -F anfs_config_declare >/dev/null || anfs_config_declare
 cli_standard
 
@@ -259,21 +266,44 @@ die() {
 # `anfs events ls [SPEC...] [--all]`: no SPEC (or --all) is every scope, the host's included; SPECs
 # are resolved by wsm (wsm __event_spaces prints the id of each space they name)
 cmd_events_list() {
-  local all=${CLI_OPT[all]:-false} sid rc=0 out
+  local all=${CLI_OPT[all]:-false}
   _need_lib anfs_events_ls "events.sh"
   ANFS_EVENTS_DIRS=() ANFS_EVENTS_EVERY=false
   if [[ $# -eq 0 ]]; then
     ANFS_EVENTS_EVERY=true
   else
     ! $all || cli_usage_err "specs or --all, not both"
-    [[ -x "$ANFS_BIN_DIR/wsm" ]] || anfs_fail 69 "a spec needs wsm (ppm install core/wsm)"
-    out=$("$ANFS_BIN_DIR/wsm" __event_spaces "$@" </dev/null) || rc=$?
-    (( rc == 0 )) || exit "$rc"
-    while IFS= read -r sid; do
-      [[ -z "$sid" ]] || ANFS_EVENTS_DIRS+=("$ANFS_EVENTS_HOME/$sid")
-    done <<< "$out"
+    _events_specs "$@"
   fi
   anfs_events_ls
+}
+
+# `anfs events validate [SPEC|FILE...] [--all]`: no argument (or --all) is every scope; an argument
+# that is a file (or -) goes to anfsd validate as it is, the others are SPECs, as events ls takes
+_events_specs() {
+  local sid rc=0 out
+  [[ -x "$ANFS_BIN_DIR/wsm" ]] || anfs_fail 69 "a spec needs wsm (ppm install core/wsm)"
+  out=$("$ANFS_BIN_DIR/wsm" __event_spaces "$@" </dev/null) || rc=$?
+  (( rc == 0 )) || exit "$rc"
+  while IFS= read -r sid; do
+    [[ -z "$sid" ]] || ANFS_EVENTS_DIRS+=("$ANFS_EVENTS_HOME/$sid")
+  done <<< "$out"
+}
+cmd_events_validate() {
+  local all=${CLI_OPT[all]:-false} a
+  local -a files=() specs=()
+  _need_lib anfs_events_validate "events.sh"
+  ANFS_EVENTS_DIRS=() ANFS_EVENTS_EVERY=false
+  for a in "$@"; do
+    if [[ "$a" == - || -f "$a" ]]; then files+=("$a"); else specs+=("$a"); fi
+  done
+  if [[ $# -eq 0 ]]; then
+    ANFS_EVENTS_EVERY=true
+  else
+    ! $all || cli_usage_err "arguments or --all, not both"
+    (( ${#specs[@]} == 0 )) || _events_specs "${specs[@]}"
+  fi
+  anfs_events_validate ${files[@]+"${files[@]}"}
 }
 
 # A spec, as wsm completes one
