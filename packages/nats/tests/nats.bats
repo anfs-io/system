@@ -126,6 +126,37 @@ launchctl bootstrap gui/$(id -u) $PLIST" ]
   grep -qx 'listen: 127.0.0.1:47999' "$NS/server.conf"
 }
 
+@test "ANFS_BUS_LAYERS: a publisher user per layer, its subjects only (anfs.*.<layer>.>) and reader's consumer API; a bad name warned and left out" {
+  printf 'ANFS_BUS_LAYERS=cnfs anfs Bad-1 lgat reader cnfs\n' > "$HOME/.config/nats/nats.local.env"
+  ANFS_SERVICE_OS=macos run hook post_install
+  [[ "$output" != *FAIL* ]] || { echo "$output"; false; }
+  [[ "$output" == *"ANFS_BUS_LAYERS: 'anfs' is not a layer's namespace"* ]]
+  [[ "$output" == *"ANFS_BUS_LAYERS: 'Bad-1' is not a layer's namespace"* ]]
+  [[ "$output" == *"ANFS_BUS_LAYERS: 'reader' is not a layer's namespace"* ]]
+  [ "$(ls "$NS/users" | tr '\n' ' ')" = "admin anfsd cnfs lgat reader " ]
+  for u in cnfs lgat; do
+    [[ "$(cat "$NS/users/$u")" =~ ^[0-9a-f]{64}$ ]] && [ "$(mode "$NS/users/$u")" = 600 ]
+  done
+  [ "$(grep -c 'user: "cnfs"' "$NS/server.conf")" = 1 ]
+  # cnfs's block: subscribe anfs.> and inboxes; publish its layer's subjects and the consumer API
+  block=$(sed -n '/user: "cnfs"/,/^    }/p' "$NS/server.conf")
+  [[ "$block" == *'subscribe: {allow: ["anfs.>", "_INBOX.>"]}'* ]]
+  [[ "$block" == *'"anfs.*.cnfs.>",'* ]]
+  for p in '$JS.API.INFO' '$JS.API.STREAM.INFO.ANFS' '$JS.API.CONSUMER.*.ANFS.>' '$JS.API.CONSUMER.DURABLE.CREATE.ANFS.>' '$JS.API.CONSUMER.MSG.NEXT.ANFS.>' '$JS.ACK.ANFS.>'; do
+    [[ "$block" == *"\"$p\""* ]]
+  done
+  # never anfs's subjects, all of anfs.>, or stream management
+  pub="${block#*publish: }"
+  [[ "$pub" != *'"anfs.>"'* && "$pub" != *'*.anfs.>'* && "$pub" != *STREAM.CREATE* && "$pub" != *STREAM.DELETE* && "$pub" != *STREAM.UPDATE* ]]
+  [ "$(sed -n '/user: "lgat"/,/^    }/p' "$NS/server.conf" | grep -c '"anfs.\*.lgat.>"')" = 1 ]
+  # the reader's block is unchanged: no publish of anfs.>
+  ! sed -n '/user: "reader"/,/^    }/p' "$NS/server.conf" | grep -q '"anfs\.'
+  # none by default
+  rm "$HOME/.config/nats/nats.local.env"
+  ANFS_SERVICE_OS=macos hook post_install
+  ! grep -q 'user: "cnfs"' "$NS/server.conf"
+}
+
 @test "a reinstall keeps the passwords and fetches nothing again; the loaded agent goes out, then in" {
   ANFS_SERVICE_OS=macos hook post_install
   local a

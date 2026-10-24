@@ -4,12 +4,17 @@
 # rendered config and of where anfsd's binary is, so the hooks and anfs bus never disagree.
 #
 #   NATS     ~/.local/state/nats/ (0700): server.conf (0600, rendered from nats.env: never edit),
-#            users/{anfsd,admin,reader} (a password each, 64 hex, made once), port, jetstream/ (the
-#            store), nats-server.log (macOS). Listens on 127.0.0.1:$ANFS_NATS_PORT (47222: not
-#            4222, which apps in containers publish), monitoring on 127.0.0.1:$ANFS_NATS_HTTP_PORT.
-#            Users: anfsd (publishes anfs.>, keeps the stream ANFS and its consumers), admin (the
-#            person's CLI: anfs bus nats), reader (subscribes to anfs.>, reads ANFS and keeps its
-#            own consumers; never publishes anfs.>: 03 hands it to the ui).
+#            users/{anfsd,admin,reader,<layer>...} (a password each, 64 hex, made once), port,
+#            jetstream/ (the store), nats-server.log (macOS). Listens on 127.0.0.1:$ANFS_NATS_PORT
+#            (47222: not 4222, which apps in containers publish), monitoring on
+#            127.0.0.1:$ANFS_NATS_HTTP_PORT. Users: anfsd (publishes anfs.>, keeps the stream ANFS
+#            and its consumers), admin (the person's CLI: anfs bus nats), reader (subscribes to
+#            anfs.>, reads ANFS and keeps its own consumers; never publishes anfs.>: 03 hands it to
+#            the ui), and a publisher per layer in ANFS_BUS_LAYERS (nats.env: cnfs, lgat), named
+#            after its namespace: it publishes its layer's subjects only, anfs.*.<layer>.> (never
+#            anfs's anfs.*.anfs.> or another layer's), and reads as reader does (the spec,
+#            anfs-io/events SPEC.md "The publisher user per layer"). Subjects are
+#            anfs.<scope>.<type without io.>: anfs.<id>.anfs.report.filed, anfs.<id>.cnfs.<...>.
 #   anfsd    ~/.local/share/anfsd/<version>/anfsd (the pinned release, linked from ~/.local/bin),
 #            or ANFSD_BIN (anfsd.local.env: one built from source); ~/.local/state/anfsd/
 #            (cursors.json, anfsd.pid, anfsd.log on macOS).
@@ -20,6 +25,27 @@
 # loads nats.env and anfsd.env (anfs_tool_paths).
 
 ANFS_BUS_NATS_USERS="anfsd admin reader"
+# The JetStream API a consumer of ANFS needs (its own durable consumers, fetch, ack): reader's and
+# every layer's publisher's; never stream management
+ANFS_BUS_CONSUMER_API='"$JS.API.INFO", "$JS.API.STREAM.INFO.ANFS",
+          "$JS.API.CONSUMER.*.ANFS.>", "$JS.API.CONSUMER.DURABLE.CREATE.ANFS.>",
+          "$JS.API.CONSUMER.MSG.NEXT.ANFS.>", "$JS.ACK.ANFS.>"'
+
+# The layers' publisher users (ANFS_BUS_LAYERS, nats.env: space-separated namespaces) into
+# ANFS_BUS_LAYER_USERS; with "warn", one line for each name that cannot be one (not
+# [a-z][a-z0-9-]*, anfs's own, or a user of the bus's)
+anfs_bus_layers() {
+  local l
+  ANFS_BUS_LAYER_USERS=()
+  for l in ${ANFS_BUS_LAYERS:-}; do
+    if [[ ! "$l" =~ ^[a-z][a-z0-9-]*$ || " anfs $ANFS_BUS_NATS_USERS " == *" $l "* ]]; then
+      [[ "${1:-}" != warn ]] || echo "anfs: ANFS_BUS_LAYERS: '$l' is not a layer's namespace (a-z, 0-9, -; not anfs, anfsd, admin or reader): no user for it" >&2
+      continue
+    fi
+    [[ " ${ANFS_BUS_LAYER_USERS[*]} " == *" $l "* ]] || ANFS_BUS_LAYER_USERS+=("$l")
+  done
+  return 0
+}
 
 # The paths and settings of both (NATS_*_HOME, ANFSD_*_HOME; nats.env, anfsd.env), and the two
 # service specs: ANFS_BUS_SVC_NATS, ANFS_BUS_SVC_ANFSD
@@ -47,7 +73,8 @@ anfs_bus_nats_users() {
   local u f
   mkdir -p -- "$NATS_STATE_HOME/users"
   chmod 700 "$NATS_STATE_HOME" "$NATS_STATE_HOME/users"
-  for u in $ANFS_BUS_NATS_USERS; do
+  anfs_bus_layers
+  for u in $ANFS_BUS_NATS_USERS ${ANFS_BUS_LAYER_USERS[@]+"${ANFS_BUS_LAYER_USERS[@]}"}; do
     f="$NATS_STATE_HOME/users/$u"
     [[ -s "$f" ]] || ( umask 077; od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > "$f" )
     chmod 600 "$f"
@@ -58,12 +85,28 @@ anfs_bus_nats_users() {
 anfs_bus_nats_conf() {
   local f="$NATS_STATE_HOME/server.conf" tmp
   local -A pw=()
-  local u
+  local u layers=""
   [[ "$ANFS_NATS_PORT" =~ ^[0-9]+$ && "$ANFS_NATS_HTTP_PORT" =~ ^[0-9]+$ ]] ||
     { echo "anfs: ANFS_NATS_PORT and ANFS_NATS_HTTP_PORT are ports: $ANFS_NATS_PORT, $ANFS_NATS_HTTP_PORT" >&2; return 1; }
   [[ "$ANFS_NATS_MAX_FILE" =~ ^[0-9]+([KMGT]i?B?)?$ && "$ANFS_NATS_MAX_MEM" =~ ^[0-9]+([KMGT]i?B?)?$ ]] ||
     { echo "anfs: ANFS_NATS_MAX_FILE and ANFS_NATS_MAX_MEM are sizes (2GiB, 64MiB): $ANFS_NATS_MAX_FILE, $ANFS_NATS_MAX_MEM" >&2; return 1; }
-  for u in $ANFS_BUS_NATS_USERS; do pw[$u]=$(< "$NATS_STATE_HOME/users/$u") || return 1; done
+  anfs_bus_layers warn
+  for u in $ANFS_BUS_NATS_USERS ${ANFS_BUS_LAYER_USERS[@]+"${ANFS_BUS_LAYER_USERS[@]}"}; do
+    pw[$u]=$(< "$NATS_STATE_HOME/users/$u") || return 1
+  done
+  for u in ${ANFS_BUS_LAYER_USERS[@]+"${ANFS_BUS_LAYER_USERS[@]}"}; do
+    layers+="
+    {
+      user: \"$u\", password: \"${pw[$u]}\"
+      permissions: {
+        subscribe: {allow: [\"anfs.>\", \"_INBOX.>\"]}
+        publish: {allow: [
+          \"anfs.*.$u.>\",
+          $ANFS_BUS_CONSUMER_API
+        ]}
+      }
+    }"
+  done
   tmp=$(mktemp "$NATS_STATE_HOME/.server.conf.XXXXXX") || return 1
   chmod 600 "$tmp"
   cat > "$tmp" <<CONF
@@ -87,12 +130,10 @@ authorization {
       permissions: {
         subscribe: {allow: ["anfs.>", "_INBOX.>"]}
         publish: {allow: [
-          "\$JS.API.INFO", "\$JS.API.STREAM.INFO.ANFS",
-          "\$JS.API.CONSUMER.*.ANFS.>", "\$JS.API.CONSUMER.DURABLE.CREATE.ANFS.>",
-          "\$JS.API.CONSUMER.MSG.NEXT.ANFS.>", "\$JS.ACK.ANFS.>"
+          $ANFS_BUS_CONSUMER_API
         ]}
       }
-    }
+    }$layers
   ]
 }
 CONF

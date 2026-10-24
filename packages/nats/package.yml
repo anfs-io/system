@@ -1,4 +1,4 @@
-version: 0.1.0
+version: 0.1.1
 author: rjayroach
 # NATS with JetStream, the anfs bus: nats-server and the nats CLI, pinned release binaries
 # (pins.yml), not brew's; a launchd agent or a systemd user unit (lib/anfs/service.sh) on
